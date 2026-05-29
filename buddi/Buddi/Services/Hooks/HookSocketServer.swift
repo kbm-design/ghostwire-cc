@@ -28,10 +28,11 @@ struct HookEvent: Codable, Sendable {
     let message: String?
     let cmuxWorkspace: String?
     let cmuxSurface: String?
+    let source: String?
 
     enum CodingKeys: String, CodingKey {
         case sessionId = "session_id"
-        case cwd, event, status, pid, tty, tool
+        case cwd, event, status, pid, tty, tool, source
         case toolInput = "tool_input"
         case toolUseId = "tool_use_id"
         case notificationType = "notification_type"
@@ -41,7 +42,7 @@ struct HookEvent: Codable, Sendable {
     }
 
     /// Create a copy with updated toolUseId
-    init(sessionId: String, cwd: String, event: String, status: String, pid: Int?, tty: String?, tool: String?, toolInput: [String: AnyCodable]?, toolUseId: String?, notificationType: String?, message: String?, cmuxWorkspace: String? = nil, cmuxSurface: String? = nil) {
+    init(sessionId: String, cwd: String, event: String, status: String, pid: Int?, tty: String?, tool: String?, toolInput: [String: AnyCodable]?, toolUseId: String?, notificationType: String?, message: String?, cmuxWorkspace: String? = nil, cmuxSurface: String? = nil, source: String? = nil) {
         self.sessionId = sessionId
         self.cwd = cwd
         self.event = event
@@ -55,6 +56,7 @@ struct HookEvent: Codable, Sendable {
         self.message = message
         self.cmuxWorkspace = cmuxWorkspace
         self.cmuxSurface = cmuxSurface
+        self.source = source
     }
 
     var sessionPhase: SessionPhase {
@@ -472,7 +474,8 @@ class HookSocketServer {
                 toolInput: event.toolInput,
                 toolUseId: toolUseId,  // Use resolved toolUseId
                 notificationType: event.notificationType,
-                message: event.message
+                message: event.message,
+                source: event.source
             )
 
             let pending = PendingPermission(

@@ -26,6 +26,9 @@ struct SessionState: Equatable, Identifiable, Sendable {
     var cmuxWorkspaceRef: String?
     var cmuxSurfaceRef: String?
 
+    /// Which agent CLI produced this session ("claude" | "codex" | …), from the hook's source tag
+    var agent: String?
+
     // MARK: - State Machine
 
     /// Current phase in the session lifecycle
@@ -75,6 +78,7 @@ struct SessionState: Equatable, Identifiable, Sendable {
         tty: String? = nil,
         isInTmux: Bool = false,
         isInCmux: Bool = false,
+        agent: String? = nil,
         phase: SessionPhase = .idle,
         chatItems: [ChatHistoryItem] = [],
         toolTracker: ToolTracker = ToolTracker(),
@@ -94,6 +98,7 @@ struct SessionState: Equatable, Identifiable, Sendable {
         self.tty = tty
         self.isInTmux = isInTmux
         self.isInCmux = isInCmux
+        self.agent = agent
         self.phase = phase
         self.chatItems = chatItems
         self.toolTracker = toolTracker
@@ -132,6 +137,12 @@ struct SessionState: Equatable, Identifiable, Sendable {
     /// Display title: summary > first user message > project name
     var displayTitle: String {
         conversationInfo.summary ?? conversationInfo.firstUserMessage ?? projectName
+    }
+
+    /// Short agent label for the row badge ("Claude" / "Codex"); nil if unknown
+    var agentLabel: String? {
+        guard let agent = agent, !agent.isEmpty else { return nil }
+        return agent.prefix(1).uppercased() + agent.dropFirst()
     }
 
     /// Best hint for matching window title

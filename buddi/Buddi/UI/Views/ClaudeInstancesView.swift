@@ -145,6 +145,14 @@ struct InstanceRow: View {
         return toolName == "AskUserQuestion"
     }
 
+    /// Tint for the per-agent badge (placeholder Codex tint — final pick is a GW-139 open question)
+    private func agentTint(_ agent: String?) -> Color {
+        switch agent {
+        case "codex": return Color(red: 0.04, green: 0.64, blue: 0.50)
+        default: return Color(red: 0.85, green: 0.47, blue: 0.34)
+        }
+    }
+
     var body: some View {
         HStack(alignment: .center, spacing: 10) {
             // State indicator on left
@@ -153,10 +161,21 @@ struct InstanceRow: View {
 
             // Text content
             VStack(alignment: .leading, spacing: 2) {
-                Text(session.displayTitle)
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
+                HStack(spacing: 6) {
+                    Text(session.displayTitle)
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+
+                    if let agentLabel = session.agentLabel {
+                        Text(agentLabel)
+                            .font(.system(size: 9, weight: .bold))
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(agentTint(session.agent).opacity(0.18), in: Capsule())
+                            .foregroundStyle(agentTint(session.agent))
+                    }
+                }
 
                 // Show tool call when waiting for approval, otherwise last activity
                 if isWaitingForApproval, let toolName = session.pendingToolName {

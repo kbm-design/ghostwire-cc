@@ -176,6 +176,7 @@ actor SessionStore {
             pid: event.pid,
             tty: event.tty?.replacingOccurrences(of: "/dev/", with: ""),
             isInTmux: false,  // Will be updated
+            agent: event.source,
             phase: .idle
         )
     }

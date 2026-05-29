@@ -165,6 +165,8 @@ def main():
         "event": event,
         "pid": claude_pid,
         "tty": tty,
+        # Which agent installed this hook (set by the installer); defaults to claude
+        "source": os.environ.get("BUDDI_AGENT", "claude"),
     }
 
     # Include cmux surface info if running in cmux

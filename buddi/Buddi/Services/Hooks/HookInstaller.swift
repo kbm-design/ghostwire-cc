@@ -42,7 +42,7 @@ struct HookInstaller {
         }
 
         let python = detectPython()
-        let command = "\(python) ~/.claude/hooks/buddi-hook.py"
+        let command = "BUDDI_AGENT=claude \(python) ~/.claude/hooks/buddi-hook.py"
         let hookEntry: [[String: Any]] = [["type": "command", "command": command]]
         let hookEntryWithTimeout: [[String: Any]] = [["type": "command", "command": command, "timeout": 86400]]
         let withMatcher: [[String: Any]] = [["matcher": "*", "hooks": hookEntry]]

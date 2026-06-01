@@ -13,7 +13,7 @@ permissions:
   contents: write
 
 env:
-  SCHEME: buddi
+  SCHEME: Ghostwire
   TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
   SIGNING_IDENTITY: "Developer ID Application"
   DEVELOPER_DIR: /Applications/Xcode_26.4.app/Contents/Developer
@@ -102,7 +102,7 @@ jobs:
           xcodebuild archive \
             -scheme $SCHEME \
             -configuration Release \
-            -archivePath $RUNNER_TEMP/buddi.xcarchive \
+            -archivePath $RUNNER_TEMP/Ghostwire.xcarchive \
             DEVELOPMENT_TEAM=$TEAM_ID \
             CODE_SIGN_STYLE=Manual \
             CODE_SIGN_IDENTITY="$SIGNING_IDENTITY"
@@ -113,7 +113,7 @@ jobs:
           /usr/libexec/PlistBuddy -c "Add :teamID string $TEAM_ID" $RUNNER_TEMP/export.plist
 
           xcodebuild -exportArchive \
-            -archivePath $RUNNER_TEMP/buddi.xcarchive \
+            -archivePath $RUNNER_TEMP/Ghostwire.xcarchive \
             -exportOptionsPlist $RUNNER_TEMP/export.plist \
             -exportPath $RUNNER_TEMP/export
 
@@ -123,16 +123,16 @@ jobs:
           APP_SPECIFIC_PASSWORD: ${{ secrets.APP_SPECIFIC_PASSWORD }}
         run: |
           ditto -c -k --keepParent \
-            "$RUNNER_TEMP/export/buddi.app" \
-            "$RUNNER_TEMP/buddi-submit.zip"
+            "$RUNNER_TEMP/export/Ghostwire.app" \
+            "$RUNNER_TEMP/Ghostwire-submit.zip"
 
-          xcrun notarytool submit "$RUNNER_TEMP/buddi-submit.zip" \
+          xcrun notarytool submit "$RUNNER_TEMP/Ghostwire-submit.zip" \
             --apple-id "$APPLE_ID" \
             --password "$APP_SPECIFIC_PASSWORD" \
             --team-id "$TEAM_ID" \
             --wait --timeout 15m
 
-          xcrun stapler staple "$RUNNER_TEMP/export/buddi.app"
+          xcrun stapler staple "$RUNNER_TEMP/export/Ghostwire.app"
 
       - name: Create DMG
         env:
@@ -142,7 +142,7 @@ jobs:
           DMG_PATH=$RUNNER_TEMP/ghostwire-${VERSION}.dmg
 
           mkdir -p "$STAGING"
-          cp -R "$RUNNER_TEMP/export/buddi.app" "$STAGING/"
+          cp -R "$RUNNER_TEMP/export/Ghostwire.app" "$STAGING/"
           ln -s /Applications "$STAGING/Applications"
 
           hdiutil create \
@@ -269,7 +269,7 @@ jobs:
             auto_updates true
             depends_on macos: ">= :sequoia"
 
-            app "buddi.app"
+            app "Ghostwire.app"
 
             uninstall quit: "com.talkvalue.buddi"
 

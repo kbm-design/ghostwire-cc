@@ -758,6 +758,9 @@
         }
       }
     },
+    "%@ needs your input" : {
+
+    },
     "%@:" : {
 
     },
@@ -3802,6 +3805,7 @@
       }
     },
     "Buddi" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -5208,9 +5212,6 @@
 
     },
     "Claude Code Hooks" : {
-
-    },
-    "Claude Code needs your input" : {
 
     },
     "Clear slot" : {
@@ -8239,6 +8240,7 @@
       }
     },
     "Enable Buddi mirror" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -8337,6 +8339,9 @@
           }
         }
       }
+    },
+    "Enable camera mirror" : {
+
     },
     "Enable colored spectrograms" : {
       "extractionState" : "stale",
@@ -11252,7 +11257,7 @@
     "Hooks installed" : {
 
     },
-    "Hooks only send session events to Buddi. No data leaves your machine." : {
+    "Hooks only send session events to Notch Command Center. No data leaves your machine." : {
 
     },
     "Hover delay" : {
@@ -11864,7 +11869,7 @@
     "Install Hooks" : {
 
     },
-    "Install hooks to let Buddi monitor your Claude Code sessions, show approval requests, and track usage." : {
+    "Install hooks to let Notch Command Center monitor your Claude Code sessions, show approval requests, and track usage." : {
 
     },
     "Installed" : {
@@ -13680,7 +13685,7 @@
         }
       }
     },
-    "Message Claude..." : {
+    "Message %@..." : {
 
     },
     "Mic %@" : {
@@ -15205,6 +15210,9 @@
         }
       }
     },
+    "Notch" : {
+
+    },
     "Notch behavior" : {
       "localizations" : {
         "ar" : {
@@ -15304,6 +15312,9 @@
           }
         }
       }
+    },
+    "Notch Command Center" : {
+
     },
     "Notch height on non-notch displays" : {
       "localizations" : {
@@ -15620,6 +15631,9 @@
     "On" : {
 
     },
+    "Open %@ in tmux/cmux to enable messaging" : {
+
+    },
     "Open Calendar Settings" : {
       "localizations" : {
         "ar" : {
@@ -15719,9 +15733,6 @@
           }
         }
       }
-    },
-    "Open Claude Code in tmux/cmux to enable messaging" : {
-
     },
     "Open Notch" : {
       "localizations" : {
@@ -18028,6 +18039,7 @@
       }
     },
     "Restart Buddi" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -18126,6 +18138,9 @@
           }
         }
       }
+    },
+    "Restart Notch Command Center" : {
+
     },
     "Retry" : {
 

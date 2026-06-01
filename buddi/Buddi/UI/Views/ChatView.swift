@@ -350,9 +350,14 @@ struct ChatView: View {
         session.isInMultiplexer && session.tty != nil
     }
 
+    /// Display name for this session's agent ("Claude" / "Codex"); neutral fallback if untagged
+    private var agentName: String {
+        session.agentLabel ?? "Agent"
+    }
+
     private var inputBar: some View {
         HStack(spacing: 10) {
-            TextField(canSendMessages ? "Message Claude..." : "Open Claude Code in tmux/cmux to enable messaging", text: $inputText)
+            TextField(canSendMessages ? "Message \(agentName)..." : "Open \(agentName) in tmux/cmux to enable messaging", text: $inputText)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13))
                 .foregroundColor(canSendMessages ? .white : .white.opacity(0.4))
@@ -415,6 +420,7 @@ struct ChatView: View {
     private var interactivePromptBar: some View {
         ChatInteractivePromptBar(
             isInTmux: session.isInMultiplexer,
+            agentName: agentName,
             onGoToTerminal: { focusTerminal() }
         )
     }
@@ -1007,6 +1013,7 @@ struct InterruptedMessageView: View {
 /// Bar for interactive tools like AskUserQuestion that need terminal input
 struct ChatInteractivePromptBar: View {
     let isInTmux: Bool
+    let agentName: String
     let onGoToTerminal: () -> Void
 
     @State private var showContent = false
@@ -1019,7 +1026,7 @@ struct ChatInteractivePromptBar: View {
                 Text(MCPToolFormatter.formatToolName("AskUserQuestion"))
                     .font(.system(size: 12, weight: .medium, design: .monospaced))
                     .foregroundColor(TerminalColors.amber)
-                Text("Claude Code needs your input")
+                Text("\(agentName) needs your input")
                     .font(.system(size: 11))
                     .foregroundColor(.white.opacity(0.5))
                     .lineLimit(1)

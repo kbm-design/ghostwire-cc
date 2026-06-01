@@ -7,6 +7,10 @@
 		<key>NSAllowsArbitraryLoads</key>
 		<true/>
 	</dict>
+	<key>SUFeedURL</key>
+	<string>https://raw.githubusercontent.com/kbm-design/ghostwire-cc/main/Updates/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>uKGmq0KdrEWkjFx4q8ZXdKlAiMFCXp8R6Rdnky1dk98=</string>
 	<key>UTImportedTypeDeclarations</key>
 	<array>
 		<dict/>

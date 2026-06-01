@@ -201,7 +201,7 @@ jobs:
 
           "$SPARKLE_BIN/generate_appcast" \
             --ed-key-file "$RUNNER_TEMP/sparkle_key" \
-            --download-url-prefix "https://github.com/talkvalue/Buddi/releases/download/v$VERSION/" \
+            --download-url-prefix "https://github.com/kbm-design/ghostwire-cc/releases/download/v$VERSION/" \
             -o Updates/appcast.xml \
             $RUNNER_TEMP/appcast-staging
 

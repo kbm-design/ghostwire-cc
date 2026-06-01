@@ -8,7 +8,7 @@
 //  Codex shares Claude's hook architecture: JSON-over-stdin/stdout, same
 //  PascalCase event names, and a PermissionRequest output that is byte-identical
 //  to Claude's ({hookSpecificOutput:{hookEventName,decision:{behavior}}}). So the
-//  same buddi-hook.py serves both agents and no socket/event changes are needed.
+//  same ghostwire-hook.py serves both agents and no socket/event changes are needed.
 //
 //  Differences from Claude handled here:
 //   - Codex has no `Notification` and no `SessionEnd` event — omitted.
@@ -27,7 +27,7 @@ struct CodexHookInstaller {
         let codexDir = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".codex")
         let hooksDir = codexDir.appendingPathComponent("hooks")
-        let pythonScript = hooksDir.appendingPathComponent("buddi-hook.py")
+        let pythonScript = hooksDir.appendingPathComponent("ghostwire-hook.py")
         let hooksFile = codexDir.appendingPathComponent("hooks.json")
 
         // Only install if the user actually has Codex set up.
@@ -38,7 +38,7 @@ struct CodexHookInstaller {
             withIntermediateDirectories: true
         )
 
-        if let bundled = Bundle.main.url(forResource: "buddi-hook", withExtension: "py") {
+        if let bundled = Bundle.main.url(forResource: "ghostwire-hook", withExtension: "py") {
             try? FileManager.default.removeItem(at: pythonScript)
             try? FileManager.default.copyItem(at: bundled, to: pythonScript)
             try? FileManager.default.setAttributes(
@@ -46,6 +46,9 @@ struct CodexHookInstaller {
                 ofItemAtPath: pythonScript.path
             )
         }
+
+        // Clean up the legacy buddi-hook.py left by older installs.
+        try? FileManager.default.removeItem(at: hooksDir.appendingPathComponent("buddi-hook.py"))
 
         updateHooks(at: hooksFile)
     }
@@ -58,7 +61,7 @@ struct CodexHookInstaller {
         }
 
         let python = detectPython()
-        let command = "BUDDI_AGENT=codex \(python) ~/.codex/hooks/buddi-hook.py"
+        let command = "GHOSTWIRE_AGENT=codex \(python) ~/.codex/hooks/ghostwire-hook.py"
         let hookEntry: [[String: Any]] = [["type": "command", "command": command]]
         let hookEntryWithTimeout: [[String: Any]] = [["type": "command", "command": command, "timeout": 86400]]
         let withMatcher: [[String: Any]] = [["matcher": "*", "hooks": hookEntry]]
@@ -80,14 +83,14 @@ struct CodexHookInstaller {
         ]
 
         for (event, config) in hookEvents {
-            // Re-tag on every launch: strip any existing buddi hook commands, then
-            // append the current (correctly-tagged) config. Skipping when present
-            // would leave stale/untagged commands from older installs in place.
+            // Re-tag on every launch: strip any existing hook commands (incl. the
+            // legacy buddi-hook.py), then append the current (correctly-tagged)
+            // config. Skipping when present would leave stale commands in place.
             var existingEvent = hooks[event] as? [[String: Any]] ?? []
             existingEvent = existingEvent.compactMap { entry -> [String: Any]? in
                 guard var entryHooks = entry["hooks"] as? [[String: Any]] else { return entry }
-                entryHooks.removeAll { ($0["command"] as? String ?? "").contains("buddi-hook.py") }
-                // Drop the entry only if it was buddi-only; preserve co-located user hooks.
+                entryHooks.removeAll { isOurHookCommand($0["command"] as? String ?? "") }
+                // Drop the entry only if it was ours; preserve co-located user hooks.
                 guard !entryHooks.isEmpty else { return nil }
                 var newEntry = entry
                 newEntry["hooks"] = entryHooks
@@ -125,7 +128,7 @@ struct CodexHookInstaller {
                     if let entryHooks = entry["hooks"] as? [[String: Any]] {
                         for hook in entryHooks {
                             if let cmd = hook["command"] as? String,
-                               cmd.contains("buddi-hook.py") {
+                               isOurHookCommand(cmd) {
                                 return true
                             }
                         }
@@ -140,10 +143,11 @@ struct CodexHookInstaller {
     static func uninstall() {
         let codexDir = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".codex")
-        let pythonScript = codexDir.appendingPathComponent("hooks").appendingPathComponent("buddi-hook.py")
+        let hooksSubdir = codexDir.appendingPathComponent("hooks")
         let hooksFile = codexDir.appendingPathComponent("hooks.json")
 
-        try? FileManager.default.removeItem(at: pythonScript)
+        try? FileManager.default.removeItem(at: hooksSubdir.appendingPathComponent("ghostwire-hook.py"))
+        try? FileManager.default.removeItem(at: hooksSubdir.appendingPathComponent("buddi-hook.py"))
 
         guard let data = try? Data(contentsOf: hooksFile),
               var json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -156,8 +160,7 @@ struct CodexHookInstaller {
                 entries.removeAll { entry in
                     if let entryHooks = entry["hooks"] as? [[String: Any]] {
                         return entryHooks.contains { hook in
-                            let cmd = hook["command"] as? String ?? ""
-                            return cmd.contains("buddi-hook.py")
+                            isOurHookCommand(hook["command"] as? String ?? "")
                         }
                     }
                     return false
@@ -183,6 +186,11 @@ struct CodexHookInstaller {
         ) {
             try? data.write(to: hooksFile)
         }
+    }
+
+    /// Matches our hook command, including the legacy buddi-hook.py name so upgrades clean it up.
+    private static func isOurHookCommand(_ cmd: String) -> Bool {
+        cmd.contains("ghostwire-hook.py") || cmd.contains("buddi-hook.py")
     }
 
     private static func detectPython() -> String {

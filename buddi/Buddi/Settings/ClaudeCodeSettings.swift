@@ -59,7 +59,7 @@ struct ClaudeCodeSettings: View {
                 HStack {
                     Text("Socket")
                     Spacer()
-                    let active = FileManager.default.fileExists(atPath: "/tmp/notch.sock")
+                    let active = FileManager.default.fileExists(atPath: "/tmp/com.ghostwire.notch.sock")
                     Circle()
                         .fill(active ? Color.green : Color.red)
                         .frame(width: 8, height: 8)

@@ -69,23 +69,21 @@ struct HookInstaller {
         ]
 
         for (event, config) in hookEvents {
-            if var existingEvent = hooks[event] as? [[String: Any]] {
-                let hasOurHook = existingEvent.contains { entry in
-                    if let entryHooks = entry["hooks"] as? [[String: Any]] {
-                        return entryHooks.contains { h in
-                            let cmd = h["command"] as? String ?? ""
-                            return cmd.contains("buddi-hook.py")
-                        }
-                    }
-                    return false
-                }
-                if !hasOurHook {
-                    existingEvent.append(contentsOf: config)
-                    hooks[event] = existingEvent
-                }
-            } else {
-                hooks[event] = config
+            // Re-tag on every launch: strip any existing buddi hook commands, then
+            // append the current (correctly-tagged) config. Skipping when present
+            // would leave stale/untagged commands from older installs in place.
+            var existingEvent = hooks[event] as? [[String: Any]] ?? []
+            existingEvent = existingEvent.compactMap { entry -> [String: Any]? in
+                guard var entryHooks = entry["hooks"] as? [[String: Any]] else { return entry }
+                entryHooks.removeAll { ($0["command"] as? String ?? "").contains("buddi-hook.py") }
+                // Drop the entry only if it was buddi-only; preserve co-located user hooks.
+                guard !entryHooks.isEmpty else { return nil }
+                var newEntry = entry
+                newEntry["hooks"] = entryHooks
+                return newEntry
             }
+            existingEvent.append(contentsOf: config)
+            hooks[event] = existingEvent
         }
 
         json["hooks"] = hooks

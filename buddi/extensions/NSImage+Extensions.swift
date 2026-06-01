@@ -1,6 +1,6 @@
 //
 //  Image2Color.swift
-//  buddi
+//  Ghostwire
 //
 //
 

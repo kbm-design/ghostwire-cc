@@ -1,6 +1,6 @@
 //
 //  ImageService.swift
-//  buddi
+//  Ghostwire
 //
 //
 

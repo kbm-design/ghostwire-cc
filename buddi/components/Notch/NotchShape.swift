@@ -1,6 +1,6 @@
 //
 //  NotchShape.swift
-//  buddi
+//  Ghostwire
 //
 // Original source: https://github.com/MrKai77/DynamicNotchKit
 // Modified by Alexander on 2025-05-18.

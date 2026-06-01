@@ -1,6 +1,6 @@
 //
 //  MediaControllerProtocol.swift
-//  buddi
+//  Ghostwire
 //
 //
 

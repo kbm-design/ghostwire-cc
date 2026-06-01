@@ -1,6 +1,6 @@
 //
-//  BuddiViewModel.swift
-//  buddi
+//  GhostwireViewModel.swift
+//  Ghostwire
 //
 //
 
@@ -8,11 +8,11 @@ import Combine
 import Defaults
 import SwiftUI
 
-class BuddiViewModel: NSObject, ObservableObject {
-    @ObservedObject var coordinator = BuddiViewCoordinator.shared
+class GhostwireViewModel: NSObject, ObservableObject {
+    @ObservedObject var coordinator = GhostwireViewCoordinator.shared
     @ObservedObject var detector = FullscreenMediaDetector.shared
 
-    let animationLibrary: BuddiAnimations = .init()
+    let animationLibrary: GhostwireAnimations = .init()
     let animation: Animation?
 
     @Published var contentType: ContentType = .normal

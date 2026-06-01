@@ -1,6 +1,6 @@
 //
-//  BuddiCalendar.swift
-//  buddi
+//  GhostwireCalendar.swift
+//  Ghostwire
 //
 //
 
@@ -18,7 +18,7 @@ struct Config: Equatable {
 }
 
 struct WheelPicker: View {
-    @EnvironmentObject var vm: BuddiViewModel
+    @EnvironmentObject var vm: GhostwireViewModel
     @Binding var selectedDate: Date
     @State private var scrollPosition: Int?
     @State private var haptics: Bool = false
@@ -178,7 +178,7 @@ struct WheelPicker: View {
 }
 
 struct CalendarView: View {
-    @EnvironmentObject var vm: BuddiViewModel
+    @EnvironmentObject var vm: GhostwireViewModel
     @ObservedObject private var calendarManager = CalendarManager.shared
     @State private var selectedDate = Date()
 
@@ -475,5 +475,5 @@ struct ReminderToggle: View {
     CalendarView()
         .frame(width: 215, height: 130)
         .background(.black)
-        .environmentObject(BuddiViewModel())
+        .environmentObject(GhostwireViewModel())
 }

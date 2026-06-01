@@ -1,6 +1,6 @@
 //
 //  ChatMessage.swift
-//  Buddi
+//  Ghostwire
 //
 //  Models for conversation messages parsed from JSONL
 //

@@ -1,6 +1,6 @@
 //
 //  TmuxController.swift
-//  Buddi
+//  Ghostwire
 //
 //  High-level tmux operations controller
 //

@@ -1,6 +1,6 @@
 //
 //  ShelfItem.swift
-//  buddi
+//  Ghostwire
 //
 //
 

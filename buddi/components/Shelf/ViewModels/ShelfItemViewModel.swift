@@ -1,6 +1,6 @@
 //
 //  ShelfItemViewModel.swift
-//  buddi
+//  Ghostwire
 //
 //
 

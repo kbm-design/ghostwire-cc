@@ -1,6 +1,6 @@
 //
 //  MusicSlotConfigurationView.swift
-//  buddi
+//  Ghostwire
 //
 //
 

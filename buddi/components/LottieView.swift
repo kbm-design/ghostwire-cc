@@ -1,6 +1,6 @@
 //
 //  LottieView.swift
-//  buddi
+//  Ghostwire
 //
 //
 

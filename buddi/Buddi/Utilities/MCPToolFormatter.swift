@@ -1,6 +1,6 @@
 //
 //  MCPToolFormatter.swift
-//  Buddi
+//  Ghostwire
 //
 //  Utility for formatting MCP tool names and arguments
 //

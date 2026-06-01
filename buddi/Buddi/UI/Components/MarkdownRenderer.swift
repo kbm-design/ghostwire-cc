@@ -1,6 +1,6 @@
 import SwiftUI
 
-struct BuddiMarkdownText: View {
+struct GhostwireMarkdownText: View {
     let text: String
     let baseColor: Color
     let fontSize: CGFloat

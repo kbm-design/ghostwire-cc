@@ -1,6 +1,6 @@
 //
 //  DragDetector.swift
-//  buddi
+//  Ghostwire
 //
 //
 

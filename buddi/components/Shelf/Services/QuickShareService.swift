@@ -1,6 +1,6 @@
 //
 //  QuickShareService.swift
-//  buddi
+//  Ghostwire
 //
 //
 

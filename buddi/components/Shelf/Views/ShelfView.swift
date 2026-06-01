@@ -1,6 +1,6 @@
 //
 //  ShelfItemView.swift
-//  buddi
+//  Ghostwire
 //
 //
 
@@ -8,7 +8,7 @@ import SwiftUI
 import AppKit
 
 struct ShelfView: View {
-    @EnvironmentObject var vm: BuddiViewModel
+    @EnvironmentObject var vm: GhostwireViewModel
     @StateObject var tvm = ShelfStateViewModel.shared
     @StateObject var selection = ShelfSelectionModel.shared
     @StateObject private var quickLookService = QuickLookService()

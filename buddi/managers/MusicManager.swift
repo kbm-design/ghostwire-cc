@@ -1,6 +1,6 @@
 //
 //  MusicManager.swift
-//  buddi
+//  Ghostwire
 //
 //
 import AppKit
@@ -34,7 +34,7 @@ class MusicManager: ObservableObject {
     @Published var isPlaying = false
     @Published var album: String = "Self Love"
     @Published var isPlayerIdle: Bool = true
-    @Published var animations: BuddiAnimations = .init()
+    @Published var animations: GhostwireAnimations = .init()
     @Published var avgColor: NSColor = .white
     @Published var bundleIdentifier: String? = nil
     @Published var songDuration: TimeInterval = 0
@@ -45,7 +45,7 @@ class MusicManager: ObservableObject {
     @Published var repeatMode: RepeatMode = .off
     @Published var volume: Double = 0.5
     @Published var volumeControlSupported: Bool = true
-    @ObservedObject var coordinator = BuddiViewCoordinator.shared
+    @ObservedObject var coordinator = GhostwireViewCoordinator.shared
     @Published var usingAppIconForArtwork: Bool = false
     @Published var currentLyrics: String = ""
     @Published var isFetchingLyrics: Bool = false

@@ -1,12 +1,12 @@
 //
-//  BuddiWindow.swift
-//  buddi
+//  GhostwireWindow.swift
+//  Ghostwire
 //
 //
 
 import Cocoa
 
-class BuddiWindow: NSPanel {
+class GhostwireWindow: NSPanel {
     override init(
         contentRect: NSRect,
         styleMask: NSWindow.StyleMask,

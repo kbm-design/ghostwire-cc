@@ -1,6 +1,6 @@
 //
 //  NotchMenuView.swift
-//  Buddi
+//  Ghostwire
 //
 //  Minimal notch menu
 //

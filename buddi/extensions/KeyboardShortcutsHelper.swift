@@ -1,6 +1,6 @@
 //
 //  KeyboardShortcutsHelper.swift
-//  buddi
+//  Ghostwire
 //
 //
 

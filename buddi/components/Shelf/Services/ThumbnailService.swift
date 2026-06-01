@@ -1,6 +1,6 @@
 //
 //  ThumbnailService.swift
-//  buddi
+//  Ghostwire
 //
 //
 

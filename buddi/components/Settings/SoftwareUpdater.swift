@@ -1,6 +1,6 @@
 //
 //  SoftwareUpdater.swift
-//  buddi
+//  Ghostwire
 //
 //
 

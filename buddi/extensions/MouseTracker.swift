@@ -1,6 +1,6 @@
 //
 //  MouseTracker.swift
-//  buddi
+//  Ghostwire
 //
 //
 

@@ -1,6 +1,6 @@
 //
 //  SettingsWindowController.swift
-//  buddi
+//  Ghostwire
 //
 //
 
@@ -54,7 +54,7 @@ class SettingsWindowController: NSWindowController {
         
         // Configure window to be a standard document-style window
         window.isRestorable = true
-        window.identifier = NSUserInterfaceItemIdentifier("BuddiSettingsWindow")
+        window.identifier = NSUserInterfaceItemIdentifier("GhostwireSettingsWindow")
         
         // Create the SwiftUI content
         let settingsView = SettingsView(updaterController: updaterController)

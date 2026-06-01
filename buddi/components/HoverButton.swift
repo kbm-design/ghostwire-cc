@@ -1,6 +1,6 @@
 //
 //  HoverButton.swift
-//  buddi
+//  Ghostwire
 //
 //
 

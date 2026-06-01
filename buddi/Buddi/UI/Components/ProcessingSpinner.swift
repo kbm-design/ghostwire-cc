@@ -1,6 +1,6 @@
 //
 //  ProcessingSpinner.swift
-//  Buddi
+//  Ghostwire
 //
 //  Animated symbol spinner for processing state
 //

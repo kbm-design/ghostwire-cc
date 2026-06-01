@@ -1,6 +1,6 @@
 //
 //  SoundPickerRow.swift
-//  Buddi
+//  Ghostwire
 //
 //  Notification sound selection picker for settings menu
 //
@@ -11,7 +11,7 @@ import SwiftUI
 struct SoundPickerRow: View {
     @ObservedObject var soundSelector: SoundSelector
     @State private var isHovered = false
-    @State private var selectedSound: NotificationSound = BuddiSettings.notificationSound
+    @State private var selectedSound: NotificationSound = GhostwireSettings.notificationSound
 
     private var isExpanded: Bool {
         soundSelector.isPickerExpanded
@@ -74,7 +74,7 @@ struct SoundPickerRow: View {
                                     NSSound(named: soundName)?.play()
                                 }
                                 selectedSound = sound
-                                BuddiSettings.notificationSound = sound
+                                GhostwireSettings.notificationSound = sound
                             }
                         }
                     }
@@ -85,7 +85,7 @@ struct SoundPickerRow: View {
             }
         }
         .onAppear {
-            selectedSound = BuddiSettings.notificationSound
+            selectedSound = GhostwireSettings.notificationSound
         }
     }
 

@@ -1,6 +1,6 @@
 //
 //  generic.swift
-//  buddi
+//  Ghostwire
 //
 //
 

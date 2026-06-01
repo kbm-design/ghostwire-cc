@@ -1,6 +1,6 @@
 //
 //  NowPlayingController.swift
-//  buddi
+//  Ghostwire
 //
 //
 

@@ -1,6 +1,6 @@
 //
 //  ActionButton.swift
-//  Buddi
+//  Ghostwire
 //
 //  Reusable action button component
 //

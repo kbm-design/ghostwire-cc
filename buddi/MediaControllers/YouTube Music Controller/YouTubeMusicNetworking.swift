@@ -1,6 +1,6 @@
 //
 //  YouTubeMusicNetworking.swift
-//  buddi
+//  Ghostwire
 //
 //
 

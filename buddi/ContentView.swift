@@ -1,6 +1,6 @@
 //
 //  ContentView.swift
-//  buddi
+//  Ghostwire
 //
 //  Modified by Richard Kunkli on 24/08/2024.
 //
@@ -14,15 +14,15 @@ import SwiftUIIntrospect
 
 @MainActor
 struct ContentView: View {
-    @EnvironmentObject var vm: BuddiViewModel
+    @EnvironmentObject var vm: GhostwireViewModel
     @ObservedObject var webcamManager = WebcamManager.shared
 
-    @ObservedObject var coordinator = BuddiViewCoordinator.shared
+    @ObservedObject var coordinator = GhostwireViewCoordinator.shared
     @ObservedObject var musicManager = MusicManager.shared
     @ObservedObject var batteryModel = BatteryStatusViewModel.shared
     @ObservedObject var brightnessManager = BrightnessManager.shared
     @ObservedObject var volumeManager = VolumeManager.shared
-    @ObservedObject private var sessionBridge = BuddiSessionBridge.shared
+    @ObservedObject private var sessionBridge = GhostwireSessionBridge.shared
     @State private var hoverTask: Task<Void, Never>?
     @State private var isHovering: Bool = false
     @State private var anyDropDebounceTask: Task<Void, Never>?
@@ -289,7 +289,7 @@ struct ContentView: View {
                                 .frame(width: vm.closedNotchSize.width + 10)
 
                             HStack {
-                                BuddiBatteryView(
+                                GhostwireBatteryView(
                                     batteryWidth: 30,
                                     isCharging: batteryModel.isCharging,
                                     isInLowPowerMode: batteryModel.isInLowPowerMode,
@@ -311,9 +311,9 @@ struct ContentView: View {
                           MusicLiveActivity()
                               .frame(alignment: .center)
                       } else if !coordinator.expandingView.show && vm.notchState == .closed && (!musicManager.isPlaying && musicManager.isPlayerIdle) && Defaults[.showNotHumanFace] && !vm.hideOnClosed  {
-                          BuddiFaceAnimation()
+                          GhostwireFaceAnimation()
                        } else if vm.notchState == .open {
-                           BuddiHeader()
+                           GhostwireHeader()
                                .frame(height: max(24, vm.effectiveClosedNotchHeight))
                                .opacity(gestureProgress != 0 ? 1.0 - min(abs(gestureProgress) * 0.1, 0.3) : 1.0)
                        } else {
@@ -387,7 +387,7 @@ struct ContentView: View {
     }
 
     @ViewBuilder
-    func BuddiFaceAnimation() -> some View {
+    func GhostwireFaceAnimation() -> some View {
         HStack {
             HStack {
                 Rectangle()
@@ -679,7 +679,7 @@ extension ContentView {
         let notchContentHeight = max(0, vm.effectiveClosedNotchHeight - (isHovering ? 0 : 12))
         let sideWidth = max(0, vm.effectiveClosedNotchHeight - 12) + 10
         let centerWidth = vm.closedNotchSize.width + (isHovering ? 8 : 0)
-        let sessions = BuddiSessionBridge.shared.sessionMonitor.instances
+        let sessions = GhostwireSessionBridge.shared.sessionMonitor.instances
         let isProcessing = sessions.contains { $0.phase.isActive }
         let hasPending = sessions.contains { $0.phase.isWaitingForApproval }
         let hasWaiting = sessions.contains { $0.phase == .waitingForInput }
@@ -720,7 +720,7 @@ extension ContentView {
     }
 
     private var hasActiveClaudeSession: Bool {
-        BuddiSessionBridge.shared.sessionMonitor.instances.contains { $0.phase.isActive || $0.phase.needsAttention }
+        GhostwireSessionBridge.shared.sessionMonitor.instances.contains { $0.phase.isActive || $0.phase.needsAttention }
     }
 
     /// Fires a ~1.5s edge-glow pulse around the notch when a new permission arrives.
@@ -741,7 +741,7 @@ extension ContentView {
 }
 
 #Preview {
-    let vm = BuddiViewModel()
+    let vm = GhostwireViewModel()
     vm.open()
     return ContentView()
         .environmentObject(vm)

@@ -1,6 +1,6 @@
 //
 //  ProcessTreeBuilder.swift
-//  Buddi
+//  Ghostwire
 //
 //  Builds and queries process trees using ps command
 //
@@ -8,7 +8,7 @@
 import Foundation
 
 /// Information about a process in the tree
-struct BuddiProcessInfo: Sendable {
+struct GhostwireProcessInfo: Sendable {
     let pid: Int
     let ppid: Int
     let command: String
@@ -28,13 +28,13 @@ struct ProcessTreeBuilder: Sendable {
 
     private nonisolated init() {}
 
-    /// Build a process tree mapping PID -> BuddiProcessInfo
-    nonisolated func buildTree() -> [Int: BuddiProcessInfo] {
+    /// Build a process tree mapping PID -> GhostwireProcessInfo
+    nonisolated func buildTree() -> [Int: GhostwireProcessInfo] {
         guard let output = ProcessExecutor.shared.runSyncOrNil("/bin/ps", arguments: ["-eo", "pid,ppid,tty,comm"]) else {
             return [:]
         }
 
-        var tree: [Int: BuddiProcessInfo] = [:]
+        var tree: [Int: GhostwireProcessInfo] = [:]
 
         for line in output.components(separatedBy: "\n") {
             let parts = line.trimmingCharacters(in: .whitespaces)
@@ -48,14 +48,14 @@ struct ProcessTreeBuilder: Sendable {
             let tty = parts[2] == "??" ? nil : parts[2]
             let command = parts[3...].joined(separator: " ")
 
-            tree[pid] = BuddiProcessInfo(pid: pid, ppid: ppid, command: command, tty: tty)
+            tree[pid] = GhostwireProcessInfo(pid: pid, ppid: ppid, command: command, tty: tty)
         }
 
         return tree
     }
 
     /// Check if a process has tmux in its parent chain
-    nonisolated func isInTmux(pid: Int, tree: [Int: BuddiProcessInfo]) -> Bool {
+    nonisolated func isInTmux(pid: Int, tree: [Int: GhostwireProcessInfo]) -> Bool {
         var current = pid
         var depth = 0
 
@@ -72,7 +72,7 @@ struct ProcessTreeBuilder: Sendable {
     }
 
     /// Check if a process has cmux in its parent chain
-    nonisolated func isInCmux(pid: Int, tree: [Int: BuddiProcessInfo]) -> Bool {
+    nonisolated func isInCmux(pid: Int, tree: [Int: GhostwireProcessInfo]) -> Bool {
         var current = pid
         var depth = 0
 
@@ -89,12 +89,12 @@ struct ProcessTreeBuilder: Sendable {
     }
 
     /// Check if a process is in any multiplexer (tmux or cmux)
-    nonisolated func isInMultiplexer(pid: Int, tree: [Int: BuddiProcessInfo]) -> Bool {
+    nonisolated func isInMultiplexer(pid: Int, tree: [Int: GhostwireProcessInfo]) -> Bool {
         isInTmux(pid: pid, tree: tree) || isInCmux(pid: pid, tree: tree)
     }
 
     /// Walk up the process tree to find the terminal app PID
-    nonisolated func findTerminalPid(forProcess pid: Int, tree: [Int: BuddiProcessInfo]) -> Int? {
+    nonisolated func findTerminalPid(forProcess pid: Int, tree: [Int: GhostwireProcessInfo]) -> Int? {
         var current = pid
         var depth = 0
 
@@ -113,7 +113,7 @@ struct ProcessTreeBuilder: Sendable {
     }
 
     /// Check if targetPid is a descendant of ancestorPid
-    nonisolated func isDescendant(targetPid: Int, ofAncestor ancestorPid: Int, tree: [Int: BuddiProcessInfo]) -> Bool {
+    nonisolated func isDescendant(targetPid: Int, ofAncestor ancestorPid: Int, tree: [Int: GhostwireProcessInfo]) -> Bool {
         var current = targetPid
         var depth = 0
 
@@ -130,7 +130,7 @@ struct ProcessTreeBuilder: Sendable {
     }
 
     /// Find all descendant PIDs of a given process
-    nonisolated func findDescendants(of pid: Int, tree: [Int: BuddiProcessInfo]) -> Set<Int> {
+    nonisolated func findDescendants(of pid: Int, tree: [Int: GhostwireProcessInfo]) -> Set<Int> {
         var descendants: Set<Int> = []
         var queue = [pid]
 

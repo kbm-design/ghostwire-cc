@@ -1,6 +1,6 @@
 //
 //  ConditionalModifier.swift
-//  buddi
+//  Ghostwire
 //
 //
 

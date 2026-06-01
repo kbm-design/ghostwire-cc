@@ -1,6 +1,6 @@
 //
 //  buddiApp.swift
-//  buddi
+//  Ghostwire
 //
 //
 
@@ -12,7 +12,7 @@ import Sparkle
 import SwiftUI
 
 @main
-struct BuddiApp: App {
+struct GhostwireApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @Default(.menubarIcon) var showMenuBarIcon
     @Environment(\.openWindow) var openWindow
@@ -55,10 +55,10 @@ final class FirstMouseHostingView<Content: View>: NSHostingView<Content> {
 class AppDelegate: NSObject, NSApplicationDelegate {
     var statusItem: NSStatusItem?
     var windows: [String: NSWindow] = [:] // UUID -> NSWindow
-    var viewModels: [String: BuddiViewModel] = [:] // UUID -> BuddiViewModel
+    var viewModels: [String: GhostwireViewModel] = [:] // UUID -> GhostwireViewModel
     var window: NSWindow?
-    let vm: BuddiViewModel = .init()
-    @ObservedObject var coordinator = BuddiViewCoordinator.shared
+    let vm: GhostwireViewModel = .init()
+    @ObservedObject var coordinator = GhostwireViewCoordinator.shared
     var quickShareService = QuickShareService.shared
     var whatsNewWindow: NSWindow?
     var timer: Timer?
@@ -91,7 +91,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         cleanupDragDetectors()
         cleanupWindows()
         XPCHelperClient.shared.stopMonitoringAccessibilityAuthorization()
-        BuddiSessionBridge.shared.stopMonitoring()
+        GhostwireSessionBridge.shared.stopMonitoring()
     }
 
     @MainActor
@@ -118,12 +118,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func enableSkyLightOnAllWindows() {
         if Defaults[.showOnAllDisplays] {
             windows.values.forEach { window in
-                if let skyWindow = window as? BuddiSkyLightWindow {
+                if let skyWindow = window as? GhostwireSkyLightWindow {
                     skyWindow.enableSkyLight()
                 }
             }
         } else {
-            if let skyWindow = window as? BuddiSkyLightWindow {
+            if let skyWindow = window as? GhostwireSkyLightWindow {
                 skyWindow.enableSkyLight()
             }
         }
@@ -137,12 +137,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             await MainActor.run {
                 if Defaults[.showOnAllDisplays] {
                     self.windows.values.forEach { window in
-                        if let skyWindow = window as? BuddiSkyLightWindow {
+                        if let skyWindow = window as? GhostwireSkyLightWindow {
                             skyWindow.disableSkyLight()
                         }
                     }
                 } else {
-                    if let skyWindow = self.window as? BuddiSkyLightWindow {
+                    if let skyWindow = self.window as? GhostwireSkyLightWindow {
                         skyWindow.disableSkyLight()
                     }
                 }
@@ -237,11 +237,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func createBuddiWindow(for screen: NSScreen, with viewModel: BuddiViewModel) -> NSWindow {
+    private func createGhostwireWindow(for screen: NSScreen, with viewModel: GhostwireViewModel) -> NSWindow {
         let rect = NSRect(x: 0, y: 0, width: windowSize.width, height: windowSize.height)
         let styleMask: NSWindow.StyleMask = [.borderless, .nonactivatingPanel, .utilityWindow, .hudWindow]
         
-        let window = BuddiSkyLightWindow(contentRect: rect, styleMask: styleMask, backing: .buffered, defer: false)
+        let window = GhostwireSkyLightWindow(contentRect: rect, styleMask: styleMask, backing: .buffered, defer: false)
         
         // Enable SkyLight only when screen is locked
         if isScreenLocked {
@@ -451,8 +451,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         if !Defaults[.showOnAllDisplays] {
             let viewModel = self.vm
-            BuddiSessionBridge.shared.buddiViewModel = viewModel
-            let window = createBuddiWindow(
+            GhostwireSessionBridge.shared.ghostwireViewModel = viewModel
+            let window = createGhostwireWindow(
                 for: NSScreen.main ?? NSScreen.screens.first!, with: viewModel)
             self.window = window
             adjustWindowPosition(changeAlpha: true)
@@ -478,7 +478,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         previousScreens = NSScreen.screens
         HookInstaller.installIfNeeded()
         CodexHookInstaller.installIfNeeded()
-        BuddiSessionBridge.shared.startMonitoring()
+        GhostwireSessionBridge.shared.startMonitoring()
         UsageService.shared.startPolling()
 
 
@@ -543,8 +543,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 guard let uuid = screen.displayUUID else { continue }
                 
                 if windows[uuid] == nil {
-                    let viewModel = BuddiViewModel(screenUUID: uuid)
-                    let window = createBuddiWindow(for: screen, with: viewModel)
+                    let viewModel = GhostwireViewModel(screenUUID: uuid)
+                    let window = createGhostwireWindow(for: screen, with: viewModel)
 
                     windows[uuid] = window
                     viewModels[uuid] = viewModel
@@ -562,7 +562,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             let primaryScreenUUID = coordinator.selectedScreenUUID.isEmpty
                 ? NSScreen.main?.displayUUID
                 : coordinator.selectedScreenUUID
-            BuddiSessionBridge.shared.buddiViewModel = primaryScreenUUID.flatMap { viewModels[$0] } ?? viewModels.values.first
+            GhostwireSessionBridge.shared.ghostwireViewModel = primaryScreenUUID.flatMap { viewModels[$0] } ?? viewModels.values.first
         } else {
             let selectedScreen: NSScreen
 
@@ -584,7 +584,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             vm.notchSize = getClosedNotchSize(screenUUID: selectedScreen.displayUUID)
 
             if window == nil {
-                window = createBuddiWindow(for: selectedScreen, with: vm)
+                window = createGhostwireWindow(for: selectedScreen, with: vm)
             }
 
             if let window = window {
@@ -595,7 +595,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
 
-            BuddiSessionBridge.shared.buddiViewModel = vm
+            GhostwireSessionBridge.shared.ghostwireViewModel = vm
         }
     }
 

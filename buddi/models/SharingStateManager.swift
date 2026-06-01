@@ -1,6 +1,6 @@
 //
 //  SharingStateManager.swift
-//  buddi
+//  Ghostwire
 //
 //
 
@@ -9,7 +9,7 @@ import Combine
 import Foundation
 
 extension Notification.Name {
-	static let sharingDidFinish = Notification.Name("com.buddi.sharingDidFinish")
+	static let sharingDidFinish = Notification.Name("com.ghostwire.notch.sharingDidFinish")
 }
 
 @MainActor

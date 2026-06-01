@@ -1,6 +1,6 @@
 //
 //  MusicVisualizer.swift
-//  buddi
+//  Ghostwire
 //
 //
 import AppKit

@@ -1,6 +1,6 @@
 //
 //  TerminalAppRegistry.swift
-//  Buddi
+//  Ghostwire
 //
 //  Centralized registry of known terminal applications
 //

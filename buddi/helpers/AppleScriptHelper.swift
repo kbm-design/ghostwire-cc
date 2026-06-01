@@ -1,6 +1,6 @@
 //
 //  AppleScriptHelper.swift
-//  buddi
+//  Ghostwire
 //
 //
 

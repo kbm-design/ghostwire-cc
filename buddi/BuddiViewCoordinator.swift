@@ -1,6 +1,6 @@
 //
-//  BuddiViewCoordinator.swift
-//  buddi
+//  GhostwireViewCoordinator.swift
+//  Ghostwire
 //
 //
 
@@ -47,8 +47,8 @@ struct ExpandedItem {
 }
 
 @MainActor
-class BuddiViewCoordinator: ObservableObject {
-    static let shared = BuddiViewCoordinator()
+class GhostwireViewCoordinator: ObservableObject {
+    static let shared = GhostwireViewCoordinator()
 
     @Published var currentView: NotchViews = .buddy
     @Published var helloAnimationRunning: Bool = false

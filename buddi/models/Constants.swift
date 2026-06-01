@@ -1,6 +1,6 @@
 //
 //  Constants.swift
-//  buddi
+//  Ghostwire
 //
 //
 

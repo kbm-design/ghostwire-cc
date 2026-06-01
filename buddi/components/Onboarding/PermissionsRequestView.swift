@@ -1,6 +1,6 @@
 //
 //  PermissionsRequestView.swift
-//  buddi
+//  Ghostwire
 //
 //
 

@@ -1,6 +1,6 @@
 //
 //  InlineHUDs.swift
-//  buddi
+//  Ghostwire
 //
 //
 
@@ -8,7 +8,7 @@ import SwiftUI
 import Defaults
 
 struct InlineHUD: View {
-    @EnvironmentObject var vm: BuddiViewModel
+    @EnvironmentObject var vm: GhostwireViewModel
     @Binding var type: SneakContentType
     @Binding var value: CGFloat
     @Binding var icon: String
@@ -157,5 +157,5 @@ struct InlineHUD: View {
         .padding(.horizontal, 8)
         .background(Color.black)
         .padding()
-        .environmentObject(BuddiViewModel())
+        .environmentObject(GhostwireViewModel())
 }

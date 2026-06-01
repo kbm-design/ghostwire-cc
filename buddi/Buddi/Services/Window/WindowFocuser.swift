@@ -1,6 +1,6 @@
 //
 //  WindowFocuser.swift
-//  Buddi
+//  Ghostwire
 //
 //  Focuses windows using yabai
 //

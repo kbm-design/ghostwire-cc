@@ -1,6 +1,6 @@
 //
 //  SessionPhaseHelpers.swift
-//  Buddi
+//  Ghostwire
 //
 //  Helper functions for session phase display
 //

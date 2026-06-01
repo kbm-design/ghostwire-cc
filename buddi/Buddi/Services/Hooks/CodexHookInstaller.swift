@@ -1,6 +1,6 @@
 //
 //  CodexHookInstaller.swift
-//  Buddi
+//  Ghostwire
 //
 //  Auto-installs OpenAI Codex CLI hooks on app launch.
 //  Mirrors HookInstaller (Claude Code) but targets ~/.codex/hooks.json.

@@ -1,6 +1,6 @@
 //
 //  TmuxTargetFinder.swift
-//  Buddi
+//  Ghostwire
 //
 //  Finds tmux/cmux targets for Claude processes
 //

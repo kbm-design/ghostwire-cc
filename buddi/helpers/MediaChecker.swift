@@ -1,6 +1,6 @@
 //
 //  MediaChecker.swift
-//  buddi
+//  Ghostwire
 //
 //
 

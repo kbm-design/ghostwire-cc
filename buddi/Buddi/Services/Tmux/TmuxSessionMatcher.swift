@@ -1,6 +1,6 @@
 //
 //  TmuxSessionMatcher.swift
-//  Buddi
+//  Ghostwire
 //
 //  Matches tmux panes to session files by sampling visible text
 //

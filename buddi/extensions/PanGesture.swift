@@ -1,6 +1,6 @@
 //
 //  PanGesture.swift
-//  buddi
+//  Ghostwire
 //
 //
 

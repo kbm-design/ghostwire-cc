@@ -1,6 +1,6 @@
 //
 //  DownloadView.swift
-//  buddi
+//  Ghostwire
 //
 //
 

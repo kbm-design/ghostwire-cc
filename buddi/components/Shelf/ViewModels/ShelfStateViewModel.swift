@@ -1,6 +1,6 @@
 //
 //  ShelfStateViewModel.swift
-//  buddi
+//  Ghostwire
 //
 
 import Foundation

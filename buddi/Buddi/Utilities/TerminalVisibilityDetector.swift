@@ -1,6 +1,6 @@
 //
 //  TerminalVisibilityDetector.swift
-//  Buddi
+//  Ghostwire
 //
 //  Detects if terminal windows are visible on current space
 //

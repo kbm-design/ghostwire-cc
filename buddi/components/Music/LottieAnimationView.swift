@@ -1,6 +1,6 @@
 //
 //  LottieAnimationContainer.swift
-//  buddi
+//  Ghostwire
 //
 //
 

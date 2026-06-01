@@ -1,13 +1,13 @@
 //
-//  BuddiXPCHelperProtocol.swift
-//  BuddiXPCHelper
+//  GhostwireXPCHelperProtocol.swift
+//  GhostwireXPCHelper
 //
 //
 
 import Foundation
 
 /// The protocol that this service will vend as its API. This protocol will also need to be visible to the process hosting the service.
-@objc protocol BuddiXPCHelperProtocol {
+@objc protocol GhostwireXPCHelperProtocol {
     func isAccessibilityAuthorized(with reply: @escaping (Bool) -> Void)
     func requestAccessibilityAuthorization()
     func ensureAccessibilityAuthorization(_ promptIfNeeded: Bool, with reply: @escaping (Bool) -> Void)

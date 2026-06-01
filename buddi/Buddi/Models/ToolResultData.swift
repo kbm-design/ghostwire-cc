@@ -1,6 +1,6 @@
 //
 //  ToolResultData.swift
-//  Buddi
+//  Ghostwire
 //
 //  Structured models for all Claude Code tool results
 //

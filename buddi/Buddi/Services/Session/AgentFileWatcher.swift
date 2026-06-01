@@ -1,6 +1,6 @@
 //
 //  AgentFileWatcher.swift
-//  Buddi
+//  Ghostwire
 //
 //  Watches agent JSONL files for real-time subagent tool updates.
 //  Each Task tool gets its own watcher for its agent file.
@@ -10,7 +10,7 @@ import Foundation
 import os
 
 /// Logger for agent file watcher
-private let logger = os.Logger(subsystem: "com.splab.buddi", category: "AgentFileWatcher")
+private let logger = os.Logger(subsystem: "com.ghostwire.notch", category: "AgentFileWatcher")
 
 /// Protocol for receiving agent file update notifications
 protocol AgentFileWatcherDelegate: AnyObject {
@@ -27,7 +27,7 @@ class AgentFileWatcher {
     private let agentId: String
     private let cwd: String
     private let filePath: String
-    private let queue = DispatchQueue(label: "com.buddi.agentfilewatcher", qos: .userInitiated)
+    private let queue = DispatchQueue(label: "com.ghostwire.notch.agentfilewatcher", qos: .userInitiated)
 
     /// Track seen tool IDs to avoid duplicates
     private var seenToolIds: Set<String> = []

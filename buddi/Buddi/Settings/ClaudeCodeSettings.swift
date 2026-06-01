@@ -4,7 +4,7 @@ import SwiftUI
 
 struct ClaudeCodeSettings: View {
     @State private var hooksInstalled = HookInstaller.isInstalled()
-    @State private var selectedSound = BuddiSettings.notificationSound
+    @State private var selectedSound = GhostwireSettings.notificationSound
     @ObservedObject private var usageService = UsageService.shared
 
     var body: some View {
@@ -42,7 +42,7 @@ struct ClaudeCodeSettings: View {
                     }
                 }
                 .onChange(of: selectedSound) { _, newValue in
-                    BuddiSettings.notificationSound = newValue
+                    GhostwireSettings.notificationSound = newValue
                     if let name = newValue.soundName {
                         NSSound(named: NSSound.Name(name))?.play()
                     }
@@ -109,7 +109,7 @@ struct ClaudeCodeSettings: View {
         }
         .onAppear {
             hooksInstalled = HookInstaller.isInstalled()
-            selectedSound = BuddiSettings.notificationSound
+            selectedSound = GhostwireSettings.notificationSound
         }
     }
 }

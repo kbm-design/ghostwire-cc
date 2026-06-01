@@ -1,6 +1,6 @@
 //
 //  AppleMusicController.swift
-//  buddi
+//  Ghostwire
 //
 //
 

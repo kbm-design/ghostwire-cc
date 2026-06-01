@@ -1,6 +1,6 @@
 //
 //  StatusIcons.swift
-//  Buddi
+//  Ghostwire
 //
 //  Pixel-art status icons for Claude instances
 //

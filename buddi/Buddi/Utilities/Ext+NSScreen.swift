@@ -1,6 +1,6 @@
 //
 //  Ext+NSScreen.swift
-//  Buddi
+//  Ghostwire
 //
 //  Extensions for NSScreen to detect notch and built-in display
 //

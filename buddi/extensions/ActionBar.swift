@@ -1,6 +1,6 @@
 //
 //  ActionBar.swift
-//  buddi
+//  Ghostwire
 //
 //
 

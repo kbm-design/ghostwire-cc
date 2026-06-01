@@ -1,6 +1,6 @@
 //
 //  TipStore.swift
-//  buddi
+//  Ghostwire
 //
 //
 

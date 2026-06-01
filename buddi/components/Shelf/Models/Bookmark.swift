@@ -1,6 +1,6 @@
 //
 //  Bookmark.swift
-//  buddi
+//  Ghostwire
 //
 //
 

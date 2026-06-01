@@ -1,6 +1,6 @@
 //
 //  LiveActivityModifier.swift
-//  buddi
+//  Ghostwire
 //
 //
 

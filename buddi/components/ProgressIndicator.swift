@@ -1,6 +1,6 @@
     //
     //  ProgressIndicator.swift
-    //  buddi
+    //  Ghostwire
     //
     //
 

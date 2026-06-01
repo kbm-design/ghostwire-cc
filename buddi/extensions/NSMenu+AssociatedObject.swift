@@ -1,6 +1,6 @@
 //
 //  NSMenu+AssociatedObject.swift
-//  buddi
+//  Ghostwire
 //
 //
 

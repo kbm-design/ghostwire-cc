@@ -1,6 +1,6 @@
 //
 //  drop.swift
-//  buddi
+//  Ghostwire
 //
 //
 
@@ -8,7 +8,7 @@ import Foundation
 import SwiftUI
 
 
-public class BuddiAnimations {
+public class GhostwireAnimations {
     @Published var notchStyle: Style = .notch
     
     init() {

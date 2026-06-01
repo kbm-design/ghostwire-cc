@@ -1,6 +1,6 @@
 //
 //  ChatView.swift
-//  Buddi
+//  Ghostwire
 //
 //  Redesigned chat interface with clean visual hierarchy
 //
@@ -307,7 +307,7 @@ struct ChatView: View {
                 .animation(.spring(response: 0.3, dampingFraction: 0.8), value: history.count)
             }
             .scaleEffect(x: 1, y: -1)
-            .buddiScrollGeometryChange(
+            .ghostwireScrollGeometryChange(
                 pauseAutoscroll: pauseAutoscroll,
                 resumeAutoscroll: resumeAutoscroll,
                 isAutoscrollPaused: isAutoscrollPaused
@@ -477,7 +477,7 @@ struct ChatView: View {
     }
 
     private func sendToSession(_ text: String) async {
-        let logger = os.Logger(subsystem: "com.splab.buddi", category: "ChatSend")
+        let logger = os.Logger(subsystem: "com.ghostwire.notch", category: "ChatSend")
         logger.debug("sendToSession: isInTmux=\(session.isInTmux) isInCmux=\(session.isInCmux) tty=\(session.tty ?? "nil") pid=\(session.pid ?? 0) cmuxWS=\(session.cmuxWorkspaceRef ?? "nil") cmuxSurf=\(session.cmuxSurfaceRef ?? "nil")")
 
         guard session.isInMultiplexer else {
@@ -578,7 +578,7 @@ struct UserMessageView: View {
         HStack {
             Spacer(minLength: 60)
 
-            BuddiMarkdownText(text, color: .white, fontSize: 13)
+            GhostwireMarkdownText(text, color: .white, fontSize: 13)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
                 .background(
@@ -602,7 +602,7 @@ struct AssistantMessageView: View {
                 .frame(width: 6, height: 6)
                 .padding(.top, 5)
 
-            BuddiMarkdownText(text, color: .white.opacity(0.9), fontSize: 13)
+            GhostwireMarkdownText(text, color: .white.opacity(0.9), fontSize: 13)
 
             Spacer(minLength: 60)
         }
@@ -1196,7 +1196,7 @@ struct NewMessagesIndicator: View {
 
 private extension View {
     @ViewBuilder
-    func buddiScrollGeometryChange(
+    func ghostwireScrollGeometryChange(
         pauseAutoscroll: @escaping () -> Void,
         resumeAutoscroll: @escaping () -> Void,
         isAutoscrollPaused: Bool

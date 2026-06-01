@@ -1,9 +1,9 @@
 //
 //  AppStubs.swift
-//  Buddi
+//  Ghostwire
 //
 //  Stub types for app-level code that references app-level types
-//  not ported into buddi. These are minimal stubs to allow compilation.
+//  not ported into Ghostwire. These are minimal stubs to allow compilation.
 //
 
 import Foundation

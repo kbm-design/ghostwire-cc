@@ -1,6 +1,6 @@
 //
 //  TmuxPathFinder.swift
-//  Buddi
+//  Ghostwire
 //
 //  Finds tmux and cmux executable paths
 //

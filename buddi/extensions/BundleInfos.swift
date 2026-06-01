@@ -1,6 +1,6 @@
 //
 //  BundleInfos.swift
-//  buddi
+//  Ghostwire
 //
 //
 

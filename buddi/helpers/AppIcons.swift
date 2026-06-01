@@ -1,6 +1,6 @@
 //
 //  AppIcons.swift
-//  buddi
+//  Ghostwire
 //
 //
 

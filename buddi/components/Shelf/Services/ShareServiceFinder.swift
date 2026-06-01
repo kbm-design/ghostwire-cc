@@ -1,6 +1,6 @@
 //
 //  ShareServiceFinder.swift
-//  buddi
+//  Ghostwire
 //
 //
 

@@ -1,6 +1,6 @@
 //
 //  MusicControllerSelectionView.swift
-//  buddi
+//  Ghostwire
 //
 //
 

@@ -1,6 +1,6 @@
 //
 //  NSScreen+UUID.swift
-//  buddi
+//  Ghostwire
 //
 //
 

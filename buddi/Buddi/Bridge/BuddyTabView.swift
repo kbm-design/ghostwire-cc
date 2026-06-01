@@ -1,9 +1,9 @@
 import SwiftUI
 
 struct BuddyTabView: View {
-    @EnvironmentObject var vm: BuddiViewModel
-    @ObservedObject private var bridge = BuddiSessionBridge.shared
-    @ObservedObject private var panelVM = BuddiSessionBridge.shared.panelViewModel
+    @EnvironmentObject var vm: GhostwireViewModel
+    @ObservedObject private var bridge = GhostwireSessionBridge.shared
+    @ObservedObject private var panelVM = GhostwireSessionBridge.shared.panelViewModel
     @ObservedObject private var usageService = UsageService.shared
     @State private var suppressionToken = UUID()
     @State private var isSuppressing = false

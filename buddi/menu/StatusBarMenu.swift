@@ -1,6 +1,6 @@
 import Cocoa
 
-class BuddiStatusMenu: NSMenu {
+class GhostwireStatusMenu: NSMenu {
     
     var statusItem: NSStatusItem!
     

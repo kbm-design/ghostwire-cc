@@ -1,6 +1,6 @@
 //
 //  QuickLookService.swift
-//  buddi
+//  Ghostwire
 //
 //
 

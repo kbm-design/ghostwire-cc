@@ -1,12 +1,12 @@
 //
-//  BuddiExtrasMenu.swift
-//  buddi
+//  GhostwireExtrasMenu.swift
+//  Ghostwire
 //
 //
 
 import SwiftUI
 
-struct BuddiLargeButtons: View {
+struct GhostwireLargeButtons: View {
     var action: () -> Void
     var icon: Image
     var title: String
@@ -26,8 +26,8 @@ struct BuddiLargeButtons: View {
     }
 }
 
-struct BuddiExtrasMenu : View {
-    @ObservedObject var vm: BuddiViewModel
+struct GhostwireExtrasMenu : View {
+    @ObservedObject var vm: GhostwireViewModel
     
     var body: some View {
         VStack{
@@ -40,7 +40,7 @@ struct BuddiExtrasMenu : View {
     }
     
     var github: some View {
-        BuddiLargeButtons(
+        GhostwireLargeButtons(
             action: {
                 if let url = URL(string: "https://github.com/user/buddi") {
                     NSWorkspace.shared.open(url)
@@ -70,7 +70,7 @@ struct BuddiExtrasMenu : View {
     }
     
     var hide: some View {
-        BuddiLargeButtons(
+        GhostwireLargeButtons(
             action: {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
                     //vm.openMusic()
@@ -82,7 +82,7 @@ struct BuddiExtrasMenu : View {
     }
     
     var close: some View {
-        BuddiLargeButtons(
+        GhostwireLargeButtons(
             action: {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
@@ -98,5 +98,5 @@ struct BuddiExtrasMenu : View {
 
 
 #Preview {
-    BuddiExtrasMenu(vm: .init())
+    GhostwireExtrasMenu(vm: .init())
 }

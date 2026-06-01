@@ -1,6 +1,6 @@
 //
 //  MarqueeTextView.swift
-//  buddi
+//  Ghostwire
 //
 //
 

@@ -1,6 +1,6 @@
 //
 //  EditPanelView.swift
-//  buddi
+//  Ghostwire
 //
 //
 

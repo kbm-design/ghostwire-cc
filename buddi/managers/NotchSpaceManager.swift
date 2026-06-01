@@ -1,6 +1,6 @@
 //
 //  NotchSpaceManager.swift
-//  buddi
+//  Ghostwire
 //
 //
 

@@ -1,6 +1,6 @@
 //
 //  NotchHomeView.swift
-//  buddi
+//  Ghostwire
 //
 //  Modified by Harsh Vardhan Goswami & Richard Kunkli & Mustafa Ramadan
 //
@@ -12,7 +12,7 @@ import SwiftUI
 // MARK: - Music Player Components
 
 struct MusicPlayerView: View {
-    @EnvironmentObject var vm: BuddiViewModel
+    @EnvironmentObject var vm: GhostwireViewModel
     let albumArtNamespace: Namespace.ID
 
     var body: some View {
@@ -25,7 +25,7 @@ struct MusicPlayerView: View {
 
 struct AlbumArtView: View {
     @ObservedObject var musicManager = MusicManager.shared
-    @ObservedObject var vm: BuddiViewModel
+    @ObservedObject var vm: GhostwireViewModel
     let albumArtNamespace: Namespace.ID
 
     var body: some View {
@@ -110,7 +110,7 @@ struct AlbumArtView: View {
 
 struct MusicControlsView: View {
     @ObservedObject var musicManager = MusicManager.shared
-        @EnvironmentObject var vm: BuddiViewModel
+        @EnvironmentObject var vm: GhostwireViewModel
         @ObservedObject var webcamManager = WebcamManager.shared
     @State private var sliderValue: Double = 0
     @State private var dragging: Bool = false
@@ -418,10 +418,10 @@ struct VolumeControlView: View {
 // MARK: - Main View
 
 struct NotchHomeView: View {
-    @EnvironmentObject var vm: BuddiViewModel
+    @EnvironmentObject var vm: GhostwireViewModel
     @ObservedObject var webcamManager = WebcamManager.shared
     @ObservedObject var batteryModel = BatteryStatusViewModel.shared
-    @ObservedObject var coordinator = BuddiViewCoordinator.shared
+    @ObservedObject var coordinator = GhostwireViewCoordinator.shared
     let albumArtNamespace: Namespace.ID
 
     var body: some View {

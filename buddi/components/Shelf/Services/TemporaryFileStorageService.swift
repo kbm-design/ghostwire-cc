@@ -1,6 +1,6 @@
 //
 //  TemporaryFileStorageService.swift
-//  buddi
+//  Ghostwire
 //
 //
 

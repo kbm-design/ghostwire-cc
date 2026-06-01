@@ -1,6 +1,6 @@
 //
 //  ListItemPopover.swift
-//  buddi
+//  Ghostwire
 //
 //
 

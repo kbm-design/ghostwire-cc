@@ -1,6 +1,6 @@
 //
 //  sizeMatters.swift
-//  buddi
+//  Ghostwire
 //
 //
 

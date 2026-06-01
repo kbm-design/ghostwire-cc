@@ -1,6 +1,6 @@
 //
 //  SparkleView.swift
-//  buddi
+//  Ghostwire
 //
 //
 

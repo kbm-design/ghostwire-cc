@@ -1,6 +1,6 @@
 //
 //  HookInstaller.swift
-//  Buddi
+//  Ghostwire
 //
 //  Auto-installs Claude Code hooks on app launch
 //

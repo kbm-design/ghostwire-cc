@@ -1,6 +1,6 @@
 //
 //  PlaybackState.swift
-//  buddi
+//  Ghostwire
 //
 //
 

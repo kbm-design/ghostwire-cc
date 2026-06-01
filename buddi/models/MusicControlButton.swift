@@ -1,6 +1,6 @@
 //
 //  MusicControlButton.swift
-//  buddi
+//  Ghostwire
 //
 //
 

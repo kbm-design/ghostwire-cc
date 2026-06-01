@@ -1,6 +1,6 @@
 //
 //  SoundSelector.swift
-//  Buddi
+//  Ghostwire
 //
 //  Manages sound selection state for the settings menu
 //

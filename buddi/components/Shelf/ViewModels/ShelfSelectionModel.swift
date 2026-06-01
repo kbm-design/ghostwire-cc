@@ -1,6 +1,6 @@
 //
 //  ShelfSelectionModel.swift
-//  buddi
+//  Ghostwire
 //
 //
 

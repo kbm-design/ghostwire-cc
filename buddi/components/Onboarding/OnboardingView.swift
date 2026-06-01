@@ -1,6 +1,6 @@
 //
 //  OnboardingView.swift
-//  buddi
+//  Ghostwire
 //
 //
 
@@ -136,7 +136,7 @@ struct OnboardingView: View {
                 MusicControllerSelectionView(
                     onContinue: {
                         withAnimation(.easeInOut(duration: 0.6)) {
-                            BuddiViewCoordinator.shared.firstLaunch = false
+                            GhostwireViewCoordinator.shared.firstLaunch = false
                             step = .finished
                         }
                     }

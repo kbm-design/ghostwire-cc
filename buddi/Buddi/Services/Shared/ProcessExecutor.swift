@@ -1,6 +1,6 @@
 //
 //  ProcessExecutor.swift
-//  Buddi
+//  Ghostwire
 //
 //  Shared utility for executing shell commands with proper error handling
 //
@@ -52,7 +52,7 @@ actor ProcessExecutor: ProcessExecuting {
     nonisolated(unsafe) static let shared = ProcessExecutor()
 
     /// Logger for process execution (nonisolated static for cross-context access)
-    nonisolated static let logger = os.Logger(subsystem: "com.splab.buddi", category: "ProcessExecutor")
+    nonisolated static let logger = os.Logger(subsystem: "com.ghostwire.notch", category: "ProcessExecutor")
 
     private init() {}
 

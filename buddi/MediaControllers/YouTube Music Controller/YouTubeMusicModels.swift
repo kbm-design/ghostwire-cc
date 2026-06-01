@@ -1,6 +1,6 @@
 //
 //  YouTubeMusicModels.swift
-//  buddi
+//  Ghostwire
 //
 //
 

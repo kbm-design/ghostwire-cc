@@ -1,6 +1,6 @@
 //
 //  WelcomeView.swift
-//  buddi
+//  Ghostwire
 //
 //
 

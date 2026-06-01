@@ -1,6 +1,6 @@
 //
 //  NSItemProvider+LoadHelpers.swift
-//  buddi
+//  Ghostwire
 //
 //
 

@@ -1,5 +1,5 @@
 //  BrightnessManager.swift
-//  buddi
+//  Ghostwire
 //
 
 import AppKit
@@ -36,7 +36,7 @@ final class BrightnessManager: ObservableObject {
 			} else {
 				refresh()
 			}
-			BuddiViewCoordinator.shared.toggleSneakPeek(status: true, type: .brightness, value: CGFloat(target))
+			GhostwireViewCoordinator.shared.toggleSneakPeek(status: true, type: .brightness, value: CGFloat(target))
 		}
 	}
 
@@ -97,7 +97,7 @@ final class KeyboardBacklightManager: ObservableObject {
 			} else {
 				refresh()
 			}
-			BuddiViewCoordinator.shared.toggleSneakPeek(
+			GhostwireViewCoordinator.shared.toggleSneakPeek(
 				status: true,
 				type: .backlight,
 				value: CGFloat(target)

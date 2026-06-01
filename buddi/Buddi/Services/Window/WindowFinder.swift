@@ -1,6 +1,6 @@
 //
 //  WindowFinder.swift
-//  Buddi
+//  Ghostwire
 //
 //  Finds windows using yabai window manager
 //

@@ -1,6 +1,6 @@
 //
 //  TabSelectionView.swift
-//  buddi
+//  Ghostwire
 //
 //
 
@@ -20,8 +20,8 @@ let tabs = [
 ]
 
 struct TabSelectionView: View {
-    @ObservedObject var coordinator = BuddiViewCoordinator.shared
-    @State private var displayedView: NotchViews = BuddiViewCoordinator.shared.currentView
+    @ObservedObject var coordinator = GhostwireViewCoordinator.shared
+    @State private var displayedView: NotchViews = GhostwireViewCoordinator.shared.currentView
     @Namespace var animation
 
     var body: some View {
@@ -54,5 +54,5 @@ struct TabSelectionView: View {
 }
 
 #Preview {
-    BuddiHeader().environmentObject(BuddiViewModel())
+    GhostwireHeader().environmentObject(GhostwireViewModel())
 }

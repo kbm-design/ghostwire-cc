@@ -1,6 +1,6 @@
 //
 //  CalendarManager.swift
-//  buddi
+//  Ghostwire
 //
 //
 

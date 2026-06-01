@@ -1,6 +1,6 @@
 //
 //  HelloAnimation.swift
-//  buddi
+//  Ghostwire
 //
 //
 

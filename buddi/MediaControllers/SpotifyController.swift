@@ -1,6 +1,6 @@
 //
 //  SpotifyController.swift
-//  buddi
+//  Ghostwire
 //
 //
 

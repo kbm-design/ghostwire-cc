@@ -1,6 +1,6 @@
 //
 //  FileShareView.swift
-//  buddi
+//  Ghostwire
 //
 //
 
@@ -10,7 +10,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct FileShareView: View {
-    @EnvironmentObject private var vm: BuddiViewModel
+    @EnvironmentObject private var vm: GhostwireViewModel
     @StateObject private var quickShare = QuickShareService.shared
     @Default(.quickShareProvider) var quickShareProvider: String
 

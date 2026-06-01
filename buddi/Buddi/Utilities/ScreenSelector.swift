@@ -1,6 +1,6 @@
 //
 //  ScreenSelector.swift
-//  Buddi
+//  Ghostwire
 //
 //  Manages screen selection state and persistence
 //

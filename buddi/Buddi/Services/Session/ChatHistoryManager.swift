@@ -1,6 +1,6 @@
 //
 //  ChatHistoryManager.swift
-//  Buddi
+//  Ghostwire
 //
 
 import Combine

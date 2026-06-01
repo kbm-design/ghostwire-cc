@@ -1,6 +1,6 @@
 //
 //  ClaudeInstancesView.swift
-//  Buddi
+//  Ghostwire
 //
 //  Minimal instances list
 //

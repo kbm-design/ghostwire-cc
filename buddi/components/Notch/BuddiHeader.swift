@@ -1,16 +1,16 @@
 //
-//  BuddiHeader.swift
-//  buddi
+//  GhostwireHeader.swift
+//  Ghostwire
 //
 //
 
 import Defaults
 import SwiftUI
 
-struct BuddiHeader: View {
-    @EnvironmentObject var vm: BuddiViewModel
+struct GhostwireHeader: View {
+    @EnvironmentObject var vm: GhostwireViewModel
     @ObservedObject var batteryModel = BatteryStatusViewModel.shared
-    @ObservedObject var coordinator = BuddiViewCoordinator.shared
+    @ObservedObject var coordinator = GhostwireViewCoordinator.shared
     @StateObject var tvm = ShelfStateViewModel.shared
     var body: some View {
         HStack(spacing: 0) {
@@ -77,7 +77,7 @@ struct BuddiHeader: View {
                             .buttonStyle(PlainButtonStyle())
                         }
                         if Defaults[.showBatteryIndicator] {
-                            BuddiBatteryView(
+                            GhostwireBatteryView(
                                 batteryWidth: 30,
                                 isCharging: batteryModel.isCharging,
                                 isInLowPowerMode: batteryModel.isInLowPowerMode,
@@ -112,5 +112,5 @@ struct BuddiHeader: View {
 }
 
 #Preview {
-    BuddiHeader().environmentObject(BuddiViewModel())
+    GhostwireHeader().environmentObject(GhostwireViewModel())
 }

@@ -11,7 +11,7 @@ class BatteryStatusViewModel: ObservableObject {
     private var powerSourceChangedCallback: IOPowerSourceCallbackType?
     private var runLoopSource: Unmanaged<CFRunLoopSource>?
 
-    @ObservedObject var coordinator = BuddiViewCoordinator.shared
+    @ObservedObject var coordinator = GhostwireViewCoordinator.shared
 
     @Published private(set) var levelBattery: Float = 0.0
     @Published private(set) var maxCapacity: Float = 0.0
@@ -27,8 +27,8 @@ class BatteryStatusViewModel: ObservableObject {
 
     static let shared = BatteryStatusViewModel()
 
-    /// Initializes the view model with a given BuddiViewModel instance
-    /// - Parameter vm: The BuddiViewModel instance
+    /// Initializes the view model with a given GhostwireViewModel instance
+    /// - Parameter vm: The GhostwireViewModel instance
     private init() {
         setupPowerStatus()
         setupMonitor()

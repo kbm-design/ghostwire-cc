@@ -1,6 +1,6 @@
 //
 //  OnboardingFinishView.swift
-//  buddi
+//  Ghostwire
 //
 //
 

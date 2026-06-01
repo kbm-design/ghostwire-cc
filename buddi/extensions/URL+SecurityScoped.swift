@@ -1,6 +1,6 @@
 //
 //  URL+SecurityScoped.swift
-//  buddi
+//  Ghostwire
 //
 //
 

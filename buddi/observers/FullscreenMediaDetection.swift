@@ -1,6 +1,6 @@
 //
 //  FullscreenMediaDetection.swift
-//  buddi
+//  Ghostwire
 //
 //
 

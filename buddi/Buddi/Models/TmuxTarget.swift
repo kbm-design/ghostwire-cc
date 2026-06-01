@@ -1,6 +1,6 @@
 //
 //  TmuxTarget.swift
-//  Buddi
+//  Ghostwire
 //
 //  Data model for tmux/cmux session/window/pane targeting
 //

@@ -1,6 +1,6 @@
 //
-//  BuddiXPCHelper.swift
-//  BuddiXPCHelper
+//  GhostwireXPCHelper.swift
+//  GhostwireXPCHelper
 //
 //  Created by Alexander on 2025-11-16.
 //
@@ -10,7 +10,7 @@ import ApplicationServices
 import IOKit
 import CoreGraphics
 
-class BuddiXPCHelper: NSObject, BuddiXPCHelperProtocol {
+class GhostwireXPCHelper: NSObject, GhostwireXPCHelperProtocol {
     
     @objc func isAccessibilityAuthorized(with reply: @escaping (Bool) -> Void) {
         reply(AXIsProcessTrusted())

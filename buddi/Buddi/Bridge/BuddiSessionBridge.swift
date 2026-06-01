@@ -4,12 +4,12 @@ import Foundation
 import SwiftUI
 
 @MainActor
-final class BuddiSessionBridge: ObservableObject {
-    static let shared = BuddiSessionBridge()
+final class GhostwireSessionBridge: ObservableObject {
+    static let shared = GhostwireSessionBridge()
 
     let sessionMonitor = ClaudeSessionMonitor()
     let panelViewModel = AgentPanelViewModel()
-    weak var buddiViewModel: BuddiViewModel?
+    weak var ghostwireViewModel: GhostwireViewModel?
 
     /// Bumps to a new UUID each time a new pending permission arrives while the notch
     /// is closed and the terminal isn't visible. ContentView observes this to fire the
@@ -33,8 +33,8 @@ final class BuddiSessionBridge: ObservableObject {
                     height = openNotchSize.height
                 }
 
-                if BuddiViewCoordinator.shared.buddyPanelHeight != height {
-                    BuddiViewCoordinator.shared.buddyPanelHeight = height
+                if GhostwireViewCoordinator.shared.buddyPanelHeight != height {
+                    GhostwireViewCoordinator.shared.buddyPanelHeight = height
                 }
             }
             .store(in: &cancellables)
@@ -57,7 +57,7 @@ final class BuddiSessionBridge: ObservableObject {
             }
             .removeDuplicates()
             .sink { hasActive in
-                BuddiViewCoordinator.shared.toggleExpandingView(
+                GhostwireViewCoordinator.shared.toggleExpandingView(
                     status: hasActive,
                     type: .buddy
                 )
@@ -110,7 +110,7 @@ final class BuddiSessionBridge: ObservableObject {
         }
 
         guard hasNewPendingPermission,
-              buddiViewModel?.notchState == .closed,
+              ghostwireViewModel?.notchState == .closed,
               !TerminalVisibilityDetector.isTerminalVisibleOnCurrentSpace()
         else {
             return
@@ -119,7 +119,7 @@ final class BuddiSessionBridge: ObservableObject {
         NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
         passiveAlertPulse = UUID()
 
-        BuddiViewCoordinator.shared.toggleExpandingView(status: true, type: .buddy)
+        GhostwireViewCoordinator.shared.toggleExpandingView(status: true, type: .buddy)
     }
 
     private func playWaitingForInputNotificationIfNeeded(for sessions: [SessionState]) async {
@@ -133,7 +133,7 @@ final class BuddiSessionBridge: ObservableObject {
 
             guard !isFocused else { continue }
 
-            if let soundName = BuddiSettings.notificationSound.soundName {
+            if let soundName = GhostwireSettings.notificationSound.soundName {
                 NSSound(named: soundName)?.play()
             }
             return

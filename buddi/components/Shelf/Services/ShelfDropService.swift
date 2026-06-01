@@ -1,6 +1,6 @@
 //
 //  ShelfDropService.swift
-//  buddi
+//  Ghostwire
 //
 //
 

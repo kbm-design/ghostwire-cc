@@ -1,6 +1,6 @@
 //
 //  TerminalColors.swift
-//  Buddi
+//  Ghostwire
 //
 //  Color palette for terminal-style UI
 //

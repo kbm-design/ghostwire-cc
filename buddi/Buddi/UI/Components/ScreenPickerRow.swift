@@ -1,6 +1,6 @@
 //
 //  ScreenPickerRow.swift
-//  Buddi
+//  Ghostwire
 //
 //  Screen selection picker for settings menu
 //

@@ -1,6 +1,6 @@
 //
 //  Color+AccentColor.swift
-//  buddi
+//  Ghostwire
 //
 //
 

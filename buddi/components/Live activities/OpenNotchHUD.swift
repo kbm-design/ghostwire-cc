@@ -1,6 +1,6 @@
 //
 //  OpenNotchHUD.swift
-//  buddi
+//  Ghostwire
 //
 //
 
@@ -8,7 +8,7 @@ import SwiftUI
 import Defaults
 
 struct OpenNotchHUD: View {
-    @EnvironmentObject var vm: BuddiViewModel
+    @EnvironmentObject var vm: GhostwireViewModel
     @Binding var type: SneakContentType
     @Binding var value: CGFloat
     @Binding var icon: String
@@ -99,7 +99,7 @@ struct OpenNotchHUD: View {
 
 #Preview {
     OpenNotchHUD(type: .constant(.volume), value: .constant(0.5), icon: .constant(""))
-        .environmentObject(BuddiViewModel())
+        .environmentObject(GhostwireViewModel())
         .padding()
         .background(Color.gray)
 }

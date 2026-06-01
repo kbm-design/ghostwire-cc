@@ -1,6 +1,6 @@
 //
 //  ShelfItemView.swift
-//  buddi
+//  Ghostwire
 //
 //
 
@@ -12,7 +12,7 @@ import QuickLook
 
 struct ShelfItemView: View {
     let item: ShelfItem
-    @EnvironmentObject var vm: BuddiViewModel
+    @EnvironmentObject var vm: GhostwireViewModel
     @ObservedObject var selection = ShelfSelectionModel.shared
     @StateObject private var viewModel: ShelfItemViewModel
     @EnvironmentObject private var quickLookService: QuickLookService

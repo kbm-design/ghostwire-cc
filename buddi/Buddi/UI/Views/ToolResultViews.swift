@@ -1,6 +1,6 @@
 //
 //  ToolResultViews.swift
-//  Buddi
+//  Ghostwire
 //
 //  Individual views for rendering each tool's result with proper formatting
 //

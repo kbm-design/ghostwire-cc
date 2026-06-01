@@ -1,6 +1,6 @@
     //
     //  DataTypes+Extensions.swift
-    //  buddi
+    //  Ghostwire
     //
     //
 

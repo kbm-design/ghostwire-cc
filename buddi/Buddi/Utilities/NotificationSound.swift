@@ -1,6 +1,6 @@
 //
 //  NotificationSound.swift
-//  Buddi
+//  Ghostwire
 //
 //  Notification sound enum and settings adapter
 //
@@ -32,7 +32,7 @@ enum NotificationSound: String, CaseIterable {
     }
 }
 
-enum BuddiSettings {
+enum GhostwireSettings {
     static var notificationSound: NotificationSound {
         get { NotificationSound(rawValue: Defaults[.notificationSound]) ?? .pop }
         set { Defaults[.notificationSound] = newValue.rawValue }

@@ -1,6 +1,6 @@
 //
-//  BuddiSkyLightWindow.swift
-//  buddi
+//  GhostwireSkyLightWindow.swift
+//  Ghostwire
 //
 //
 
@@ -30,7 +30,7 @@ extension SkyLightOperator {
     }
 }
 
-class BuddiSkyLightWindow: NSPanel {
+class GhostwireSkyLightWindow: NSPanel {
     private var isSkyLightEnabled: Bool = false
     
     override init(

@@ -1,6 +1,6 @@
 //
 //  YabaiController.swift
-//  Buddi
+//  Ghostwire
 //
 //  High-level yabai window management controller
 //
@@ -36,7 +36,7 @@ actor YabaiController {
 
     // MARK: - Private Implementation
 
-    private func focusTmuxInstance(claudePid: Int, tree: [Int: BuddiProcessInfo], windows: [YabaiWindow]) async -> Bool {
+    private func focusTmuxInstance(claudePid: Int, tree: [Int: GhostwireProcessInfo], windows: [YabaiWindow]) async -> Bool {
         // Find the multiplexer target for this Claude process (tmux or cmux)
         guard let target = await TmuxController.shared.findTmuxTarget(forClaudePid: claudePid) else {
             return false
@@ -72,7 +72,7 @@ actor YabaiController {
 
     // MARK: - Tmux Helpers
 
-    private func findTmuxClientTerminal(forSession session: String, tree: [Int: BuddiProcessInfo], windows: [YabaiWindow]) async -> Int? {
+    private func findTmuxClientTerminal(forSession session: String, tree: [Int: GhostwireProcessInfo], windows: [YabaiWindow]) async -> Int? {
         guard let tmuxPath = await TmuxPathFinder.shared.getTmuxPath() else { return nil }
 
         do {
@@ -104,7 +104,7 @@ actor YabaiController {
     }
 
     /// Find the cmux main process PID from the process tree
-    private nonisolated func findCmuxMainPid(tree: [Int: BuddiProcessInfo]) -> Int? {
+    private nonisolated func findCmuxMainPid(tree: [Int: GhostwireProcessInfo]) -> Int? {
         for (pid, info) in tree {
             if info.command.hasSuffix("/cmux") || info.command.contains("cmux.app/Contents/MacOS/cmux") {
                 return pid
@@ -119,7 +119,7 @@ actor YabaiController {
         return terminalCommands.contains { command.contains($0) }
     }
 
-    private func focusTmuxPane(forWorkingDir workingDir: String, tree: [Int: BuddiProcessInfo], windows: [YabaiWindow]) async -> Bool {
+    private func focusTmuxPane(forWorkingDir workingDir: String, tree: [Int: GhostwireProcessInfo], windows: [YabaiWindow]) async -> Bool {
         guard let tmuxPath = await TmuxPathFinder.shared.getTmuxPath() else { return false }
 
         do {

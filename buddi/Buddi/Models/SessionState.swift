@@ -1,6 +1,6 @@
 //
 //  SessionState.swift
-//  Buddi
+//  Ghostwire
 //
 //  Unified state model for a Claude session.
 //  Consolidates all state that was previously spread across multiple components.

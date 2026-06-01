@@ -1,13 +1,13 @@
 //
 //  Button+Bouncing.swift
-//  buddi
+//  Ghostwire
 //
 //
 import SwiftUI
 import Defaults
 
 struct BouncingButtonStyle: ButtonStyle {
-    let vm: BuddiViewModel
+    let vm: GhostwireViewModel
     @State private var isPressed = false
     
     func makeBody(configuration: Configuration) -> some View {
@@ -28,7 +28,7 @@ struct BouncingButtonStyle: ButtonStyle {
 }
 
 extension Button {
-    func bouncingStyle(vm: BuddiViewModel) -> some View {
+    func bouncingStyle(vm: GhostwireViewModel) -> some View {
         self.buttonStyle(BouncingButtonStyle(vm: vm))
     }
 }

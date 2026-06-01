@@ -1,6 +1,6 @@
 //
 //  AssociatedObject.swift
-//  buddi
+//  Ghostwire
 //
 //
 

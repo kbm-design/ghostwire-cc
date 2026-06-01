@@ -7,7 +7,7 @@ final class XPCHelperClient: NSObject {
     
     private let serviceName = "com.ghostwire.notch.XPCHelper"
     
-    private var remoteService: RemoteXPCService<BuddiXPCHelperProtocol>?
+    private var remoteService: RemoteXPCService<GhostwireXPCHelperProtocol>?
     private var connection: NSXPCConnection?
     private var lastKnownAuthorization: Bool?
     private var monitoringTask: Task<Void, Never>?
@@ -20,7 +20,7 @@ final class XPCHelperClient: NSObject {
     // MARK: - Connection Management (Main Actor Isolated)
     
     @MainActor
-    private func ensureRemoteService() -> RemoteXPCService<BuddiXPCHelperProtocol> {
+    private func ensureRemoteService() -> RemoteXPCService<GhostwireXPCHelperProtocol> {
         if let existing = remoteService {
             return existing
         }
@@ -43,9 +43,9 @@ final class XPCHelperClient: NSObject {
         
         conn.resume()
         
-        let service = RemoteXPCService<BuddiXPCHelperProtocol>(
+        let service = RemoteXPCService<GhostwireXPCHelperProtocol>(
             connection: conn,
-            remoteInterface: BuddiXPCHelperProtocol.self
+            remoteInterface: GhostwireXPCHelperProtocol.self
         )
         
         connection = conn
@@ -54,7 +54,7 @@ final class XPCHelperClient: NSObject {
     }
     
     @MainActor
-    private func getRemoteService() -> RemoteXPCService<BuddiXPCHelperProtocol>? {
+    private func getRemoteService() -> RemoteXPCService<GhostwireXPCHelperProtocol>? {
         remoteService
     }
     

@@ -1,6 +1,6 @@
 //
 //  WhatsNewView.swift
-//  buddi
+//  Ghostwire
 //
 //
 

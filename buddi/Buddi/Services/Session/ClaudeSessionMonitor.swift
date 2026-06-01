@@ -1,6 +1,6 @@
 //
 //  ClaudeSessionMonitor.swift
-//  Buddi
+//  Ghostwire
 //
 //  MainActor wrapper around SessionStore for UI binding.
 //  Publishes SessionState arrays for SwiftUI observation.

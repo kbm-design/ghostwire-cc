@@ -1,6 +1,6 @@
 //
 //  SessionStore.swift
-//  Buddi
+//  Ghostwire
 //
 //  Central state manager for all Claude sessions.
 //  Single source of truth - all state mutations flow through process().
@@ -16,7 +16,7 @@ actor SessionStore {
     static let shared = SessionStore()
 
     /// Logger for session store (nonisolated static for cross-context access)
-    nonisolated static let logger = os.Logger(subsystem: "com.splab.buddi", category: "Session")
+    nonisolated static let logger = os.Logger(subsystem: "com.ghostwire.notch", category: "Session")
 
     // MARK: - State
 

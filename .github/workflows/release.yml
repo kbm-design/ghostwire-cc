@@ -139,14 +139,14 @@ jobs:
           VERSION: ${{ steps.version.outputs.VERSION }}
         run: |
           STAGING=$RUNNER_TEMP/dmg-staging
-          DMG_PATH=$RUNNER_TEMP/buddi-${VERSION}.dmg
+          DMG_PATH=$RUNNER_TEMP/ghostwire-${VERSION}.dmg
 
           mkdir -p "$STAGING"
           cp -R "$RUNNER_TEMP/export/buddi.app" "$STAGING/"
           ln -s /Applications "$STAGING/Applications"
 
           hdiutil create \
-            -volname "Buddi $VERSION" \
+            -volname "Ghostwire $VERSION" \
             -srcfolder "$STAGING" \
             -ov -format UDZO \
             "$DMG_PATH"
@@ -158,12 +158,12 @@ jobs:
           VERSION: ${{ steps.version.outputs.VERSION }}
         run: |
           SHASUM=$(shasum -a 256 "$DMG_PATH" | awk '{print $1}')
-          printf '%s\n' "$SHASUM" > "$RUNNER_TEMP/buddi-${VERSION}.sha256"
+          printf '%s\n' "$SHASUM" > "$RUNNER_TEMP/ghostwire-${VERSION}.sha256"
 
           {
             echo "## Release checksum"
             echo
-            echo "\`buddi-${VERSION}.dmg\` SHA-256:"
+            echo "\`ghostwire-${VERSION}.dmg\` SHA-256:"
             echo "\`$SHASUM\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -201,7 +201,7 @@ jobs:
         with:
           files: |
             ${{ env.DMG_PATH }}
-            ${{ runner.temp }}/buddi-${{ steps.version.outputs.VERSION }}.sha256
+            ${{ runner.temp }}/ghostwire-${{ steps.version.outputs.VERSION }}.sha256
 
       - name: Commit updated appcast
         env:
@@ -233,6 +233,10 @@ jobs:
           git branch -D gh-pages-tmp
 
       - name: Update Homebrew cask
+        # Skipped unless HOMEBREW_TAP_TOKEN is set. NOTE: this step still targets the
+        # upstream talkvalue/homebrew-buddi tap — repoint it to a Ghostwire tap (and
+        # update the DMG URL / cask metadata) before enabling brew distribution.
+        if: ${{ secrets.HOMEBREW_TAP_TOKEN != '' }}
         env:
           VERSION: ${{ steps.version.outputs.VERSION }}
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}

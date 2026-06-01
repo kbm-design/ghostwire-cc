@@ -11,7 +11,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  SCHEME: buddi
+  SCHEME: Ghostwire
   DEVELOPER_DIR: /Applications/Xcode_26.4.app/Contents/Developer
 
 jobs:

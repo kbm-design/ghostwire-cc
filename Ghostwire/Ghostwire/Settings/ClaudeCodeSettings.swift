@@ -30,7 +30,7 @@ struct ClaudeCodeSettings: View {
             } header: {
                 Text("Integration")
             } footer: {
-                Text("Forwards Claude Code events to Notch Command Center via Unix socket.")
+                Text("Forwards Claude Code events to Ghostwire via Unix socket.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -101,7 +101,7 @@ struct ClaudeCodeSettings: View {
                 } header: {
                     Text("cmux")
                 } footer: {
-                    Text("To send messages from Notch Command Center to cmux sessions, set Socket Control Mode to \"Automation mode\" in cmux Settings > Automation.")
+                    Text("To send messages from Ghostwire to cmux sessions, set Socket Control Mode to \"Automation mode\" in cmux Settings > Automation.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

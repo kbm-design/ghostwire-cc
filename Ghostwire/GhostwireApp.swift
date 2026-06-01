@@ -1,5 +1,5 @@
 //
-//  buddiApp.swift
+//  GhostwireApp.swift
 //  Ghostwire
 //
 //
@@ -37,7 +37,7 @@ struct GhostwireApp: App {
             .keyboardShortcut(KeyEquivalent(","), modifiers: .command)
             CheckForUpdatesView(updater: updaterController.updater)
             Divider()
-            Button("Restart Notch Command Center") {
+            Button("Restart Ghostwire") {
                 ApplicationRelauncher.restart()
             }
             Button("Quit", role: .destructive) {
@@ -490,7 +490,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func playWelcomeSound() {
         let audioPlayer = AudioPlayer()
-        audioPlayer.play(fileName: "buddi", fileExtension: "m4a")
+        audioPlayer.play(fileName: "Ghostwire", fileExtension: "m4a")
     }
 
     func deviceHasNotch() -> Bool {

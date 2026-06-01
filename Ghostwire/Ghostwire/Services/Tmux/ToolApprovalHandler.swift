@@ -115,7 +115,7 @@ actor ToolApprovalHandler {
             }
             return true
         } catch {
-            Self.logger.error("cmux error: \(error.localizedDescription, privacy: .public). Set cmux socket mode to 'Automation' in cmux Settings to allow buddi access.")
+            Self.logger.error("cmux error: \(error.localizedDescription, privacy: .public). Set cmux socket mode to 'Automation' in cmux Settings to allow Ghostwire access.")
             return false
         }
     }

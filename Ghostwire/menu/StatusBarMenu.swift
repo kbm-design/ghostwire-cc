@@ -11,7 +11,7 @@ class GhostwireStatusMenu: NSMenu {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         
         if let button = statusItem.button {
-            button.image = NSImage(systemSymbolName: "music.note", accessibilityDescription: "Notch Command Center")
+            button.image = NSImage(systemSymbolName: "music.note", accessibilityDescription: "Ghostwire")
             button.action = #selector(showMenu)
         }
         

@@ -14,7 +14,7 @@ struct HookInstaller {
         let claudeDir = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".claude")
         let hooksDir = claudeDir.appendingPathComponent("hooks")
-        let pythonScript = hooksDir.appendingPathComponent("buddi-hook.py")
+        let pythonScript = hooksDir.appendingPathComponent("ghostwire-hook.py")
         let settings = claudeDir.appendingPathComponent("settings.json")
 
         try? FileManager.default.createDirectory(
@@ -22,7 +22,7 @@ struct HookInstaller {
             withIntermediateDirectories: true
         )
 
-        if let bundled = Bundle.main.url(forResource: "buddi-hook", withExtension: "py") {
+        if let bundled = Bundle.main.url(forResource: "ghostwire-hook", withExtension: "py") {
             try? FileManager.default.removeItem(at: pythonScript)
             try? FileManager.default.copyItem(at: bundled, to: pythonScript)
             try? FileManager.default.setAttributes(
@@ -30,6 +30,9 @@ struct HookInstaller {
                 ofItemAtPath: pythonScript.path
             )
         }
+
+        // Clean up the legacy buddi-hook.py left by older installs.
+        try? FileManager.default.removeItem(at: hooksDir.appendingPathComponent("buddi-hook.py"))
 
         updateSettings(at: settings)
     }
@@ -42,7 +45,7 @@ struct HookInstaller {
         }
 
         let python = detectPython()
-        let command = "BUDDI_AGENT=claude \(python) ~/.claude/hooks/buddi-hook.py"
+        let command = "GHOSTWIRE_AGENT=claude \(python) ~/.claude/hooks/ghostwire-hook.py"
         let hookEntry: [[String: Any]] = [["type": "command", "command": command]]
         let hookEntryWithTimeout: [[String: Any]] = [["type": "command", "command": command, "timeout": 86400]]
         let withMatcher: [[String: Any]] = [["matcher": "*", "hooks": hookEntry]]
@@ -69,14 +72,14 @@ struct HookInstaller {
         ]
 
         for (event, config) in hookEvents {
-            // Re-tag on every launch: strip any existing buddi hook commands, then
-            // append the current (correctly-tagged) config. Skipping when present
-            // would leave stale/untagged commands from older installs in place.
+            // Re-tag on every launch: strip any existing hook commands (incl. the
+            // legacy buddi-hook.py), then append the current (correctly-tagged)
+            // config. Skipping when present would leave stale commands in place.
             var existingEvent = hooks[event] as? [[String: Any]] ?? []
             existingEvent = existingEvent.compactMap { entry -> [String: Any]? in
                 guard var entryHooks = entry["hooks"] as? [[String: Any]] else { return entry }
-                entryHooks.removeAll { ($0["command"] as? String ?? "").contains("buddi-hook.py") }
-                // Drop the entry only if it was buddi-only; preserve co-located user hooks.
+                entryHooks.removeAll { isOurHookCommand($0["command"] as? String ?? "") }
+                // Drop the entry only if it was ours; preserve co-located user hooks.
                 guard !entryHooks.isEmpty else { return nil }
                 var newEntry = entry
                 newEntry["hooks"] = entryHooks
@@ -114,7 +117,7 @@ struct HookInstaller {
                     if let entryHooks = entry["hooks"] as? [[String: Any]] {
                         for hook in entryHooks {
                             if let cmd = hook["command"] as? String,
-                               cmd.contains("buddi-hook.py") {
+                               isOurHookCommand(cmd) {
                                 return true
                             }
                         }
@@ -130,10 +133,10 @@ struct HookInstaller {
         let claudeDir = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".claude")
         let hooksDir = claudeDir.appendingPathComponent("hooks")
-        let pythonScript = hooksDir.appendingPathComponent("buddi-hook.py")
         let settings = claudeDir.appendingPathComponent("settings.json")
 
-        try? FileManager.default.removeItem(at: pythonScript)
+        try? FileManager.default.removeItem(at: hooksDir.appendingPathComponent("ghostwire-hook.py"))
+        try? FileManager.default.removeItem(at: hooksDir.appendingPathComponent("buddi-hook.py"))
 
         guard let data = try? Data(contentsOf: settings),
               var json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -146,8 +149,7 @@ struct HookInstaller {
                 entries.removeAll { entry in
                     if let entryHooks = entry["hooks"] as? [[String: Any]] {
                         return entryHooks.contains { hook in
-                            let cmd = hook["command"] as? String ?? ""
-                            return cmd.contains("buddi-hook.py")
+                            isOurHookCommand(hook["command"] as? String ?? "")
                         }
                     }
                     return false
@@ -173,6 +175,11 @@ struct HookInstaller {
         ) {
             try? data.write(to: settings)
         }
+    }
+
+    /// Matches our hook command, including the legacy buddi-hook.py name so upgrades clean it up.
+    private static func isOurHookCommand(_ cmd: String) -> Bool {
+        cmd.contains("ghostwire-hook.py") || cmd.contains("buddi-hook.py")
     }
 
     private static func detectPython() -> String {

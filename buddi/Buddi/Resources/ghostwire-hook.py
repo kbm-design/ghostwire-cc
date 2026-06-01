@@ -1,57 +1,57 @@
 #!/usr/bin/env python3
 """
-Buddi Hook
-- Sends session state to Buddi.app via Unix socket (local) or TCP (remote)
+Ghostwire Hook
+- Sends session state to Ghostwire.app via Unix socket (local) or TCP (remote)
 - For PermissionRequest: waits for user decision from the app
 
 Environment variables:
-  BUDDI_HOST    If set (e.g. "localhost:9999"), connect over TCP instead of
+  GHOSTWIRE_HOST    If set (e.g. "localhost:9999"), connect over TCP instead of
                 a Unix socket. Intended for Claude Code running on a remote
                 VM with an SSH reverse port-forward back to the Mac running
-                Buddi. Always tunnel over SSH — events may include prompts,
+                Ghostwire. Always tunnel over SSH — events may include prompts,
                 tool calls, and file paths.
-  BUDDI_SOCKET  Override the default Unix socket path (/tmp/notch.sock).
-                Ignored when BUDDI_HOST is set.
+  GHOSTWIRE_SOCKET  Override the default Unix socket path (/tmp/com.ghostwire.notch.sock).
+                Ignored when GHOSTWIRE_HOST is set.
 """
 import json
 import os
 import socket
 import sys
 
-BUDDI_SOCKET = os.environ.get("BUDDI_SOCKET", "/tmp/notch.sock")
-BUDDI_HOST = os.environ.get("BUDDI_HOST")
+GHOSTWIRE_SOCKET = os.environ.get("GHOSTWIRE_SOCKET", "/tmp/com.ghostwire.notch.sock")
+GHOSTWIRE_HOST = os.environ.get("GHOSTWIRE_HOST")
 TIMEOUT_SECONDS = 300  # 5 minutes for permission decisions
 
-if BUDDI_HOST:
-    _host = BUDDI_HOST.rpartition(":")[0].strip("[]")
+if GHOSTWIRE_HOST:
+    _host = GHOSTWIRE_HOST.rpartition(":")[0].strip("[]")
     if _host not in ("localhost", "127.0.0.1", "::1"):
         print(
-            f"buddi-hook: warning: BUDDI_HOST={BUDDI_HOST!r} is not a loopback "
+            f"ghostwire-hook: warning: GHOSTWIRE_HOST={GHOSTWIRE_HOST!r} is not a loopback "
             "address; events contain prompts and tool inputs — only use over "
             "an SSH tunnel.",
             file=sys.stderr,
         )
 
 
-def _connect_to_buddi():
-    """Open a connection to Buddi (TCP if BUDDI_HOST is set, else Unix socket)."""
-    if BUDDI_HOST:
-        host, sep, port = BUDDI_HOST.rpartition(":")
+def _connect_to_ghostwire():
+    """Open a connection to Ghostwire (TCP if GHOSTWIRE_HOST is set, else Unix socket)."""
+    if GHOSTWIRE_HOST:
+        host, sep, port = GHOSTWIRE_HOST.rpartition(":")
         if not sep or not host:
-            raise OSError(f"BUDDI_HOST must be host:port, got {BUDDI_HOST!r}")
+            raise OSError(f"GHOSTWIRE_HOST must be host:port, got {GHOSTWIRE_HOST!r}")
         try:
             port_num = int(port)
         except ValueError:
-            raise OSError(f"BUDDI_HOST port must be an integer, got {port!r}")
+            raise OSError(f"GHOSTWIRE_HOST port must be an integer, got {port!r}")
         if not 0 < port_num <= 65535:
-            raise OSError(f"BUDDI_HOST port {port_num} out of range (1-65535)")
+            raise OSError(f"GHOSTWIRE_HOST port {port_num} out of range (1-65535)")
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(TIMEOUT_SECONDS)
         sock.connect((host, port_num))
     else:
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         sock.settimeout(TIMEOUT_SECONDS)
-        sock.connect(BUDDI_SOCKET)
+        sock.connect(GHOSTWIRE_SOCKET)
     return sock
 
 
@@ -125,7 +125,7 @@ def get_cmux_surface():
 def send_event(state):
     """Send event to app, return response if any"""
     try:
-        sock = _connect_to_buddi()
+        sock = _connect_to_ghostwire()
         sock.sendall(json.dumps(state).encode())
 
         # For permission requests, wait for response
@@ -166,7 +166,7 @@ def main():
         "pid": claude_pid,
         "tty": tty,
         # Which agent installed this hook (set by the installer); defaults to claude
-        "source": os.environ.get("BUDDI_AGENT", "claude"),
+        "source": os.environ.get("GHOSTWIRE_AGENT", "claude"),
     }
 
     # Include cmux surface info if running in cmux
@@ -229,7 +229,7 @@ def main():
                         "hookEventName": "PermissionRequest",
                         "decision": {
                             "behavior": "deny",
-                            "message": reason or "Denied by user via Buddi",
+                            "message": reason or "Denied by user via Ghostwire",
                         },
                     }
                 }

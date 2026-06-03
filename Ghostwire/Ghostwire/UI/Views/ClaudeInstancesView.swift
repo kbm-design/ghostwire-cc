@@ -130,7 +130,6 @@ struct InstanceRow: View {
     @State private var spinnerPhase = 0
     @State private var isYabaiAvailable = false
 
-    private let claudeOrange = Color(red: 0.85, green: 0.47, blue: 0.34)
     private let spinnerSymbols = ["·", "✢", "✳", "∗", "✻", "✽"]
     private let spinnerTimer = Timer.publish(every: 0.15, on: .main, in: .common).autoconnect()
 
@@ -145,12 +144,9 @@ struct InstanceRow: View {
         return toolName == "AskUserQuestion"
     }
 
-    /// Tint for the per-agent badge (placeholder Codex tint — final pick is a GW-139 open question)
+    /// Tint for the per-agent badge — single source via AgentIdentity (GW-138).
     private func agentTint(_ agent: String?) -> Color {
-        switch agent {
-        case "codex": return Color(red: 0.04, green: 0.64, blue: 0.50)
-        default: return Color(red: 0.85, green: 0.47, blue: 0.34)
-        }
+        AgentIdentity.tint(for: agent)
     }
 
     var body: some View {
@@ -311,7 +307,7 @@ struct InstanceRow: View {
         case .processing, .compacting:
             Text(spinnerSymbols[spinnerPhase % spinnerSymbols.count])
                 .font(.footnote.weight(.bold))
-                .foregroundColor(claudeOrange)
+                .foregroundColor(agentTint(session.agent))
                 .onReceive(spinnerTimer) { _ in
                     spinnerPhase = (spinnerPhase + 1) % spinnerSymbols.count
                 }

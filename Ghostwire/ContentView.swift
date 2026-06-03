@@ -34,7 +34,6 @@ struct ContentView: View {
     /// Drives the passive edge-glow when a new permission arrives. 0 when idle, fades up then down.
     @State private var passiveGlowOpacity: Double = 0
     @State private var passiveGlowDecayTask: Task<Void, Never>?
-    private static let claudeAccent = Color(red: 0xDA / 255.0, green: 0x77 / 255.0, blue: 0x56 / 255.0)
 
     @Namespace var albumArtNamespace
 
@@ -121,8 +120,8 @@ struct ContentView: View {
                         color: ((vm.notchState == .open || isHovering) && Defaults[.enableShadow])
                             ? .black.opacity(0.7) : .clear, radius: Defaults[.cornerRadiusScaling] ? 6 : 4
                     )
-                    .shadow(color: Self.claudeAccent.opacity(passiveGlowOpacity), radius: 14)
-                    .shadow(color: Self.claudeAccent.opacity(passiveGlowOpacity * 0.6), radius: 24)
+                    .shadow(color: sessionBridge.passiveAlertTint.opacity(passiveGlowOpacity), radius: 14)
+                    .shadow(color: sessionBridge.passiveAlertTint.opacity(passiveGlowOpacity * 0.6), radius: 24)
                     .onChange(of: sessionBridge.passiveAlertPulse) { _, _ in
                         triggerPassiveGlow()
                     }
@@ -683,15 +682,17 @@ extension ContentView {
         let isProcessing = sessions.contains { $0.phase.isActive }
         let hasPending = sessions.contains { $0.phase.isWaitingForApproval }
         let hasWaiting = sessions.contains { $0.phase == .waitingForInput }
+        // Spinner tint = the most-recently-active agent (GW-138).
+        let activeAgent = sessions
+            .filter { $0.phase.isActive || $0.phase.isWaitingForApproval }
+            .max(by: { $0.lastActivity < $1.lastActivity })?.agent
 
         return HStack(spacing: 0) {
             HStack(spacing: 2) {
-                Circle()
-                    .fill(Color(red: 0xDA / 255.0, green: 0x77 / 255.0, blue: 0x56 / 255.0))
-                    .frame(
-                        width: min(notchContentHeight * 0.4, 9),
-                        height: min(notchContentHeight * 0.4, 9)
-                    )
+                // Neutral "agents present" anchor (GW-138): static terminal mark, not agent-tinted.
+                Image(systemName: "terminal.fill")
+                    .font(.system(size: min(notchContentHeight * 0.55, 13), weight: .semibold))
+                    .foregroundStyle(AgentIdentity.neutral)
                 if hasPending {
                     PermissionIndicatorIcon(
                         size: min(notchContentHeight * 0.5, 12),
@@ -707,7 +708,7 @@ extension ContentView {
 
             Group {
                 if isProcessing || hasPending {
-                    ProcessingSpinner()
+                    ProcessingSpinner(color: AgentIdentity.tint(for: activeAgent))
                 } else if hasWaiting {
                     ReadyForInputIndicatorIcon(
                         size: min(notchContentHeight * 0.6, 14)

@@ -1,9 +1,10 @@
 name: Release
 
 on:
-  push:
-    tags:
-      - 'v*'
+  # Releases are cut locally with ./release.sh — avoids the macOS Actions 10x billing
+  # (a single notarization run on a hosted mac runner burns ~300 of the 2,000 free minutes).
+  # Manual-trigger only; kept for reference / future self-hosted-runner use.
+  workflow_dispatch:
 
 concurrency:
   group: release

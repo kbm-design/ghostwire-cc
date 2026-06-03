@@ -70,6 +70,9 @@ final class GhostwireSessionBridge: ObservableObject {
     }
 
     func startMonitoring() {
+        // Don't bind the hook socket when running as a unit-test host — it would
+        // unlink /tmp/com.ghostwire.notch.sock out from under a live Ghostwire instance.
+        guard NSClassFromString("XCTestCase") == nil else { return }
         sessionMonitor.startMonitoring()
     }
 

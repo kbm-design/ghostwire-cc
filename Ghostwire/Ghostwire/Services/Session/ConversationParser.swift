@@ -190,6 +190,14 @@ actor ConversationParser {
                 summary = summaryText
             }
 
+            // Claude Code no longer writes "summary" lines; it writes "ai-title"
+            // (the live topic title, same one shown on the terminal tab). Prefer the
+            // latest one (first hit while iterating in reverse). (GW-138 / session naming)
+            if summary == nil, type == "ai-title",
+               let title = json["aiTitle"] as? String, !title.isEmpty {
+                summary = title
+            }
+
             if summary != nil && lastMessage != nil && foundLastUserMessage {
                 break
             }

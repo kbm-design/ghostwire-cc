@@ -16,6 +16,10 @@ final class GhostwireSessionBridge: ObservableObject {
     /// passive edge-glow animation. Never opens the notch; never steals focus.
     @Published var passiveAlertPulse: UUID = UUID()
 
+    /// Tint of the agent that raised the most recent pending permission — drives the
+    /// edge-glow color so it reflects WHICH agent needs you (GW-138).
+    @Published var passiveAlertTint: Color = AgentIdentity.claude
+
     private var cancellables = Set<AnyCancellable>()
     private var knownWaitingForInputSessionIDs = Set<String>()
     private var hasSeededWaitingForInputSessions = false
@@ -114,6 +118,14 @@ final class GhostwireSessionBridge: ObservableObject {
               !TerminalVisibilityDetector.isTerminalVisibleOnCurrentSpace()
         else {
             return
+        }
+
+        // Tint the glow to the agent that raised the new pending permission (GW-138).
+        if let triggering = pendingInstances.first(where: {
+            guard let id = $0.pendingToolId else { return false }
+            return !knownPendingPermissionIDs.contains(id)
+        }) {
+            passiveAlertTint = AgentIdentity.tint(for: triggering.agent)
         }
 
         NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)

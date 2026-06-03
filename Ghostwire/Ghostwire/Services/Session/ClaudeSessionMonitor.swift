@@ -37,7 +37,10 @@ class ClaudeSessionMonitor: ObservableObject {
                     await SessionStore.shared.process(.hookReceived(event))
                 }
 
-                if event.sessionPhase == .processing {
+                // The interrupt watcher reads ~/.claude/projects/<…>.jsonl, which only exists
+                // for Claude. Skip it for Codex to avoid failing file-opens / error spam (GW-138).
+                // Codex transcript support is deferred to the session-observability work.
+                if event.sessionPhase == .processing, event.source != "codex" {
                     Task { @MainActor in
                         InterruptWatcherManager.shared.startWatching(
                             sessionId: event.sessionId,

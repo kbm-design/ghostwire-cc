@@ -477,6 +477,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         previousScreens = NSScreen.screens
         AgentHookConfig.installEnabledAgents()
+        AlertHistoryStore.shared.warm()
         GhostwireSessionBridge.shared.startMonitoring()
         UsageService.shared.startPolling()
         CodexUsageService.shared.startPolling()

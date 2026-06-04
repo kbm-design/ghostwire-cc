@@ -7,7 +7,13 @@
 //  to render. Capped by the GW-144 settings: max entries + max age days.
 //  No viewer UI here — recording + pruning + persistence only.
 //
+//  Persists to ~/.ghostwire/alert-history.json (the app's dot-dir; the
+//  shelf keeps its own store under Application Support). Writes are
+//  atomic and run off the main actor; corrupt entries are salvaged
+//  per-item rather than discarding the whole file (review F7/F9).
+//
 
+import Combine
 import Defaults
 import Foundation
 
@@ -30,6 +36,11 @@ final class AlertHistoryStore: ObservableObject {
     @Published private(set) var alerts: [AgentAlert] = []
 
     private let fileURL: URL
+    private var limitsCancellable: AnyCancellable?
+    /// Serial queue keeps writes ordered while off the main actor (F9).
+    /// Internal so tests can drain it (`ioQueue.sync {}`).
+    static let ioQueue = DispatchQueue(label: "com.ghostwire.alert-history-io", qos: .utility)
+
     private static let defaultFileURL = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent(".ghostwire")
         .appendingPathComponent("alert-history.json")
@@ -37,7 +48,18 @@ final class AlertHistoryStore: ObservableObject {
     init(fileURL: URL = AlertHistoryStore.defaultFileURL) {
         self.fileURL = fileURL
         load()
+
+        // Lowering the caps in settings prunes immediately (review M4),
+        // not just on the next record().
+        limitsCancellable = Defaults.publisher(keys: .alertHistoryMaxEntries, .alertHistoryMaxAgeDays)
+            .sink { [weak self] _ in
+                Task { @MainActor in self?.applyLimits() }
+            }
     }
+
+    /// Touch the singleton at launch so first-alert recording doesn't pay
+    /// the load() disk read on the animation path (review F9).
+    func warm() {}
 
     func record(agent: String?, sessionId: String?, kind: String, detail: String? = nil) {
         alerts.append(AgentAlert(
@@ -55,6 +77,15 @@ final class AlertHistoryStore: ObservableObject {
     func clear() {
         alerts = []
         save()
+    }
+
+    /// Re-apply the configured caps; persists only when something fell out.
+    func applyLimits() {
+        let before = alerts.count
+        prune()
+        if alerts.count != before {
+            save()
+        }
     }
 
     // MARK: - Pruning
@@ -83,38 +114,51 @@ final class AlertHistoryStore: ObservableObject {
         )
     }
 
-    // MARK: - Persistence (JSON next to the shelf's items.json)
+    // MARK: - Persistence
+
+    /// Wrapper that swallows undecodable entries so one corrupt item
+    /// doesn't discard the whole history (review F7; shelf pattern).
+    private struct SalvagedAlert: Decodable {
+        let value: AgentAlert?
+        init(from decoder: Decoder) {
+            value = try? AgentAlert(from: decoder)
+        }
+    }
 
     private func load() {
         guard let data = try? Data(contentsOf: fileURL),
-              let stored = try? JSONDecoder.alertHistory.decode([AgentAlert].self, from: data) else {
+              let salvaged = try? Self.decoder.decode([SalvagedAlert].self, from: data) else {
             return
         }
+        let stored = salvaged.compactMap(\.value)
         alerts = stored
         prune()
+        // Write back when load dropped anything (corrupt items or entries
+        // over the caps) so disk reflects the enforced limits (review F6).
+        if alerts.count != stored.count || stored.count != salvaged.count {
+            save()
+        }
     }
 
     private func save() {
-        try? FileManager.default.createDirectory(
-            at: fileURL.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
-        if let data = try? JSONEncoder.alertHistory.encode(alerts) {
-            try? data.write(to: fileURL)
+        guard let data = try? Self.encoder.encode(alerts) else { return }
+        let url = fileURL
+        Self.ioQueue.async {
+            try? FileManager.default.createDirectory(
+                at: url.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try? data.write(to: url, options: .atomic)
         }
     }
-}
 
-private extension JSONDecoder {
-    static let alertHistory: JSONDecoder = {
+    private static let decoder: JSONDecoder = {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         return decoder
     }()
-}
 
-private extension JSONEncoder {
-    static let alertHistory: JSONEncoder = {
+    private static let encoder: JSONEncoder = {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         return encoder

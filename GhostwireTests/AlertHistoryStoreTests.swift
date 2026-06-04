@@ -6,6 +6,7 @@
 //  configurable). Pure helper only — recording/persistence are thin.
 //
 
+import Defaults
 import XCTest
 @testable import Ghostwire
 
@@ -74,5 +75,88 @@ final class AlertHistoryStoreTests: XCTestCase {
         let alerts = [alert(ageSeconds: 10)]
         XCTAssertTrue(AlertHistoryStore.pruned(alerts, maxEntries: 0, maxAge: 86_400, now: now).isEmpty)
         XCTAssertTrue(AlertHistoryStore.pruned(alerts, maxEntries: -1, maxAge: 86_400, now: now).isEmpty)
+    }
+}
+
+/// Persistence behavior (review F6/F7): load salvages corrupt items and
+/// writes the enforced limits back to disk.
+@MainActor
+final class AlertHistoryStorePersistenceTests: XCTestCase {
+
+    private var tempURL: URL!
+    private var savedMaxEntries: Int!
+    private var savedMaxAgeDays: Int!
+
+    override func setUp() {
+        super.setUp()
+        tempURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("alert-history-tests-\(UUID().uuidString)")
+            .appendingPathComponent("alert-history.json")
+        savedMaxEntries = Defaults[.alertHistoryMaxEntries]
+        savedMaxAgeDays = Defaults[.alertHistoryMaxAgeDays]
+    }
+
+    override func tearDown() {
+        Defaults[.alertHistoryMaxEntries] = savedMaxEntries
+        Defaults[.alertHistoryMaxAgeDays] = savedMaxAgeDays
+        try? FileManager.default.removeItem(at: tempURL.deletingLastPathComponent())
+        super.tearDown()
+    }
+
+    private func write(_ json: String) throws {
+        try FileManager.default.createDirectory(
+            at: tempURL.deletingLastPathComponent(), withIntermediateDirectories: true
+        )
+        try json.data(using: .utf8)!.write(to: tempURL)
+    }
+
+    private func alertJSON(id: UUID = UUID(), date: Date) -> String {
+        let iso = ISO8601DateFormatter().string(from: date)
+        return #"{"id":"\#(id.uuidString)","date":"\#(iso)","agent":"claude","sessionId":"s1","kind":"permission","detail":null}"#
+    }
+
+    func testLoadSalvagesCorruptItems() throws {
+        // One well-formed entry, one wrong-shape object: load keeps the
+        // good one instead of discarding the whole file (F7).
+        try write("[\(alertJSON(date: Date())),{\"bogus\":true}]")
+
+        let store = AlertHistoryStore(fileURL: tempURL)
+
+        XCTAssertEqual(store.alerts.count, 1)
+        XCTAssertEqual(store.alerts.first?.kind, "permission")
+    }
+
+    func testLoadWritesEnforcedCapBackToDisk() throws {
+        // Three entries on disk, cap of 25 by age leaves only the fresh one
+        // (two are 8 days old, default max age 7d): the pruned file must be
+        // persisted even with no subsequent record() (F6).
+        Defaults[.alertHistoryMaxEntries] = 25
+        Defaults[.alertHistoryMaxAgeDays] = 7
+        let stale = Date().addingTimeInterval(-8 * 86_400)
+        try write("[\(alertJSON(date: stale)),\(alertJSON(date: stale)),\(alertJSON(date: Date()))]")
+
+        let store = AlertHistoryStore(fileURL: tempURL)
+        AlertHistoryStore.ioQueue.sync {}  // drain the async write
+
+        XCTAssertEqual(store.alerts.count, 1)
+        let onDisk = try Data(contentsOf: tempURL)
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        XCTAssertEqual(try decoder.decode([AgentAlert].self, from: onDisk).count, 1)
+    }
+
+    func testRecordPersistsAtomicallyOrderedWrites() throws {
+        Defaults[.alertHistoryMaxEntries] = 25
+        Defaults[.alertHistoryMaxAgeDays] = 7
+        let store = AlertHistoryStore(fileURL: tempURL)
+
+        store.record(agent: "codex", sessionId: "s2", kind: "ready")
+        store.record(agent: "claude", sessionId: "s3", kind: "permission", detail: "Bash")
+        AlertHistoryStore.ioQueue.sync {}
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let onDisk = try decoder.decode([AgentAlert].self, from: Data(contentsOf: tempURL))
+        XCTAssertEqual(onDisk.map(\.kind), ["ready", "permission"])
     }
 }

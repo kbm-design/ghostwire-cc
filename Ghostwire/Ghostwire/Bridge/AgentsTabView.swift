@@ -1,6 +1,6 @@
 import SwiftUI
 
-struct BuddyTabView: View {
+struct AgentsTabView: View {
     @EnvironmentObject var vm: GhostwireViewModel
     @ObservedObject private var bridge = GhostwireSessionBridge.shared
     @ObservedObject private var panelVM = GhostwireSessionBridge.shared.panelViewModel

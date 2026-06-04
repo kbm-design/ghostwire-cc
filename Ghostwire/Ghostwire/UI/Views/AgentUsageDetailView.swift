@@ -2,7 +2,7 @@
 //  AgentUsageDetailView.swift
 //  Ghostwire
 //
-//  GW-151: per-agent usage detail - swapped into BuddyTabView's homeContent
+//  GW-151: per-agent usage detail - swapped into AgentsTabView's homeContent
 //  when a summary bar is clicked (AgentPeek-style detail toggle, no new
 //  window). Quota mode: 5H + 7D bars with reset/refill times. Token mode:
 //  token breakdown + estimated cost + context-window gauge.

@@ -518,11 +518,17 @@ actor SessionStore {
     private func processFileUpdate(_ payload: FileUpdatePayload) async {
         guard var session = sessions[payload.sessionId] else { return }
 
-        // Update conversationInfo from JSONL (summary, lastMessage, etc.)
-        let conversationInfo = await ConversationParser.shared.parse(
-            sessionId: payload.sessionId,
-            cwd: session.cwd
-        )
+        // Update conversationInfo (summary, lastMessage, etc.)
+        // GW-191: Codex sessions read rollout transcripts, Claude reads ~/.claude/projects
+        let conversationInfo: ConversationInfo
+        if session.agent == "codex" {
+            conversationInfo = await CodexTranscriptParser.shared.parse(sessionId: payload.sessionId)
+        } else {
+            conversationInfo = await ConversationParser.shared.parse(
+                sessionId: payload.sessionId,
+                cwd: session.cwd
+            )
+        }
         session.conversationInfo = conversationInfo
 
         // Handle /clear reconciliation - remove items that no longer exist in parser state
@@ -876,6 +882,21 @@ actor SessionStore {
     // MARK: - History Loading
 
     private func loadHistoryFromFile(sessionId: String, cwd: String) async {
+        // GW-191: Codex history comes from the rollout transcript
+        if sessions[sessionId]?.agent == "codex" {
+            let conversation = await CodexTranscriptParser.shared.parseConversation(sessionId: sessionId)
+            let conversationInfo = await CodexTranscriptParser.shared.parse(sessionId: sessionId)
+            await process(.historyLoaded(
+                sessionId: sessionId,
+                messages: conversation.messages,
+                completedTools: conversation.completedToolIds,
+                toolResults: conversation.toolResults,
+                structuredResults: [:],
+                conversationInfo: conversationInfo
+            ))
+            return
+        }
+
         // Parse file asynchronously
         let messages = await ConversationParser.shared.parseFullConversation(
             sessionId: sessionId,
@@ -949,10 +970,32 @@ actor SessionStore {
         // Cancel existing sync
         cancelPendingSync(sessionId: sessionId)
 
+        let agent = sessions[sessionId]?.agent
+
         // Schedule new debounced sync
         pendingSyncs[sessionId] = Task { [weak self, syncDebounceNs] in
             try? await Task.sleep(nanoseconds: syncDebounceNs)
             guard !Task.isCancelled else { return }
+
+            // GW-191: Codex sessions sync from the rollout transcript. Rollouts are
+            // small and append-only, so a full (cached-path) reparse is fine — the
+            // non-incremental fileUpdated path dedups by stable message ids.
+            if agent == "codex" {
+                let conversation = await CodexTranscriptParser.shared.parseConversation(sessionId: sessionId)
+                guard !conversation.messages.isEmpty else { return }
+
+                let payload = FileUpdatePayload(
+                    sessionId: sessionId,
+                    cwd: cwd,
+                    messages: conversation.messages,
+                    isIncremental: false,
+                    completedToolIds: conversation.completedToolIds,
+                    toolResults: conversation.toolResults,
+                    structuredResults: [:]
+                )
+                await self?.process(.fileUpdated(payload))
+                return
+            }
 
             // Parse incrementally - only get NEW messages since last call
             let result = await ConversationParser.shared.parseIncremental(

@@ -38,6 +38,28 @@ enum UsageFormat {
         "~" + (costFormatter.string(from: NSNumber(value: usd)) ?? String(format: "$%.2f", usd))
     }
 
+    private static let wholeDollarFormatter: NumberFormatter = {
+        let f = NumberFormatter()
+        f.numberStyle = .currency
+        f.currencyCode = "USD"
+        f.locale = Locale(identifier: "en_US")
+        f.maximumFractionDigits = 0
+        return f
+    }()
+
+    /// GW-201: server-truth extra-usage spend, in cents - exact dollars, NO
+    /// tilde (contrast estimatedCost). Round-dollar amounts drop the cents:
+    /// "$23.18 / $250"
+    static func spendDetail(usedCents: Double, limitCents: Int) -> String {
+        "\(dollars(cents: usedCents)) / \(dollars(cents: Double(limitCents)))"
+    }
+
+    private static func dollars(cents: Double) -> String {
+        let value = cents / 100
+        let formatter = value == value.rounded() ? wholeDollarFormatter : costFormatter
+        return formatter.string(from: NSNumber(value: value)) ?? String(format: "$%.2f", value)
+    }
+
     /// Summary detail for token mode: spend when priced, tokens otherwise
     static func tokenSummary(_ tokens: AgentTokenDisplay) -> String {
         if let cost = tokens.estimatedCostUSD {

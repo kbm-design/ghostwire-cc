@@ -18,8 +18,28 @@ struct AgentsSettings: View {
     @Default(.alertHistoryMaxEntries) private var alertHistoryMaxEntries
     @Default(.alertHistoryMaxAgeDays) private var alertHistoryMaxAgeDays
 
+    @ObservedObject private var hookStatus = HookStatusModel.shared
+
+    /// Agents whose hooks are installed but no longer trusted by the CLI.
+    private var retrustAgents: [AgentHookConfig] {
+        AgentHookConfig.all.filter { hookStatus.status(for: $0.id).needsRetrust }
+    }
+
     var body: some View {
         Form {
+            // Proactive re-trust prompt (GW-196): when a hook change (e.g. the
+            // buddi -> ghostwire rename) leaves Codex distrusting our hooks, they
+            // silently stop firing. Surface it at the top of the tab on open so
+            // the user fixes it before hitting a dead approval. Recomputed on
+            // appearance — no polling.
+            if !retrustAgents.isEmpty {
+                Section {
+                    ForEach(retrustAgents) { agent in
+                        RetrustBanner(agentName: agent.displayName)
+                    }
+                }
+            }
+
             Section {
                 ForEach(AgentHookConfig.all) { agent in
                     AgentHooksRow(agent: agent)
@@ -154,6 +174,42 @@ struct AgentsSettings: View {
         }
         .onAppear {
             selectedSound = GhostwireSettings.notificationSound
+            // Re-check install + trust from disk every time the tab appears, so
+            // a hook change made outside the app (rename, CLI edit) shows up.
+            hookStatus.refresh()
+        }
+    }
+}
+
+/// Top-of-tab proactive prompt shown when an installed agent's hooks are no
+/// longer trusted by its CLI. Amber, with a copyable `/hooks` instruction.
+private struct RetrustBanner: View {
+    let agentName: String
+    @State private var copied = false
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("\(agentName) stopped firing Ghostwire hooks")
+                    .fontWeight(.medium)
+                Text("The hooks changed, so \(agentName) marked them untrusted. Run /hooks in \(agentName) and trust them to restore approvals.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer()
+            Button {
+                let pb = NSPasteboard.general
+                pb.clearContents()
+                pb.setString("/hooks", forType: .string)
+                copied = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) { copied = false }
+            } label: {
+                Label(copied ? "Copied" : "Copy /hooks",
+                      systemImage: copied ? "checkmark" : "doc.on.doc")
+            }
         }
     }
 }
@@ -200,15 +256,63 @@ private struct AgentHooksRow: View {
         }
         .onAppear { hookStatus.refresh() }
 
-        if agent.requiresCLITrust && status.detected && status.installed {
-            HStack {
-                Text("Hook trust")
-                Spacer()
-                Text("Check with /hooks in \(agent.displayName)")
-                    .foregroundStyle(.secondary)
-            }
-            .opacity(0.4)
-            .help("\(agent.displayName) requires one-time hook trust via /hooks in the CLI. Status detection is coming.")
+        // Codex (and any CLI-trust agent) shows a live trust row once its hooks
+        // are installed. Trusted → green dot; re-trust required → amber dot with
+        // a copyable /hooks instruction (GW-196). `.notConfigured` is treated as
+        // benign and stays silent — it only means there's nothing to trust yet.
+        if agent.requiresCLITrust,
+           status.detected,
+           status.installed,
+           let trust = status.trust,
+           trust != .notConfigured {
+            CodexTrustRow(agentName: agent.displayName, status: trust)
         }
+    }
+}
+
+/// Hook-trust status for a CLI-trust agent (Codex). Green when trusted; amber
+/// with a copyable `/hooks` instruction when a re-trust is required.
+private struct CodexTrustRow: View {
+    let agentName: String
+    let status: CodexHookTrust.TrustStatus
+
+    @State private var copied = false
+
+    private var instruction: String { "/hooks" }
+
+    var body: some View {
+        HStack {
+            Text("Hook trust")
+            Spacer()
+            if status == .trusted {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(.green)
+                Text("Trusted")
+                    .foregroundStyle(.secondary)
+            } else {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
+                Text("Re-trust required")
+                    .foregroundStyle(.secondary)
+                Button {
+                    copyInstruction()
+                } label: {
+                    Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                }
+                .buttonStyle(.plain)
+                .help("Copy \(instruction)")
+            }
+        }
+        .help(status == .trusted
+              ? "\(agentName) trusts the Ghostwire hooks."
+              : "\(agentName) stopped firing the Ghostwire hooks after they changed. Run \(instruction) in \(agentName) and trust them to restore approvals.")
+    }
+
+    private func copyInstruction() {
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(instruction, forType: .string)
+        copied = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { copied = false }
     }
 }

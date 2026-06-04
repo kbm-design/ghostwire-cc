@@ -206,4 +206,11 @@ extension Defaults.Keys {
     // uninstall from the Agents tab sticks across relaunches.
     static let claudeHooksEnabled = Key<Bool>("claudeHooksEnabled", default: true)
     static let codexHooksEnabled = Key<Bool>("codexHooksEnabled", default: true)
+
+    // MARK: Modules + notch tabs (GW-144)
+    // Media's toggle only hides its settings pane (the player is core);
+    // the other modules reuse their feature master keys (see SettingsModule).
+    static let mediaModuleEnabled = Key<Bool>("mediaModuleEnabled", default: true)
+    static let notchTabOrder = Key<[String]>("notchTabOrder", default: ["agents", "dashboard", "shelf"])
+    static let hiddenNotchTabs = Key<Set<String>>("hiddenNotchTabs", default: [])
 }

@@ -12,10 +12,33 @@ struct GhostwireHeader: View {
     @ObservedObject var batteryModel = BatteryStatusViewModel.shared
     @ObservedObject var coordinator = GhostwireViewCoordinator.shared
     @StateObject var tvm = ShelfStateViewModel.shared
+
+    // Observed so the bar live-updates when tab settings change (GW-144)
+    @Default(.notchTabOrder) private var tabOrder
+    @Default(.hiddenNotchTabs) private var hiddenTabs
+    @Default(.shelf) private var shelfEnabled
+
+    /// Tab bar needs ≥2 visible tabs. Legacy rule retained: while the Shelf
+    /// tab is visible, the bar only appears once the shelf has items (or
+    /// "always show tabs" is on). With Shelf hidden/disabled the remaining
+    /// tabs still get a bar (legacy hid it entirely).
+    private var shouldShowTabBar: Bool {
+        let visible = NotchTab.visibleTabs(
+            order: NotchTab.sanitizedOrder(tabOrder),
+            hidden: hiddenTabs,
+            shelfEnabled: shelfEnabled
+        )
+        guard visible.count >= 2 else { return false }
+        if visible.contains(.shelf) {
+            return !tvm.isEmpty || coordinator.alwaysShowTabs
+        }
+        return true
+    }
+
     var body: some View {
         HStack(spacing: 0) {
             HStack {
-                if (!tvm.isEmpty || coordinator.alwaysShowTabs) && Defaults[.shelf] {
+                if shouldShowTabBar {
                     TabSelectionView()
                 } else if vm.notchState == .open {
                     EmptyView()

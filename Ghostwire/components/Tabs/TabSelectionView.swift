@@ -4,29 +4,30 @@
 //
 //
 
+import Defaults
 import SwiftUI
-
-struct TabModel: Identifiable {
-    let id = UUID()
-    let label: String
-    let icon: String
-    let view: NotchViews
-}
-
-let tabs = [
-    TabModel(label: "Agents", icon: "terminal.fill", view: .buddy),
-    TabModel(label: "Dashboard", icon: "square.grid.2x2", view: .home),
-    TabModel(label: "Shelf", icon: "tray.fill", view: .shelf)
-]
 
 struct TabSelectionView: View {
     @ObservedObject var coordinator = GhostwireViewCoordinator.shared
     @State private var displayedView: NotchViews = GhostwireViewCoordinator.shared.currentView
     @Namespace var animation
 
+    // Observed so the bar live-updates when settings change (GW-144)
+    @Default(.notchTabOrder) private var tabOrder
+    @Default(.hiddenNotchTabs) private var hiddenTabs
+    @Default(.shelf) private var shelfEnabled
+
+    private var visibleTabs: [NotchTab] {
+        NotchTab.visibleTabs(
+            order: NotchTab.sanitizedOrder(tabOrder),
+            hidden: hiddenTabs,
+            shelfEnabled: shelfEnabled
+        )
+    }
+
     var body: some View {
         HStack(spacing: 0) {
-            ForEach(tabs) { tab in
+            ForEach(visibleTabs) { tab in
                 TabButton(label: tab.label, icon: tab.icon, selected: displayedView == tab.view) {
                     withAnimation(.smooth) {
                         displayedView = tab.view

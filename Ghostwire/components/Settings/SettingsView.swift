@@ -26,44 +26,40 @@ struct SettingsView: View {
     var body: some View {
         NavigationSplitView {
             List(selection: $selectedTab) {
-                NavigationLink(value: "General") {
-                    Label("General", systemImage: "gear")
+                // Core sections (GW-144 IA: fixed up top, MODULES below)
+                Section {
+                    NavigationLink(value: "General") {
+                        Label("General", systemImage: "gear")
+                    }
+                    NavigationLink(value: "Agents") {
+                        Label("Agents", systemImage: "terminal")
+                    }
+                    NavigationLink(value: "Appearance") {
+                        Label("Appearance", systemImage: "eye")
+                    }
+                    NavigationLink(value: "Shortcuts") {
+                        Label("Shortcuts", systemImage: "keyboard")
+                    }
+                    NavigationLink(value: "Advanced") {
+                        Label("Advanced", systemImage: "gearshape.2")
+                    }
+                    NavigationLink(value: "About") {
+                        Label("About", systemImage: "info.circle")
+                    }
                 }
-                NavigationLink(value: "Agents") {
-                    Label("Agents", systemImage: "terminal")
-                }
-                NavigationLink(value: "Appearance") {
-                    Label("Appearance", systemImage: "eye")
-                }
-                NavigationLink(value: "Media") {
-                    Label("Media", systemImage: "play.laptopcomputer")
-                }
-                NavigationLink(value: "Calendar") {
-                    Label("Calendar", systemImage: "calendar")
-                }
-                NavigationLink(value: "HUD") {
-                    Label("HUDs", systemImage: "dial.medium.fill")
-                }
-                NavigationLink(value: "Battery") {
-                    Label("Battery", systemImage: "battery.100.bolt")
-                }
-//                NavigationLink(value: "Downloads") {
-//                    Label("Downloads", systemImage: "square.and.arrow.down")
-//                }
-                NavigationLink(value: "Shelf") {
-                    Label("Shelf", systemImage: "books.vertical")
-                }
-                NavigationLink(value: "Shortcuts") {
-                    Label("Shortcuts", systemImage: "keyboard")
-                }
-                // NavigationLink(value: "Extensions") {
-                //     Label("Extensions", systemImage: "puzzlepiece.extension")
-                // }
-                NavigationLink(value: "Advanced") {
-                    Label("Advanced", systemImage: "gearshape.2")
-                }
-                NavigationLink(value: "About") {
-                    Label("About", systemImage: "info.circle")
+
+                Section {
+                    ForEach(SettingsModule.all) { module in
+                        NavigationLink(value: module.id) {
+                            HStack {
+                                Label(module.label, systemImage: module.icon)
+                                Spacer()
+                                ModuleSidebarToggle(module)
+                            }
+                        }
+                    }
+                } header: {
+                    Text("Modules")
                 }
             }
             .listStyle(SidebarListStyle())
@@ -80,19 +76,19 @@ struct SettingsView: View {
                 case "Appearance":
                     Appearance()
                 case "Media":
-                    Media()
+                    ModuleGate(.media) { Media() }
                 case "Calendar":
-                    CalendarSettings()
+                    ModuleGate(.calendar) { CalendarSettings() }
                 case "HUD":
-                    HUD()
+                    ModuleGate(.huds) { HUD() }
                 case "Battery":
-                    Charge()
+                    ModuleGate(.battery) { Charge() }
                 case "Shelf":
-                    Shelf()
+                    ModuleGate(.shelf) { Shelf() }
+                case "Mirror":
+                    ModuleGate(.mirror) { MirrorSettings() }
                 case "Shortcuts":
                     Shortcuts()
-                case "Extensions":
-                    GeneralSettings()
                 case "Advanced":
                     Advanced()
                 case "About":
@@ -127,6 +123,70 @@ struct SettingsView: View {
         .id(accentColorUpdateTrigger)
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("AccentColorChanged"))) { _ in
             accentColorUpdateTrigger = UUID()
+        }
+    }
+}
+
+// Notch tab management (GW-144, Perch's Tab Management pattern):
+// reorder + hide the open-notch tabs. Shelf follows its module toggle.
+struct NotchTabManagementSection: View {
+    @Default(.notchTabOrder) var tabOrder
+    @Default(.hiddenNotchTabs) var hiddenTabs
+    @Default(.shelf) var shelfEnabled
+
+    private var orderedTabs: [NotchTab] {
+        NotchTab.sanitizedOrder(tabOrder)
+    }
+
+    private var visibleTabs: [NotchTab] {
+        NotchTab.visibleTabs(order: orderedTabs, hidden: hiddenTabs, shelfEnabled: shelfEnabled)
+    }
+
+    var body: some View {
+        Section {
+            ForEach(orderedTabs) { tab in
+                let isVisible = visibleTabs.contains(tab)
+                let isShelfGated = tab == .shelf && !shelfEnabled
+                HStack {
+                    Image(systemName: tab.icon)
+                        .frame(width: 18)
+                        .foregroundStyle(isVisible ? .primary : .secondary)
+                    Text(tab.label)
+                        .foregroundStyle(isVisible ? .primary : .secondary)
+                    Spacer()
+                    Button {
+                        NotchTab.move(tab, up: true)
+                    } label: {
+                        Image(systemName: "chevron.up")
+                    }
+                    .buttonStyle(.borderless)
+                    .disabled(tab == orderedTabs.first)
+                    Button {
+                        NotchTab.move(tab, up: false)
+                    } label: {
+                        Image(systemName: "chevron.down")
+                    }
+                    .buttonStyle(.borderless)
+                    .disabled(tab == orderedTabs.last)
+                    Toggle("", isOn: Binding(
+                        get: { !hiddenTabs.contains(tab.rawValue) },
+                        set: { NotchTab.setHidden(tab, !$0) }
+                    ))
+                    .toggleStyle(.switch)
+                    .controlSize(.mini)
+                    .labelsHidden()
+                    .tint(.effectiveAccent)
+                    // Last visible tab can't be hidden; shelf is governed
+                    // by its module toggle while the module is off.
+                    .disabled(isShelfGated || (isVisible && visibleTabs.count == 1))
+                }
+            }
+        } header: {
+            Text("Notch tabs")
+        } footer: {
+            Text("Reorder and hide tabs in the open notch. Shelf follows its module toggle.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 }
@@ -195,6 +255,8 @@ struct GeneralSettings: View {
             } header: {
                 Text("System features")
             }
+
+            NotchTabManagementSection()
 
             Section {
                 Picker(
@@ -1163,7 +1225,6 @@ struct Shelf: View {
 
 struct Appearance: View {
     @ObservedObject var coordinator = GhostwireViewCoordinator.shared
-    @Default(.mirrorShape) var mirrorShape
     @Default(.sliderColor) var sliderColor
     @Default(.useMusicVisualizer) var useMusicVisualizer
     @Default(.customVisualizers) var customVisualizers
@@ -1380,11 +1441,21 @@ struct Appearance: View {
                 }
             }
 
+        }
+        .accentColor(.effectiveAccent)
+        .navigationTitle("Appearance")
+    }
+}
+
+// Mirror module pane (GW-144): carved out of Appearance's "Additional
+// features" so the camera mirror is independently toggleable. The enable
+// toggle lives in the sidebar / ModuleGate (key: .showMirror).
+struct MirrorSettings: View {
+    @Default(.mirrorShape) var mirrorShape
+
+    var body: some View {
+        Form {
             Section {
-                Defaults.Toggle(key: .showMirror) {
-                    Text("Enable camera mirror")
-                }
-                    .disabled(!checkVideoInput())
                 Picker("Mirror shape", selection: $mirrorShape) {
                     Text("Circle")
                         .tag(MirrorShapeEnum.circle)
@@ -1394,22 +1465,20 @@ struct Appearance: View {
                 Defaults.Toggle(key: .showNotHumanFace) {
                     Text("Show cool face animation while inactive")
                 }
-            } header: {
-                HStack {
-                    Text("Additional features")
+            } footer: {
+                if !checkVideoInput() {
+                    Text("No camera detected on this Mac.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
             }
         }
         .accentColor(.effectiveAccent)
-        .navigationTitle("Appearance")
+        .navigationTitle("Mirror")
     }
 
     func checkVideoInput() -> Bool {
-        if AVCaptureDevice.default(for: .video) != nil {
-            return true
-        }
-
-        return false
+        AVCaptureDevice.default(for: .video) != nil
     }
 }
 

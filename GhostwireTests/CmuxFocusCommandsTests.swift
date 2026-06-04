@@ -27,4 +27,18 @@ final class CmuxFocusCommandsTests: XCTestCase {
         let commands = TmuxController.cmuxFocusCommands(workspace: "w", surface: "s")
         XCTAssertFalse(commands.contains { $0.contains("tab-action") })
     }
+
+    func testPasswordPrependedToEveryFocusCommand() {
+        // Codex review P2: passworded sockets worked for send but not focus
+        let commands = TmuxController.cmuxFocusCommands(workspace: "w", surface: "s", password: "hunter2")
+        XCTAssertEqual(commands, [
+            ["--password", "hunter2", "select-workspace", "--workspace", "w"],
+            ["--password", "hunter2", "focus-panel", "--panel", "s", "--workspace", "w"],
+        ])
+    }
+
+    func testNoPasswordFlagWhenSocketIsOpen() {
+        let commands = TmuxController.cmuxFocusCommands(workspace: "w", surface: "s", password: nil)
+        XCTAssertFalse(commands.contains { $0.contains("--password") })
+    }
 }

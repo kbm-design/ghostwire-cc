@@ -69,11 +69,16 @@ actor TmuxController {
     /// GW-162: the focus command sequence for a cmux surface. `tab-action
     /// --action select` (the old verb) does not exist in the cmux contract -
     /// `focus-panel` is "surface focus" and accepts surface refs directly.
-    nonisolated static func cmuxFocusCommands(workspace: String, surface: String) -> [[String]] {
-        [
+    /// When cmux runs with `socketControlMode: "password"`, every command
+    /// needs the `--password` global flag - same contract as the send path
+    /// in `ToolApprovalHandler`.
+    nonisolated static func cmuxFocusCommands(workspace: String, surface: String, password: String? = nil) -> [[String]] {
+        let commands: [[String]] = [
             ["select-workspace", "--workspace", workspace],
             ["focus-panel", "--panel", surface, "--workspace", workspace],
         ]
+        guard let password else { return commands }
+        return commands.map { ["--password", password] + $0 }
     }
 
     private func switchToCmuxSurface(target: TmuxTarget) async -> Bool {
@@ -86,8 +91,10 @@ actor TmuxController {
             return false
         }
 
+        let password = CmuxAccessProbe.readConfig().socketPassword
+
         do {
-            for arguments in Self.cmuxFocusCommands(workspace: workspace, surface: surface) {
+            for arguments in Self.cmuxFocusCommands(workspace: workspace, surface: surface, password: password) {
                 _ = try await ProcessExecutor.shared.run(cmuxPath, arguments: arguments)
             }
             return true

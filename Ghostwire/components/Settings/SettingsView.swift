@@ -81,6 +81,16 @@ struct SettingsView: View {
             .tint(.effectiveAccent)
             .toolbar(removing: .sidebarToggle)
             .navigationSplitViewColumnWidth(200)
+            // Keep selection and detail in sync with the search results:
+            // when the selected pane is filtered out, jump to the first match.
+            .onChange(of: searchQuery) { _, _ in
+                let matches = matchingPanes
+                guard !matches.isEmpty, !matches.contains(selectedTab) else { return }
+                if let first = SettingsSearchIndex.core.first(where: { matches.contains($0.id) })?.id
+                    ?? SettingsModule.all.first(where: { matches.contains($0.id) })?.id {
+                    selectedTab = first
+                }
+            }
         } detail: {
             Group {
                 switch selectedTab {
@@ -433,9 +443,7 @@ struct Charge: View {
     var body: some View {
         Form {
             Section {
-                Defaults.Toggle(key: .showBatteryIndicator) {
-                    Text("Show battery indicator")
-                }
+                // Master toggle lives in the sidebar / ModuleGate (GW-144)
                 Defaults.Toggle(key: .showPowerStatusNotifications) {
                     Text("Show power status notifications")
                 }
@@ -565,11 +573,9 @@ struct HUD: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     Spacer(minLength: 40)
-                    Defaults.Toggle("", key: .hudReplacement)
-                    .labelsHidden()
-                    .toggleStyle(.switch)
-                    .controlSize(.large)
-                    .disabled(!accessibilityAuthorized)
+                    // Master toggle lives in the sidebar / ModuleGate (GW-144);
+                    // the coordinator's hudReplacement observer still prompts
+                    // for accessibility and reverts the key when denied.
                 }
                 
                 if !accessibilityAuthorized {
@@ -790,16 +796,13 @@ struct Media: View {
 
 struct CalendarSettings: View {
     @ObservedObject private var calendarManager = CalendarManager.shared
-    @Default(.showCalendar) var showCalendar: Bool
     @Default(.hideCompletedReminders) var hideCompletedReminders
     @Default(.hideAllDayEvents) var hideAllDayEvents
     @Default(.autoScrollToNextEvent) var autoScrollToNextEvent
 
     var body: some View {
         Form {
-            Defaults.Toggle(key: .showCalendar) {
-                Text("Show calendar")
-            }
+            // Master toggle lives in the sidebar / ModuleGate (GW-144)
             Defaults.Toggle(key: .hideCompletedReminders) {
                 Text("Hide completed reminders")
             }
@@ -843,7 +846,6 @@ struct CalendarSettings: View {
                                 Text(calendar.title)
                             }
                             .accentColor(lighterColor(from: calendar.color))
-                            .disabled(!showCalendar)
                         }
                     }
                 }
@@ -879,7 +881,6 @@ struct CalendarSettings: View {
                                 Text(calendar.title)
                             }
                             .accentColor(lighterColor(from: calendar.color))
-                            .disabled(!showCalendar)
                         }
                     }
                 }
@@ -1008,9 +1009,7 @@ struct Shelf: View {
     var body: some View {
         Form {
             Section {
-                Defaults.Toggle(key: .shelf) {
-                    Text("Enable shelf")
-                }
+                // Master toggle lives in the sidebar / ModuleGate (GW-144)
                 Defaults.Toggle(key: .openShelfByDefault) {
                     Text("Open shelf by default if items are present")
                 }

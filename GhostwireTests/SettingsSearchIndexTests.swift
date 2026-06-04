@@ -50,4 +50,12 @@ final class SettingsSearchIndexTests: XCTestCase {
             SettingsModule.all.map(\.id)
         )
     }
+
+    func testEveryModuleHasKeywords() {
+        // Entries derive from SettingsModule.all + a keyword map keyed by
+        // id — a new module with no map entry would be label-searchable only.
+        for entry in SettingsSearchIndex.modules {
+            XCTAssertFalse(entry.keywords.isEmpty, "\(entry.id) has no search keywords")
+        }
+    }
 }

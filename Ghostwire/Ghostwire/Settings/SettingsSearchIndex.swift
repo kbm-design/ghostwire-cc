@@ -62,35 +62,27 @@ enum SettingsSearchIndex {
         ),
     ]
 
-    /// Module panes (sidebar MODULES section order mirrors SettingsModule.all).
-    static let modules: [SettingsSearchEntry] = [
+    /// Module panes, derived from SettingsModule.all so label/icon live in
+    /// ONE place (review finding: verbatim duplication drifted two registries).
+    static let modules: [SettingsSearchEntry] = SettingsModule.all.map { module in
         SettingsSearchEntry(
-            id: "Media", label: "Media", icon: "play.laptopcomputer",
-            keywords: [
-                "music", "player", "lyrics", "sneak peek", "controller",
-                "spotify", "apple music", "youtube", "playback",
-            ]
-        ),
-        SettingsSearchEntry(
-            id: "Calendar", label: "Calendar", icon: "calendar",
-            keywords: ["events", "reminders", "all-day"]
-        ),
-        SettingsSearchEntry(
-            id: "HUD", label: "HUDs", icon: "dial.medium.fill",
-            keywords: ["volume", "brightness", "backlight", "replacement", "percentage"]
-        ),
-        SettingsSearchEntry(
-            id: "Battery", label: "Battery", icon: "battery.100.bolt",
-            keywords: ["charge", "power", "percentage", "low power"]
-        ),
-        SettingsSearchEntry(
-            id: "Shelf", label: "Shelf", icon: "books.vertical",
-            keywords: ["files", "drag", "drop", "quick share", "airdrop", "tray"]
-        ),
-        SettingsSearchEntry(
-            id: "Mirror", label: "Mirror", icon: "web.camera",
-            keywords: ["camera", "webcam", "face", "shape"]
-        ),
+            id: module.id,
+            label: module.label,
+            icon: module.icon,
+            keywords: moduleKeywords[module.id] ?? []
+        )
+    }
+
+    private static let moduleKeywords: [String: [String]] = [
+        "Media": [
+            "music", "player", "lyrics", "sneak peek", "controller",
+            "spotify", "apple music", "youtube", "playback",
+        ],
+        "Calendar": ["events", "reminders", "all-day"],
+        "HUD": ["volume", "brightness", "backlight", "replacement", "percentage"],
+        "Battery": ["charge", "power", "percentage", "low power"],
+        "Shelf": ["files", "drag", "drop", "quick share", "airdrop", "tray"],
+        "Mirror": ["camera", "webcam", "face", "shape"],
     ]
 
     /// Pane ids matching a query (case-insensitive substring over label +

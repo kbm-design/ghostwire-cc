@@ -11,6 +11,7 @@
 //  key only hides the settings pane — the player is the app's core.
 //
 
+import AVFoundation
 import Defaults
 import SwiftUI
 
@@ -23,6 +24,11 @@ struct SettingsModule: Identifiable {
     let enabledKey: Defaults.Key<Bool>
     /// Footer copy for the gated (disabled) pane state.
     let disabledHint: String
+    /// Hardware/permission availability — toggles are disabled when false
+    /// (e.g. Mirror needs a camera; review F5).
+    var isAvailable: () -> Bool = { true }
+    /// Footer shown instead of disabledHint while unavailable.
+    var unavailableHint: String? = nil
 
     static let media = SettingsModule(
         id: "Media",
@@ -64,7 +70,9 @@ struct SettingsModule: Identifiable {
         label: "Mirror",
         icon: "web.camera",
         enabledKey: .showMirror,
-        disabledHint: "Shows a camera mirror in the open notch."
+        disabledHint: "Shows a camera mirror in the open notch.",
+        isAvailable: { AVCaptureDevice.default(for: .video) != nil },
+        unavailableHint: "No camera detected on this Mac."
     )
 
     static let all: [SettingsModule] = [media, calendar, huds, battery, shelf, mirror]
@@ -87,12 +95,14 @@ struct ModuleGate<Content: View>: View {
         if enabled {
             content
         } else {
+            let available = module.isAvailable()
             Form {
                 Section {
                     Toggle("Enable \(module.label)", isOn: $enabled)
                         .tint(.effectiveAccent)
+                        .disabled(!available)
                 } footer: {
-                    Text(module.disabledHint)
+                    Text(available ? module.disabledHint : (module.unavailableHint ?? module.disabledHint))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -118,5 +128,6 @@ struct ModuleSidebarToggle: View {
             .controlSize(.mini)
             .labelsHidden()
             .tint(.effectiveAccent)
+            .disabled(!module.isAvailable())
     }
 }

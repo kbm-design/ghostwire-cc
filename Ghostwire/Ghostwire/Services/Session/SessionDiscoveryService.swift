@@ -29,18 +29,46 @@ actor SessionDiscoveryService {
     private let claudeProjectsRoot: String
     private let codexSessionsRoot: String
     private let maxAge: TimeInterval
+    private let rescanInterval: TimeInterval
     private let isAgentProcessAlive: @Sendable (String) -> Bool
+
+    /// Periodic rescan loop (nil when not started)
+    private var rescanTask: Task<Void, Never>?
 
     init(
         claudeProjectsRoot: String = NSHomeDirectory() + "/.claude/projects",
         codexSessionsRoot: String = NSHomeDirectory() + "/.codex/sessions",
         maxAge: TimeInterval = 24 * 3600,
+        rescanInterval: TimeInterval = 5 * 60,
         isAgentProcessAlive: @escaping @Sendable (String) -> Bool = SessionDiscoveryService.defaultProcessGate
     ) {
         self.claudeProjectsRoot = claudeProjectsRoot
         self.codexSessionsRoot = codexSessionsRoot
         self.maxAge = maxAge
+        self.rescanInterval = rescanInterval
         self.isAgentProcessAlive = isAgentProcessAlive
+    }
+
+    // MARK: - Lifecycle
+
+    /// Scan immediately, then rescan every `rescanInterval`: sessions whose
+    /// hooks are silently broken still appear, and provisionals whose
+    /// transcript aged out (or whose agent CLI exited) are pruned.
+    func start() {
+        guard rescanTask == nil else { return }
+        rescanTask = Task {
+            while !Task.isCancelled {
+                let snapshot = discoverSessions()
+                Self.logger.info("Discovery scan found \(snapshot.count) session(s)")
+                await SessionStore.shared.process(.sessionsDiscovered(snapshot))
+                try? await Task.sleep(nanoseconds: UInt64(rescanInterval * 1_000_000_000))
+            }
+        }
+    }
+
+    func stop() {
+        rescanTask?.cancel()
+        rescanTask = nil
     }
 
     // MARK: - Scanning

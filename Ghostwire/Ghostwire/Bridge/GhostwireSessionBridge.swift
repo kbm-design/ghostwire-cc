@@ -72,12 +72,17 @@ final class GhostwireSessionBridge: ObservableObject {
     func startMonitoring() {
         // Don't bind the hook socket when running as a unit-test host — it would
         // unlink /tmp/com.ghostwire.notch.sock out from under a live Ghostwire instance.
+        // (Also keeps test runs from scanning the dev machine's real transcript trees.)
         guard NSClassFromString("XCTestCase") == nil else { return }
         sessionMonitor.startMonitoring()
+        // GW-194: register sessions that predate hook install or were idle at
+        // launch — their transcripts are on disk even though no event will come
+        Task { await SessionDiscoveryService.shared.start() }
     }
 
     func stopMonitoring() {
         sessionMonitor.stopMonitoring()
+        Task { await SessionDiscoveryService.shared.stop() }
     }
 
     private func handleWaitingForInputSessions(_ instances: [SessionState]) {

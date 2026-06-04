@@ -31,14 +31,27 @@ actor CodexTranscriptParser {
     /// Root of the Codex rollout tree (injectable for tests)
     private let sessionsRoot: String
 
+    /// How long a failed path resolution suppresses re-walking the tree.
+    /// Rollout files are created lazily on the session's first turn, so a brand-new
+    /// session misses on every hook event - without this, each miss re-walks the
+    /// entire (potentially multi-hundred-file) sessions tree.
+    private let negativeCacheTTL: TimeInterval
+
     /// sessionId -> resolved rollout file path
     private var pathCache: [String: String] = [:]
+
+    /// sessionId -> time of last failed resolution (negative cache)
+    private var missCache: [String: Date] = [:]
 
     /// rollout path -> cached parse keyed by file modification date
     private var infoCache: [String: (modificationDate: Date, info: ConversationInfo)] = [:]
 
-    init(sessionsRoot: String = NSHomeDirectory() + "/.codex/sessions") {
+    /// rollout path -> cached full conversation keyed by file modification date
+    private var conversationCache: [String: (modificationDate: Date, conversation: CodexConversation)] = [:]
+
+    init(sessionsRoot: String = NSHomeDirectory() + "/.codex/sessions", negativeCacheTTL: TimeInterval = 5) {
         self.sessionsRoot = sessionsRoot
+        self.negativeCacheTTL = negativeCacheTTL
     }
 
     /// A parsed Codex conversation: history plus tool completion state
@@ -60,6 +73,13 @@ actor CodexTranscriptParser {
             return cached
         }
 
+        // Negative cache: don't re-walk the tree for a session we just failed
+        // to resolve (pre-first-turn sessions miss on every hook event)
+        if let lastMiss = missCache[sessionId],
+           Date().timeIntervalSince(lastMiss) < negativeCacheTTL {
+            return nil
+        }
+
         let fileManager = FileManager.default
         let suffix = "-\(sessionId).jsonl"
 
@@ -77,12 +97,14 @@ actor CodexTranscriptParser {
                     for file in sortedSubdirs(dayPath) where file.hasSuffix(suffix) {
                         let fullPath = dayPath + "/" + file
                         pathCache[sessionId] = fullPath
+                        missCache.removeValue(forKey: sessionId)
                         return fullPath
                     }
                 }
             }
         }
 
+        missCache[sessionId] = Date()
         return nil
     }
 
@@ -181,8 +203,16 @@ actor CodexTranscriptParser {
     /// from response_item function_call(+output). Message ids are derived from
     /// line numbers (stable across reparses — rollout files are append-only).
     func parseConversation(sessionId: String) -> CodexConversation {
-        guard let path = rolloutFilePath(sessionId: sessionId),
-              let data = FileManager.default.contents(atPath: path),
+        guard let path = rolloutFilePath(sessionId: sessionId) else { return .empty }
+
+        // Cache by modification date - synced on every hook event, and rollouts
+        // grow to many MB on long sessions
+        let modDate = (try? FileManager.default.attributesOfItem(atPath: path))?[.modificationDate] as? Date
+        if let modDate, let cached = conversationCache[path], cached.modificationDate == modDate {
+            return cached.conversation
+        }
+
+        guard let data = FileManager.default.contents(atPath: path),
               let content = String(data: data, encoding: .utf8) else {
             return .empty
         }
@@ -253,11 +283,15 @@ actor CodexTranscriptParser {
             }
         }
 
-        return CodexConversation(
+        let conversation = CodexConversation(
             messages: messages,
             completedToolIds: completedToolIds,
             toolResults: toolResults
         )
+        if let modDate {
+            conversationCache[path] = (modificationDate: modDate, conversation: conversation)
+        }
+        return conversation
     }
 
     // MARK: - Helpers

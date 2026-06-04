@@ -157,6 +157,48 @@ final class CodexTranscriptParserTests: XCTestCase {
         XCTAssertEqual(first.messages.map { $0.id }, second.messages.map { $0.id })
     }
 
+    // MARK: - Caching (perf fixes from code review)
+
+    func testParseConversationCachesByModificationDate() async throws {
+        // Same modDate -> cached result returned without re-reading the file.
+        // Prove it by swapping file content while pinning the modDate.
+        let path = await parser.rolloutFilePath(sessionId: sessionId)!
+        // Whole-second modDate survives the filesystem roundtrip exactly
+        let pinnedDate = Date(timeIntervalSince1970: 1_780_000_000)
+        try FileManager.default.setAttributes([.modificationDate: pinnedDate], ofItemAtPath: path)
+
+        let firstParse = await parser.parseConversation(sessionId: sessionId)
+        XCTAssertFalse(firstParse.messages.isEmpty)
+
+        try "".write(toFile: path, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.modificationDate: pinnedDate], ofItemAtPath: path)
+
+        let secondParse = await parser.parseConversation(sessionId: sessionId)
+        XCTAssertEqual(secondParse.messages.count, firstParse.messages.count,
+                       "unchanged modDate must serve the cached conversation")
+    }
+
+    func testNegativeCacheSuppressesRepeatedTreeWalks() async throws {
+        // A failed resolution within the TTL must return nil WITHOUT finding a
+        // file that appeared in the meantime - proving the walk was skipped.
+        let unknownId = "019e8bd5-0000-7681-8840-4830234ab777"
+        let first = await parser.rolloutFilePath(sessionId: unknownId)
+        XCTAssertNil(first)
+
+        // File appears after the miss (the lazy first-turn rollout)
+        let dayDir = tempRoot + "/2026/06/03"
+        try FileManager.default.createDirectory(atPath: dayDir, withIntermediateDirectories: true)
+        try "{}".write(toFile: dayDir + "/rollout-2026-06-03T21-00-00-\(unknownId).jsonl", atomically: true, encoding: .utf8)
+
+        let within = await parser.rolloutFilePath(sessionId: unknownId)
+        XCTAssertNil(within, "negative cache must suppress the re-walk inside the TTL")
+
+        // A TTL-0 parser (negative cache disabled) finds it immediately
+        let eagerParser = CodexTranscriptParser(sessionsRoot: tempRoot, negativeCacheTTL: 0)
+        let resolved = await eagerParser.rolloutFilePath(sessionId: unknownId)
+        XCTAssertNotNil(resolved)
+    }
+
     // MARK: - Fixture (sanitized real rollout, codex-tui 0.135.0)
 
     private static let fixture = """

@@ -16,7 +16,7 @@ final class CodexUsageService: ObservableObject {
     static let shared = CodexUsageService()
 
     @Published private(set) var display: AgentUsageDisplay?
-    /// Mtime of the newest rollout - BuddyTabView shows the Codex meter only
+    /// Mtime of the newest rollout - AgentsTabView shows the Codex meter only
     /// when there's a live session or activity within the current 5H window.
     @Published private(set) var lastActivityDate: Date?
 

@@ -86,7 +86,7 @@ enum UsageFormat {
         return "\(Int(remaining) / 60)m"
     }
 
-    /// "3h 57m" within a day, "Tue 9 AM" beyond (moved from BuddyTabView)
+    /// "3h 57m" within a day, "Tue 9 AM" beyond (moved from AgentsTabView)
     static func resetTime(_ date: Date) -> String {
         let remaining = date.timeIntervalSinceNow
         if remaining <= 0 { return "now" }

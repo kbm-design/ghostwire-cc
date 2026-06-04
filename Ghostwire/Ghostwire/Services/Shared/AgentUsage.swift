@@ -41,7 +41,7 @@ struct AgentRateLimits: Equatable, Codable {
 
 /// What an agent's meter renders - the auth-branched display mode.
 /// Subscription/OAuth → .quota; API key → .tokens. One shape for every
-/// agent so BuddyTabView renders agent-agnostic (parity rule).
+/// agent so AgentsTabView renders agent-agnostic (parity rule).
 enum AgentUsageDisplay: Equatable {
     case quota(fiveHour: QuotaPeriod?, sevenDay: QuotaPeriod?)
     case tokens(AgentTokenDisplay)

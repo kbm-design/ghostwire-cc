@@ -365,7 +365,7 @@ struct ContentView: View {
                 VStack {
                     switch coordinator.currentView {
                     case .buddy:
-                        BuddyTabView()
+                        AgentsTabView()
                     case .home:
                         NotchHomeView(albumArtNamespace: albumArtNamespace)
                     case .shelf:

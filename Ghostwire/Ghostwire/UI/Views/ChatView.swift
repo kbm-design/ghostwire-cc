@@ -486,12 +486,10 @@ struct ChatView: View {
     // MARK: - Actions
 
     private func focusTerminal() {
+        // GW-162: tiered focus (cmux CLI / tmux + app activation); yabai
+        // is an enhancement, not a gate
         Task {
-            if let pid = session.pid {
-                _ = await YabaiController.shared.focusWindow(forClaudePid: pid)
-            } else {
-                _ = await YabaiController.shared.focusWindow(forWorkingDirectory: session.cwd)
-            }
+            await SessionFocusController.shared.focus(session: session)
         }
     }
 

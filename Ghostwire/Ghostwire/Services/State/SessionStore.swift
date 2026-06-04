@@ -966,7 +966,8 @@ actor SessionStore {
     /// idle pre-existing sessions never produce the file-sync events that
     /// normally populate conversationInfo, leaving titles stuck on the
     /// folder name. Parsers cache by mtime, so this is cheap on re-adoption.
-    private func adoptConversationInfo(sessionId: String, agent: String?, cwd: String) async {
+    /// Internal for tests (GW-192 precedent).
+    func adoptConversationInfo(sessionId: String, agent: String?, cwd: String) async {
         let info: ConversationInfo
         if agent == "codex" {
             info = await CodexTranscriptParser.shared.parse(sessionId: sessionId)
@@ -977,6 +978,15 @@ actor SessionStore {
         // Re-fetch after the await: the session may have been pruned or
         // upgraded while the parser ran
         guard var session = sessions[sessionId] else { return }
+
+        // Fill-only: a concurrent file sync may have populated richer info
+        // while the adoption parse was in flight — never regress it
+        let emptyInfo = ConversationInfo(
+            summary: nil, lastMessage: nil, lastMessageRole: nil,
+            lastToolName: nil, firstUserMessage: nil, lastUserMessageDate: nil
+        )
+        guard session.conversationInfo == emptyInfo else { return }
+
         session.conversationInfo = info
         sessions[sessionId] = session
     }

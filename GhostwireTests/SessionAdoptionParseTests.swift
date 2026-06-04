@@ -86,4 +86,34 @@ final class SessionAdoptionParseTests: XCTestCase {
         XCTAssertEqual(session?.conversationInfo.summary, "Refactor the parser",
                        "first hook event must parse the title even when it never syncs the file")
     }
+
+    func testAdoptionOnlyFillsEmptyConversationInfo() async throws {
+        // Codex review (PR #21): the adoption parse resolves after an await,
+        // so a concurrent file sync can populate conversationInfo first. The
+        // late adoption write must yield instead of clobbering fresher state.
+        let sessionId = UUID().uuidString.lowercased()
+        try writeTranscript(sessionId: sessionId, title: "Original title")
+
+        await SessionStore.shared.process(.sessionsDiscovered([
+            DiscoveredSession(
+                sessionId: sessionId,
+                cwd: cwd,
+                agent: "claude",
+                transcriptPath: projectDir + "/" + sessionId + ".jsonl",
+                fileModified: Date()
+            )
+        ]))
+
+        // Simulate a late-resolving adoption racing already-populated info:
+        // the transcript now parses to a different title, but the session's
+        // info is no longer empty, so re-adoption must not overwrite it.
+        try writeTranscript(sessionId: sessionId, title: "Late-arriving title")
+        await SessionStore.shared.adoptConversationInfo(
+            sessionId: sessionId, agent: "claude", cwd: cwd
+        )
+
+        let session = await SessionStore.shared.session(for: sessionId)
+        XCTAssertEqual(session?.conversationInfo.summary, "Original title",
+                       "adoption must only fill empty info, never overwrite richer state")
+    }
 }

@@ -116,4 +116,47 @@ final class SessionAdoptionParseTests: XCTestCase {
         XCTAssertEqual(session?.conversationInfo.summary, "Original title",
                        "adoption must only fill empty info, never overwrite richer state")
     }
+
+    func testFirstHookOnProvisionalRepairsEmptyTitle() async throws {
+        // Codex adversarial review (PR #21): discovery can register a
+        // provisional with a lossy-decoded (wrong) cwd, so its adoption parse
+        // reads a nonexistent path and stays empty. The first hook event
+        // fixes the cwd — it must also re-adopt, or a non-sync first event
+        // (Notification, PermissionRequest) leaves the title stuck forever.
+        let sessionId = UUID().uuidString.lowercased()
+        try writeTranscript(sessionId: sessionId, title: "Recovered title")
+
+        await SessionStore.shared.process(.sessionsDiscovered([
+            DiscoveredSession(
+                sessionId: sessionId,
+                cwd: "/wrong/lossy/decode",  // parse will find nothing here
+                agent: "claude",
+                transcriptPath: projectDir + "/" + sessionId + ".jsonl",
+                fileModified: Date()
+            )
+        ]))
+
+        let provisional = await SessionStore.shared.session(for: sessionId)
+        XCTAssertNil(provisional?.conversationInfo.summary, "precondition: discovery parse came up empty")
+
+        // First hook is a NON-sync event carrying the authoritative cwd
+        await SessionStore.shared.process(.hookReceived(HookEvent(
+            sessionId: sessionId,
+            cwd: cwd,
+            event: "Notification",
+            status: "idle",
+            pid: 4242,
+            tty: nil,
+            tool: nil,
+            toolInput: nil,
+            toolUseId: nil,
+            notificationType: nil,
+            message: nil,
+            source: "claude"
+        )))
+
+        let session = await SessionStore.shared.session(for: sessionId)
+        XCTAssertEqual(session?.conversationInfo.summary, "Recovered title",
+                       "first hook on a provisional must re-adopt with the corrected cwd")
+    }
 }

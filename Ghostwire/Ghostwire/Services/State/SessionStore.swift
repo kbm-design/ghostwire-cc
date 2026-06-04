@@ -130,7 +130,8 @@ actor SessionStore {
 
         let isNewSession = sessions[sessionId] == nil
         var session = sessions[sessionId] ?? createSession(from: event)
-        if session.isProvisional {
+        let wasProvisional = session.isProvisional
+        if wasProvisional {
             session = Self.upgradedFromProvisional(session, event: event)
         }
 
@@ -185,9 +186,12 @@ actor SessionStore {
         sessions[sessionId] = session
         publishState()
 
-        if isNewSession {
+        if isNewSession || wasProvisional {
             // GW-193: events that never sync the file (Notification, …) left
-            // new sessions titled by folder name — parse once at adoption
+            // new sessions titled by folder name — parse once at adoption.
+            // A provisional's first hook also re-adopts: its discovery-time
+            // parse may have read a lossy-decoded (wrong) cwd and come up
+            // empty — the fill-only guard makes the retry clobber-safe.
             await adoptConversationInfo(sessionId: sessionId, agent: session.agent, cwd: session.cwd)
         }
 

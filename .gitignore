@@ -62,3 +62,5 @@ scripts/
 # Claude (local)
 .claude/
 CLAUDE.md
+# Real captured hook payloads (GW-148/GW-168) - sanitize before ever committing
+fixtures/hook-payloads/

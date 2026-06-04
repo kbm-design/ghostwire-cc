@@ -480,6 +480,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         CodexHookInstaller.installIfNeeded()
         GhostwireSessionBridge.shared.startMonitoring()
         UsageService.shared.startPolling()
+        CodexUsageService.shared.startPolling()
 
 
 

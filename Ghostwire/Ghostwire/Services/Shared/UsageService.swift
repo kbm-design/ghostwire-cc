@@ -7,8 +7,23 @@ import Security
 struct UsageData: Equatable, Codable {
     var fiveHour: QuotaPeriod?
     var sevenDay: QuotaPeriod?
+    /// GW-201: per-model weekly sub-limits (null on the wire when the plan
+    /// doesn't expose them - keep nil, don't zero)
+    var sevenDayOpus: QuotaPeriod?
+    var sevenDaySonnet: QuotaPeriod?
+    /// GW-201: server-provided extra-usage spend (monthly $ cap + used)
+    var extraUsage: ExtraUsage?
 
     static let empty = UsageData()
+}
+
+/// extra_usage block from the OAuth usage endpoint - server-truth billing,
+/// in cents ($250 cap = 25000). Parsed even when disabled; views decide.
+struct ExtraUsage: Equatable, Codable {
+    var isEnabled: Bool = false
+    var monthlyLimitCents: Int = 0
+    var usedCredits: Double = 0
+    var utilization: Double = 0
 }
 
 struct QuotaPeriod: Equatable, Codable {
@@ -41,13 +56,13 @@ final class UsageService: ObservableObject {
     private var backoffCount = 0
     private var consecutiveFailures = 0
 
-    private static let isoFormatterFrac: ISO8601DateFormatter = {
+    nonisolated(unsafe) private static let isoFormatterFrac: ISO8601DateFormatter = {
         let f = ISO8601DateFormatter()
         f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return f
     }()
 
-    private static let isoFormatterBasic = ISO8601DateFormatter()
+    nonisolated(unsafe) private static let isoFormatterBasic = ISO8601DateFormatter()
 
     private init() {}
 
@@ -257,13 +272,33 @@ final class UsageService: ObservableObject {
             throw URLError(.cannotParseResponse)
         }
 
-        return UsageData(
+        return parseUsageData(from: json)
+    }
+
+    /// GW-201: full response parse, extracted for testability. DEFENSIVE by
+    /// design - the endpoint carries rotating codename fields (tangelo,
+    /// iguana_necktie, ...); ignore unknown keys, tolerate nulls everywhere.
+    nonisolated static func parseUsageData(from json: [String: Any]) -> UsageData {
+        UsageData(
             fiveHour: parseQuotaPeriod(json["five_hour"]),
-            sevenDay: parseQuotaPeriod(json["seven_day"])
+            sevenDay: parseQuotaPeriod(json["seven_day"]),
+            sevenDayOpus: parseQuotaPeriod(json["seven_day_opus"]),
+            sevenDaySonnet: parseQuotaPeriod(json["seven_day_sonnet"]),
+            extraUsage: parseExtraUsage(json["extra_usage"])
         )
     }
 
-    private static func parseQuotaPeriod(_ value: Any?) -> QuotaPeriod? {
+    nonisolated private static func parseExtraUsage(_ value: Any?) -> ExtraUsage? {
+        guard let dict = value as? [String: Any] else { return nil }
+        return ExtraUsage(
+            isEnabled: dict["is_enabled"] as? Bool ?? false,
+            monthlyLimitCents: dict["monthly_limit"] as? Int ?? 0,
+            usedCredits: dict["used_credits"] as? Double ?? 0,
+            utilization: dict["utilization"] as? Double ?? 0
+        )
+    }
+
+    nonisolated private static func parseQuotaPeriod(_ value: Any?) -> QuotaPeriod? {
         guard let dict = value as? [String: Any],
               let utilization = dict["utilization"] as? Double else { return nil }
 

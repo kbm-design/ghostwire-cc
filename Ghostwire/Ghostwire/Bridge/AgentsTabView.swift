@@ -50,7 +50,14 @@ struct AgentsTabView: View {
     private var homeContent: some View {
         VStack(alignment: .leading, spacing: 8) {
             if let agent = usageDetailAgent, let display = usageDisplay(for: agent) {
-                AgentUsageDetailView(agent: agent, display: display) {
+                AgentUsageDetailView(
+                    agent: agent,
+                    display: display,
+                    // GW-201: per-model weeklies + server extra-usage spend
+                    // exist only on the Claude OAuth endpoint
+                    perModelWeeklies: agent == "claude" ? claudePerModelWeeklies : [],
+                    extraUsage: agent == "claude" ? usageService.usage.extraUsage : nil
+                ) {
                     withAnimation(.easeInOut(duration: 0.2)) { usageDetailAgent = nil }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -119,6 +126,14 @@ struct AgentsTabView: View {
             codexLastActivity: codexUsageService.lastActivityDate,
             hasLiveSessions: !sessions.isEmpty
         )
+    }
+
+    /// GW-201: non-null per-model weekly sub-limits from the OAuth endpoint
+    private var claudePerModelWeeklies: [(label: String, period: QuotaPeriod)] {
+        var entries: [(String, QuotaPeriod)] = []
+        if let opus = usageService.usage.sevenDayOpus { entries.append(("Opus", opus)) }
+        if let sonnet = usageService.usage.sevenDaySonnet { entries.append(("Sonnet", sonnet)) }
+        return entries
     }
 
     /// First agent to come alive keeps slot 1; slots never reshuffle while
@@ -320,7 +335,10 @@ struct UsageBar: View {
                         .fill(trackColor)
                     RoundedRectangle(cornerRadius: 2)
                         .fill(color)
-                        .frame(width: max(0, geo.size.width * percent))
+                        // Clamp both ends: extra_usage utilization can exceed
+                        // 100 when the user overruns the monthly cap - the
+                        // fill must not bleed past the track (review GW-201)
+                        .frame(width: geo.size.width * min(1, max(0, percent)))
                 }
             }
             .frame(height: 4)

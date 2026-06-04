@@ -26,7 +26,10 @@ final class CodexTranscriptParserTests: XCTestCase {
         try FileManager.default.createDirectory(atPath: dayDir, withIntermediateDirectories: true)
         let file = dayDir + "/rollout-2026-06-02T21-54-26-\(sessionId).jsonl"
         try Self.fixture.write(toFile: file, atomically: true, encoding: .utf8)
-        parser = CodexTranscriptParser(sessionsRoot: tempRoot)
+        // Nonexistent stateDBPath keeps these tests hermetic - the fixture
+        // session id is a real one, so the default db would resolve it to the
+        // REAL rollout on this machine (sqlite index tests: CodexThreadIndexTests)
+        parser = CodexTranscriptParser(sessionsRoot: tempRoot, stateDBPath: tempRoot + "/no-db.sqlite")
     }
 
     override func tearDownWithError() throws {
@@ -194,7 +197,7 @@ final class CodexTranscriptParserTests: XCTestCase {
         XCTAssertNil(within, "negative cache must suppress the re-walk inside the TTL")
 
         // A TTL-0 parser (negative cache disabled) finds it immediately
-        let eagerParser = CodexTranscriptParser(sessionsRoot: tempRoot, negativeCacheTTL: 0)
+        let eagerParser = CodexTranscriptParser(sessionsRoot: tempRoot, stateDBPath: tempRoot + "/no-db.sqlite", negativeCacheTTL: 0)
         let resolved = await eagerParser.rolloutFilePath(sessionId: unknownId)
         XCTAssertNotNil(resolved)
     }

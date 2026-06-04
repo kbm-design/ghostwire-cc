@@ -86,6 +86,20 @@ final class UsageFormatTests: XCTestCase {
         XCTAssertEqual(UsageFormat.resetTimeCompact(Date(timeIntervalSinceNow: -10)), "now")
     }
 
+    // MARK: - Spend (server-truth: extra_usage is real billing, NO tilde)
+
+    func testSpendDetailIsServerTruthNoTilde() {
+        // extra_usage credits/limit come from Anthropic in cents → exact
+        // dollars, "$23.18 / $250" (contrast estimatedCost's "~$").
+        XCTAssertEqual(UsageFormat.spendDetail(usedCents: 2318, limitCents: 25000), "$23.18 / $250")
+    }
+
+    func testSpendDetailDropsTrailingZeroCentsOnRoundLimit() {
+        // $250.00 cap reads "$250" (round), used keeps cents precision.
+        XCTAssertEqual(UsageFormat.spendDetail(usedCents: 500, limitCents: 10000), "$5 / $100")
+        XCTAssertEqual(UsageFormat.spendDetail(usedCents: 1299, limitCents: 5000), "$12.99 / $50")
+    }
+
     func testTokenSummaryPrefersCostWhenAvailable() {
         // Summary detail text: spend figure when priced, token count fallback
         let tokens = AgentTokenDisplay(

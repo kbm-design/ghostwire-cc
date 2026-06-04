@@ -15,6 +15,22 @@ struct UsageData: Equatable, Codable {
     var extraUsage: ExtraUsage?
 
     static let empty = UsageData()
+
+    /// GW-203: the full .quota display for this data - per-model weeklies and
+    /// extra-usage spend ride the enum so the UI never reaches back into
+    /// UsageService.usage (the GW-201 side channel that forced agent-name
+    /// gates). Only non-null weeklies are surfaced.
+    var quotaDisplay: AgentUsageDisplay {
+        var perModel: [PerModelQuota] = []
+        if let opus = sevenDayOpus { perModel.append(PerModelQuota(label: "Opus", period: opus)) }
+        if let sonnet = sevenDaySonnet { perModel.append(PerModelQuota(label: "Sonnet", period: sonnet)) }
+        return .quota(
+            fiveHour: fiveHour,
+            sevenDay: sevenDay,
+            perModel: perModel,
+            extra: extraUsage
+        )
+    }
 }
 
 /// extra_usage block from the OAuth usage endpoint - server-truth billing,
@@ -24,6 +40,9 @@ struct ExtraUsage: Equatable, Codable {
     var monthlyLimitCents: Int = 0
     var usedCredits: Double = 0
     var utilization: Double = 0
+    /// GW-203: carried from the wire (e.g. "USD") instead of dropped - the
+    /// cents assumption in spendDetail only holds while this is USD.
+    var currency: String = "USD"
 }
 
 struct QuotaPeriod: Equatable, Codable {
@@ -103,7 +122,7 @@ final class UsageService: ObservableObject {
             do {
                 let result = try await Self.fetchUsage(token: token)
                 usage = result
-                display = .quota(fiveHour: result.fiveHour, sevenDay: result.sevenDay)
+                display = result.quotaDisplay
                 consecutiveFailures = 0
                 backoffCount = 0
                 currentInterval = baseInterval
@@ -162,7 +181,7 @@ final class UsageService: ObservableObject {
         guard let data = try? Data(contentsOf: Self.cacheURL),
               let cached = try? JSONDecoder().decode(CachedUsage.self, from: data) else { return }
         usage = cached.usage
-        display = .quota(fiveHour: cached.usage.fiveHour, sevenDay: cached.usage.sevenDay)
+        display = cached.usage.quotaDisplay
         isAvailable = true
     }
 
@@ -284,7 +303,8 @@ final class UsageService: ObservableObject {
             isEnabled: dict["is_enabled"] as? Bool ?? false,
             monthlyLimitCents: dict["monthly_limit"] as? Int ?? 0,
             usedCredits: dict["used_credits"] as? Double ?? 0,
-            utilization: dict["utilization"] as? Double ?? 0
+            utilization: dict["utilization"] as? Double ?? 0,
+            currency: dict["currency"] as? String ?? "USD"
         )
     }
 

@@ -39,11 +39,28 @@ struct AgentRateLimits: Equatable, Codable {
     var sevenDay: QuotaPeriod?
 }
 
+/// A per-model weekly sub-limit (e.g. Opus/Sonnet on the Claude OAuth plan).
+/// GW-203: rides the display enum so the UI never reaches past it for the
+/// data (was a Claude-only side channel via UsageService.usage in GW-201).
+struct PerModelQuota: Equatable {
+    let label: String
+    let period: QuotaPeriod
+}
+
 /// What an agent's meter renders - the auth-branched display mode.
 /// Subscription/OAuth → .quota; API key → .tokens. One shape for every
 /// agent so AgentsTabView renders agent-agnostic (parity rule).
+///
+/// GW-203: .quota carries ALL its data (5H/7D + per-model weeklies + server
+/// extra-usage spend). The UI gates on the enum mode, never on agent name -
+/// when GW-200 gives Codex server quota it populates the same fields here.
 enum AgentUsageDisplay: Equatable {
-    case quota(fiveHour: QuotaPeriod?, sevenDay: QuotaPeriod?)
+    case quota(
+        fiveHour: QuotaPeriod?,
+        sevenDay: QuotaPeriod?,
+        perModel: [PerModelQuota] = [],
+        extra: ExtraUsage? = nil
+    )
     case tokens(AgentTokenDisplay)
 }
 

@@ -674,6 +674,12 @@ struct ToolCallView: View {
     @State private var isExpanded: Bool = false
     @State private var isHovering: Bool = false
 
+    // GW-144/GW-139 full-raw: transcript tool rows show the exact command
+    // verbatim and never truncate — the history must match what ran.
+    @Default(.messageDisplayMode) private var displayMode
+
+    private var fullRaw: Bool { displayMode == .fullRaw }
+
     private var statusColor: Color {
         switch tool.status {
         case .running:
@@ -746,26 +752,33 @@ struct ToolCallView: View {
                     Text("\(taskDesc) (\(tool.subagentTools.count) tools)")
                         .font(.system(size: 11))
                         .foregroundColor(textColor.opacity(0.7))
-                        .lineLimit(1)
+                        .lineLimit(fullRaw ? nil : 1)
                         .truncationMode(.tail)
                 } else if tool.name == "AgentOutputTool", let desc = agentDescription {
                     let blocking = tool.input["block"] == "true"
                     Text(blocking ? "Waiting: \(desc)" : desc)
                         .font(.system(size: 11))
                         .foregroundColor(textColor.opacity(0.7))
-                        .lineLimit(1)
+                        .lineLimit(fullRaw ? nil : 1)
                         .truncationMode(.tail)
+                } else if fullRaw, let command = tool.input["command"] {
+                    // The exact command string, not the friendly description
+                    Text(verbatim: command)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundColor(textColor.opacity(0.7))
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
                 } else if MCPToolFormatter.isMCPTool(tool.name) && !tool.input.isEmpty {
                     Text(MCPToolFormatter.formatArgs(tool.input))
                         .font(.system(size: 11))
                         .foregroundColor(textColor.opacity(0.7))
-                        .lineLimit(1)
+                        .lineLimit(fullRaw ? nil : 1)
                         .truncationMode(.tail)
                 } else {
                     Text(tool.statusDisplay.text)
                         .font(.system(size: 11))
                         .foregroundColor(textColor.opacity(0.7))
-                        .lineLimit(1)
+                        .lineLimit(fullRaw ? nil : 1)
                         .truncationMode(.tail)
                 }
 
@@ -872,6 +885,7 @@ struct SubagentToolRow: View {
     let tool: SubagentToolCall
 
     @State private var dotOpacity: Double = 0.5
+    @Default(.messageDisplayMode) private var displayMode
 
     private var statusColor: Color {
         switch tool.status {
@@ -914,11 +928,12 @@ struct SubagentToolRow: View {
                 .font(.system(size: 10, weight: .medium))
                 .foregroundColor(.white.opacity(0.6))
 
-            // Status text (same format as regular tools)
+            // Status text (same format as regular tools); full-raw mode
+            // keeps even subagent summaries untruncated (GW-139 rule)
             Text(statusText)
                 .font(.system(size: 10))
                 .foregroundColor(.white.opacity(0.5))
-                .lineLimit(1)
+                .lineLimit(displayMode == .fullRaw ? nil : 1)
                 .truncationMode(.middle)
         }
     }

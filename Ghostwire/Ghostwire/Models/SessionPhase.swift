@@ -86,6 +86,8 @@ enum SessionPhase: Sendable {
             return true
         case (.idle, .waitingForApproval):
             return true  // Direct permission request on idle session
+        case (.idle, .waitingForInput):
+            return true  // Stop seen while idle (e.g. app launched mid-turn) - GW-171
         case (.idle, .compacting):
             return true
 

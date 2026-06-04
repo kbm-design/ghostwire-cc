@@ -15,6 +15,8 @@ struct AgentsSettings: View {
     @State private var selectedSound = GhostwireSettings.notificationSound
     @ObservedObject private var usageService = UsageService.shared
     @Default(.messageDisplayMode) private var messageDisplayMode
+    @Default(.alertHistoryMaxEntries) private var alertHistoryMaxEntries
+    @Default(.alertHistoryMaxAgeDays) private var alertHistoryMaxAgeDays
 
     var body: some View {
         Form {
@@ -55,6 +57,25 @@ struct AgentsSettings: View {
                 Text("Display")
             } footer: {
                 Text("Full raw shows prompts and commands verbatim — monospaced, unrendered, never truncated.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section {
+                Picker("Keep alerts", selection: $alertHistoryMaxEntries) {
+                    ForEach([25, 50, 100, 250, 500], id: \.self) { count in
+                        Text("\(count)").tag(count)
+                    }
+                }
+                Picker("For up to", selection: $alertHistoryMaxAgeDays) {
+                    ForEach([1, 3, 7, 14, 30], id: \.self) { days in
+                        Text(days == 1 ? "1 day" : "\(days) days").tag(days)
+                    }
+                }
+            } header: {
+                Text("Alert history")
+            } footer: {
+                Text("Caps the recorded permission and ready alerts. Whichever limit hits first wins.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

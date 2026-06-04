@@ -129,6 +129,13 @@ final class GhostwireSessionBridge: ObservableObject {
             return !knownPendingPermissionIDs.contains(id)
         }) {
             passiveAlertTint = AgentIdentity.tint(for: triggering.agent)
+            // GW-144: alert history records the alerts actually raised
+            AlertHistoryStore.shared.record(
+                agent: triggering.agent,
+                sessionId: triggering.sessionId,
+                kind: "permission",
+                detail: triggering.pendingToolName
+            )
         }
 
         NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
@@ -151,6 +158,12 @@ final class GhostwireSessionBridge: ObservableObject {
             if let soundName = GhostwireSettings.notificationSound.soundName {
                 NSSound(named: soundName)?.play()
             }
+            // GW-144: alert history records the alerts actually raised
+            AlertHistoryStore.shared.record(
+                agent: session.agent,
+                sessionId: session.sessionId,
+                kind: "ready"
+            )
             return
         }
     }

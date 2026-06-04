@@ -217,6 +217,9 @@ extension Defaults.Keys {
     static let claudeHooksEnabled = Key<Bool>("claudeHooksEnabled", default: true)
     static let codexHooksEnabled = Key<Bool>("codexHooksEnabled", default: true)
     static let messageDisplayMode = Key<MessageDisplayMode>("messageDisplayMode", default: .inline)
+    // Alert-history cap (GW-139 spec: 100 entries / 7 days, configurable)
+    static let alertHistoryMaxEntries = Key<Int>("alertHistoryMaxEntries", default: 100)
+    static let alertHistoryMaxAgeDays = Key<Int>("alertHistoryMaxAgeDays", default: 7)
 
     // MARK: Modules + notch tabs (GW-144)
     // Media's toggle only hides its settings pane (the player is core);

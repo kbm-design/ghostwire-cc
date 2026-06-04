@@ -322,7 +322,10 @@ struct UsageBar: View {
                         .fill(trackColor)
                     RoundedRectangle(cornerRadius: 2)
                         .fill(color)
-                        .frame(width: max(0, geo.size.width * percent))
+                        // Clamp both ends: extra_usage utilization can exceed
+                        // 100 when the user overruns the monthly cap - the
+                        // fill must not bleed past the track (review GW-201)
+                        .frame(width: geo.size.width * min(1, max(0, percent)))
                 }
             }
             .frame(height: 4)

@@ -62,13 +62,12 @@ enum NotchTab: String, CaseIterable, Identifiable {
 
     /// Visible tabs in user order. The Shelf tab additionally follows its
     /// module toggle (`Defaults[.shelf]`) — one source of truth, no second key.
-    /// Never returns empty: if everything is hidden, falls back to the full order.
+    /// Never returns empty: if every module-enabled tab is hidden, the hide
+    /// list is ignored — but a module-disabled tab is never resurrected.
     static func visibleTabs(order: [NotchTab], hidden: Set<String>, shelfEnabled: Bool) -> [NotchTab] {
-        let visible = order.filter { tab in
-            guard !hidden.contains(tab.rawValue) else { return false }
-            return tab != .shelf || shelfEnabled
-        }
-        return visible.isEmpty ? order : visible
+        let enabled = order.filter { $0 != .shelf || shelfEnabled }
+        let visible = enabled.filter { !hidden.contains($0.rawValue) }
+        return visible.isEmpty ? enabled : visible
     }
 
     // MARK: - Defaults-backed accessors
@@ -105,13 +104,23 @@ enum NotchTab: String, CaseIterable, Identifiable {
             guard !remaining.isEmpty else { return }
             hiddenIds.insert(tab.rawValue)
             Defaults[.hiddenNotchTabs] = hiddenIds
-            let coordinator = GhostwireViewCoordinator.shared
-            if coordinator.currentView == tab.view, let fallback = currentlyVisible.first {
-                coordinator.currentView = fallback.view
-            }
+            ensureCurrentViewVisible()
         } else {
             hiddenIds.remove(tab.rawValue)
             Defaults[.hiddenNotchTabs] = hiddenIds
         }
+    }
+
+    /// Repair `currentView` after any path that can orphan it: module
+    /// toggles bypass setHidden, close() resets to fixed tabs, and the
+    /// coordinator's alwaysShowTabs didSet forces .buddy. No-op while the
+    /// shown view's tab is still visible.
+    @MainActor
+    static func ensureCurrentViewVisible() {
+        let coordinator = GhostwireViewCoordinator.shared
+        let visible = currentlyVisible
+        guard !visible.contains(where: { $0.view == coordinator.currentView }),
+              let fallback = visible.first else { return }
+        coordinator.currentView = fallback.view
     }
 }

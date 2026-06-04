@@ -69,6 +69,7 @@ class GhostwireViewCoordinator: ObservableObject {
                 if ShelfStateViewModel.shared.isEmpty || !Defaults[.openShelfByDefault] {
                     currentView = .buddy
                 }
+                NotchTab.ensureCurrentViewVisible()
             }
         }
     }
@@ -101,6 +102,7 @@ class GhostwireViewCoordinator: ObservableObject {
     @Published var optionKeyPressed: Bool = true
     private var accessibilityObserver: Any?
     private var hudReplacementCancellable: AnyCancellable?
+    private var notchTabsCancellable: AnyCancellable?
 
     private init() {
         // Perform migration from name-based to UUID-based storage
@@ -135,6 +137,16 @@ class GhostwireViewCoordinator: ObservableObject {
                 }
             }
         }
+
+        // Keep currentView on a visible tab when tab visibility changes via
+        // paths that bypass NotchTab.setHidden — the Shelf module toggle and
+        // any direct writes to the tab prefs (GW-144).
+        notchTabsCancellable = Defaults.publisher(keys: .shelf, .hiddenNotchTabs, .notchTabOrder)
+            .sink { _ in
+                Task { @MainActor in
+                    NotchTab.ensureCurrentViewVisible()
+                }
+            }
 
         // Observe changes to hudReplacement
         hudReplacementCancellable = Defaults.publisher(.hudReplacement)

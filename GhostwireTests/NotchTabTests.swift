@@ -72,7 +72,7 @@ final class NotchTabTests: XCTestCase {
     }
 
     func testVisibleTabsNeverEmpty() {
-        // Everything hidden → fall back to full order rather than an
+        // Everything hidden → ignore the hide list rather than render an
         // empty (and unrecoverable) notch.
         XCTAssertEqual(
             NotchTab.visibleTabs(
@@ -81,6 +81,28 @@ final class NotchTabTests: XCTestCase {
                 shelfEnabled: true
             ),
             NotchTab.allCases
+        )
+    }
+
+    func testEmptyFallbackNeverResurrectsDisabledShelf() {
+        // F1 regression (code review): agents+dashboard hidden, then the
+        // Shelf MODULE turned off — the fallback must ignore the hide list
+        // but never resurrect the module-disabled Shelf tab.
+        XCTAssertEqual(
+            NotchTab.visibleTabs(
+                order: NotchTab.allCases,
+                hidden: ["agents", "dashboard"],
+                shelfEnabled: false
+            ),
+            [.agents, .dashboard]
+        )
+    }
+
+    func testShelfHiddenAndDisabledStaysGone() {
+        // Hide list and module gate agree — shelf stays out, others remain.
+        XCTAssertEqual(
+            NotchTab.visibleTabs(order: NotchTab.allCases, hidden: ["shelf"], shelfEnabled: false),
+            [.agents, .dashboard]
         )
     }
 }

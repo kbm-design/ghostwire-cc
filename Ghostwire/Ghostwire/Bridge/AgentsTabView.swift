@@ -63,6 +63,7 @@ struct AgentsTabView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             } else {
                 usageSummaryRow
+                    .opacity(isAgentIdle ? 0.5 : 1)
 
                 ClaudeInstancesView(
                     sessionMonitor: bridge.sessionMonitor,
@@ -113,6 +114,19 @@ struct AgentsTabView: View {
 
     private func usageDisplay(for agent: String) -> AgentUsageDisplay? {
         agent == "codex" ? codexUsageService.display : usageService.display
+    }
+
+    /// GW-199: both agents quiet 5h+ and nothing live → the meter row dims
+    /// (whole row at half opacity = "not relevant right now"; deliberately
+    /// distinct from the dim-TRACK on Spend bars, which means "no gauge").
+    private var isAgentIdle: Bool {
+        IdleStateRule.isIdle(
+            now: Date(),
+            claudeLastActivity: usageService.lastActivityDate,
+            codexLastActivity: codexUsageService.lastActivityDate,
+            hasLiveSessions: !sessions.isEmpty,
+            signalsReady: usageService.activityScanComplete && codexUsageService.activityScanComplete
+        )
     }
 
     /// GW-201: non-null per-model weekly sub-limits from the OAuth endpoint

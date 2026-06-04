@@ -89,6 +89,23 @@ struct ClaudeTokenUsageParser {
         return snapshot
     }
 
+    /// GW-199: newest transcript mtime - the Claude-side activity signal
+    /// (mirrors CodexUsageService.lastActivityDate for the idle rule).
+    func newestTranscriptDate() -> Date? {
+        let fileManager = FileManager.default
+        guard let enumerator = fileManager.enumerator(atPath: projectsRoot) else { return nil }
+
+        var newest: Date?
+        for case let relative as String in enumerator where relative.hasSuffix(".jsonl") {
+            let path = projectsRoot + "/" + relative
+            if let modDate = (try? fileManager.attributesOfItem(atPath: path))?[.modificationDate] as? Date,
+               modDate > (newest ?? .distantPast) {
+                newest = modDate
+            }
+        }
+        return newest
+    }
+
     /// All transcript files whose mtime falls inside the window - an
     /// untouched file can't contain in-window events, so skip opening it.
     private func recentTranscriptFiles(notBefore windowStart: Date) -> [String] {

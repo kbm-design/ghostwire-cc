@@ -43,6 +43,12 @@ final class UsageService: ObservableObject {
     /// existing endpoint path), .tokens aggregated from local transcripts
     /// when the user is API-key-only. Same shape as CodexUsageService.
     @Published private(set) var display: AgentUsageDisplay?
+    /// GW-199: newest transcript mtime - the Claude-side activity signal for
+    /// the idle rule (mirrors CodexUsageService.lastActivityDate)
+    @Published private(set) var lastActivityDate: Date?
+    /// True once the first activity scan has completed - the idle rule must
+    /// not treat nil-because-unscanned as nil-because-stale (review fix)
+    @Published private(set) var activityScanComplete = false
 
     private let tokenParser = ClaudeTokenUsageParser()
 
@@ -90,6 +96,17 @@ final class UsageService: ObservableObject {
 
     private func poll() {
         pollTask = Task {
+            // GW-199: refresh the activity signal every poll, both auth modes.
+            // Publish only AFTER the cancellation guard (review fix - a
+            // cancelled poll must not write into a torn-down service)
+            let parser = tokenParser
+            let scannedActivity = await Task.detached(priority: .utility) {
+                parser.newestTranscriptDate()
+            }.value
+            guard !Task.isCancelled else { return }
+            lastActivityDate = scannedActivity
+            activityScanComplete = true
+
             guard let token = Self.readOAuthToken() else {
                 // GW-151: no OAuth → API-key user → token mode from local
                 // transcripts (subscription quota only exists behind OAuth)

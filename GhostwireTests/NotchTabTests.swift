@@ -6,6 +6,7 @@
 //  the Defaults-backed accessors are thin wrappers over these.
 //
 
+import Defaults
 import XCTest
 @testable import Ghostwire
 
@@ -103,6 +104,47 @@ final class NotchTabTests: XCTestCase {
         XCTAssertEqual(
             NotchTab.visibleTabs(order: NotchTab.allCases, hidden: ["shelf"], shelfEnabled: false),
             [.agents, .dashboard]
+        )
+    }
+}
+
+/// End-to-end repair path (review M1 / second-pass warning): the Shelf
+/// MODULE toggle writes Defaults[.shelf] directly, bypassing setHidden —
+/// the coordinator's Defaults observer must still move currentView off
+/// the vanished tab.
+@MainActor
+final class NotchTabRepairTests: XCTestCase {
+
+    func testShelfModuleToggleRepairsCurrentView() async throws {
+        let savedShelf = Defaults[.shelf]
+        let savedHidden = Defaults[.hiddenNotchTabs]
+        let savedOrder = Defaults[.notchTabOrder]
+        let coordinator = GhostwireViewCoordinator.shared
+        let savedView = coordinator.currentView
+        defer {
+            Defaults[.shelf] = savedShelf
+            Defaults[.hiddenNotchTabs] = savedHidden
+            Defaults[.notchTabOrder] = savedOrder
+            coordinator.currentView = savedView
+        }
+
+        Defaults[.hiddenNotchTabs] = []
+        Defaults[.notchTabOrder] = NotchTab.allCases.map(\.rawValue)
+        Defaults[.shelf] = true
+        coordinator.currentView = .shelf
+
+        // The module-toggle path: a bare Defaults write, no setHidden.
+        Defaults[.shelf] = false
+
+        // Repair hops once through the main actor — poll briefly.
+        let deadline = Date().addingTimeInterval(2)
+        while coordinator.currentView == .shelf && Date() < deadline {
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+
+        XCTAssertNotEqual(
+            coordinator.currentView, .shelf,
+            "coordinator's Defaults observer should repair currentView when the Shelf module is disabled"
         )
     }
 }

@@ -185,6 +185,12 @@ actor SessionStore {
         sessions[sessionId] = session
         publishState()
 
+        if isNewSession {
+            // GW-193: events that never sync the file (Notification, …) left
+            // new sessions titled by folder name — parse once at adoption
+            await adoptConversationInfo(sessionId: sessionId, agent: session.agent, cwd: session.cwd)
+        }
+
         if event.shouldSyncFile {
             scheduleFileSync(sessionId: sessionId, cwd: event.cwd)
         }
@@ -947,7 +953,32 @@ actor SessionStore {
                 createdAt: discovered.fileModified
             )
             Self.logger.info("Registered provisional \(discovered.agent, privacy: .public) session \(discovered.sessionId.prefix(8), privacy: .public)")
+
+            await adoptConversationInfo(
+                sessionId: discovered.sessionId,
+                agent: discovered.agent,
+                cwd: discovered.cwd
+            )
         }
+    }
+
+    /// GW-194 / GW-193: parse title/preview when a session is adopted —
+    /// idle pre-existing sessions never produce the file-sync events that
+    /// normally populate conversationInfo, leaving titles stuck on the
+    /// folder name. Parsers cache by mtime, so this is cheap on re-adoption.
+    private func adoptConversationInfo(sessionId: String, agent: String?, cwd: String) async {
+        let info: ConversationInfo
+        if agent == "codex" {
+            info = await CodexTranscriptParser.shared.parse(sessionId: sessionId)
+        } else {
+            info = await ConversationParser.shared.parse(sessionId: sessionId, cwd: cwd)
+        }
+
+        // Re-fetch after the await: the session may have been pruned or
+        // upgraded while the parser ran
+        guard var session = sessions[sessionId] else { return }
+        session.conversationInfo = info
+        sessions[sessionId] = session
     }
 
     // MARK: - Session End Processing

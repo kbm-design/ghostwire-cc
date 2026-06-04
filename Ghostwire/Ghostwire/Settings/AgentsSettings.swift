@@ -160,23 +160,25 @@ struct AgentsSettings: View {
 
 /// One agent's hook row: identity dot + name, then install state.
 /// Codex additionally shows the CLI-trust row (status detection = GW-196).
+/// State comes from the shared HookStatusModel (review F4) so this row,
+/// the notch menu, and onboarding can never disagree.
 private struct AgentHooksRow: View {
     let agent: AgentHookConfig
 
-    @State private var detected = false
-    @State private var installed = false
+    @ObservedObject private var hookStatus = HookStatusModel.shared
 
     var body: some View {
+        let status = hookStatus.status(for: agent.id)
         HStack {
             Circle()
                 .fill(AgentIdentity.tint(for: agent.id))
                 .frame(width: 8, height: 8)
             Text(agent.displayName)
             Spacer()
-            if !detected {
+            if !status.detected {
                 Text("Not detected")
                     .foregroundStyle(.secondary)
-            } else if installed {
+            } else if status.installed {
                 HStack(spacing: 4) {
                     Image(systemName: "checkmark.circle.fill")
                         .foregroundColor(.green)
@@ -186,19 +188,19 @@ private struct AgentHooksRow: View {
                 Button("Uninstall") {
                     agent.uninstall()
                     Defaults[agent.enabledKey] = false
-                    refresh()
+                    hookStatus.refresh()
                 }
             } else {
                 Button("Install") {
                     Defaults[agent.enabledKey] = true
                     agent.install()
-                    refresh()
+                    hookStatus.refresh()
                 }
             }
         }
-        .onAppear { refresh() }
+        .onAppear { hookStatus.refresh() }
 
-        if agent.requiresCLITrust && detected && installed {
+        if agent.requiresCLITrust && status.detected && status.installed {
             HStack {
                 Text("Hook trust")
                 Spacer()
@@ -208,10 +210,5 @@ private struct AgentHooksRow: View {
             .opacity(0.4)
             .help("\(agent.displayName) requires one-time hook trust via /hooks in the CLI. Status detection is coming.")
         }
-    }
-
-    private func refresh() {
-        detected = agent.isDetected()
-        installed = agent.isInstalled()
     }
 }

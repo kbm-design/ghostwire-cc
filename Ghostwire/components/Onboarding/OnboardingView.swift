@@ -205,6 +205,7 @@ struct HooksInstallOnboardingView: View {
                 Button {
                     HookInstaller.installIfNeeded()
                     Defaults[.claudeHooksEnabled] = true
+                    HookStatusModel.shared.refresh()
                     installed = HookInstaller.isInstalled()
                 } label: {
                     Text("Install Hooks")

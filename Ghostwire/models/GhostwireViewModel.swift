@@ -237,16 +237,12 @@ class GhostwireViewModel: NSObject, ObservableObject {
         self.coordinator.sneakPeek.show = false
         self.edgeAutoOpenActive = false
 
-        // Reset only to tabs that are actually visible (GW-144): shelf may be
-        // module-disabled, agents may be hidden; repair covers the remainder
-        // (e.g. "remember last tab" pointing at a since-hidden tab).
-        let visible = NotchTab.currentlyVisible
-        if !ShelfStateViewModel.shared.isEmpty && Defaults[.openShelfByDefault] && visible.contains(.shelf) {
-            coordinator.currentView = .shelf
-        } else if !coordinator.openLastTabByDefault {
-            coordinator.currentView = visible.first(where: { $0 == .agents })?.view ?? visible.first?.view ?? .buddy
-        }
-        NotchTab.ensureCurrentViewVisible()
+        // GW-203: the default-tab decision lives in one place on the
+        // coordinator now (shelf-by-default / agents-first / GW-199 idle),
+        // which every open/close path routes through. close() prepares the
+        // next open. (GW-144: only lands on visible tabs; repair covers
+        // "remember last tab" pointing at a since-hidden one.)
+        coordinator.applyDefaultViewOnOpen()
     }
 
     func closeHello() {

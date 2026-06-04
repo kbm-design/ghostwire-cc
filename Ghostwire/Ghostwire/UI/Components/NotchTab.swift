@@ -126,9 +126,9 @@ enum NotchTab: String, CaseIterable, Identifiable {
     }
 
     /// Repair `currentView` after any path that can orphan it: module
-    /// toggles bypass setHidden, close() resets to fixed tabs, and the
-    /// coordinator's alwaysShowTabs didSet forces .buddy. No-op while the
-    /// shown view's tab is still visible.
+    /// toggles bypass setHidden, and the coordinator's default-view policy
+    /// (applyDefaultViewOnOpen) calls in here as its last step. No-op while
+    /// the shown view's tab is still visible.
     @MainActor
     static func ensureCurrentViewVisible() {
         let coordinator = GhostwireViewCoordinator.shared

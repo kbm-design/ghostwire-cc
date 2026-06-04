@@ -67,6 +67,16 @@ enum OptionKeyAction: String, CaseIterable, Identifiable, Defaults.Serializable 
     var id: String { self.rawValue }
 }
 
+// Message display in agent chat (GW-144). Full raw pairs with GW-139's
+// security rule: prompts shown verbatim — no markdown rendering, and the
+// view layer must never truncate.
+enum MessageDisplayMode: String, CaseIterable, Identifiable, Defaults.Serializable {
+    case inline = "Inline"
+    case fullRaw = "Full raw"
+
+    var id: String { rawValue }
+}
+
 extension Defaults.Keys {
     // MARK: General
     static let menubarIcon = Key<Bool>("menubarIcon", default: true)
@@ -206,6 +216,7 @@ extension Defaults.Keys {
     // uninstall from the Agents tab sticks across relaunches.
     static let claudeHooksEnabled = Key<Bool>("claudeHooksEnabled", default: true)
     static let codexHooksEnabled = Key<Bool>("codexHooksEnabled", default: true)
+    static let messageDisplayMode = Key<MessageDisplayMode>("messageDisplayMode", default: .inline)
 
     // MARK: Modules + notch tabs (GW-144)
     // Media's toggle only hides its settings pane (the player is core);

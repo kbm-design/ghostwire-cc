@@ -14,6 +14,7 @@ import SwiftUI
 struct AgentsSettings: View {
     @State private var selectedSound = GhostwireSettings.notificationSound
     @ObservedObject private var usageService = UsageService.shared
+    @Default(.messageDisplayMode) private var messageDisplayMode
 
     var body: some View {
         Form {
@@ -41,6 +42,19 @@ struct AgentsSettings: View {
                 .opacity(0.4)
             } footer: {
                 Text("Per-agent approval modes (auto-approve · plan · review · full gate) are planned.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section {
+                Picker("Message display", selection: $messageDisplayMode) {
+                    Text("Inline").tag(MessageDisplayMode.inline)
+                    Text("Full raw").tag(MessageDisplayMode.fullRaw)
+                }
+            } header: {
+                Text("Display")
+            } footer: {
+                Text("Full raw shows prompts and commands verbatim — monospaced, unrendered, never truncated.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

@@ -6,6 +6,7 @@
 //
 
 import Combine
+import Defaults
 import SwiftUI
 import os
 
@@ -574,17 +575,33 @@ struct MessageItemView: View {
 struct UserMessageView: View {
     let text: String
 
+    // GW-144 message display size. Full raw = the prompt verbatim:
+    // monospaced, unrendered, and never truncated (GW-139 security rule —
+    // the human must see exactly what the agent was told).
+    @Default(.messageDisplayMode) private var displayMode
+
     var body: some View {
         HStack {
-            Spacer(minLength: 60)
+            Spacer(minLength: displayMode == .fullRaw ? 24 : 60)
 
-            GhostwireMarkdownText(text, color: .white, fontSize: 13)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
-                .background(
-                    RoundedRectangle(cornerRadius: 18)
-                        .fill(Color.white.opacity(0.15))
-                )
+            Group {
+                if displayMode == .fullRaw {
+                    Text(verbatim: text)
+                        .font(.system(size: 12, design: .monospaced))
+                        .foregroundColor(.white)
+                        .textSelection(.enabled)
+                        .multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    GhostwireMarkdownText(text, color: .white, fontSize: 13)
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 18)
+                    .fill(Color.white.opacity(0.15))
+            )
         }
     }
 }
@@ -1086,6 +1103,10 @@ struct ChatApprovalBar: View {
     @State private var showAllowButton = false
     @State private var showDenyButton = false
 
+    // GW-144/GW-139: in full-raw mode the command under approval is shown
+    // verbatim and untruncated — what you approve is what runs.
+    @Default(.messageDisplayMode) private var displayMode
+
     var body: some View {
         HStack(spacing: 12) {
             // Tool info
@@ -1094,10 +1115,18 @@ struct ChatApprovalBar: View {
                     .font(.system(size: 12, weight: .medium, design: .monospaced))
                     .foregroundColor(TerminalColors.amber)
                 if let input = toolInput {
-                    Text(input)
-                        .font(.system(size: 11))
-                        .foregroundColor(.white.opacity(0.5))
-                        .lineLimit(1)
+                    if displayMode == .fullRaw {
+                        Text(verbatim: input)
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundColor(.white.opacity(0.7))
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } else {
+                        Text(input)
+                            .font(.system(size: 11))
+                            .foregroundColor(.white.opacity(0.5))
+                            .lineLimit(1)
+                    }
                 }
             }
             .opacity(showContent ? 1 : 0)

@@ -71,6 +71,18 @@ final class UsageServiceParseTests: XCTestCase {
         XCTAssertEqual(usage.extraUsage?.currency, "USD")
     }
 
+    func testDecodesCachedExtraUsageWrittenBeforeCurrencyExisted() throws {
+        // Codex review P3: a pre-GW-203 usage-cache.json has no `currency`
+        // key; synthesized decoding would throw and blank the whole cache.
+        let legacyCache = Data("""
+        {"isEnabled": true, "monthlyLimitCents": 25000, "usedCredits": 2318.0, "utilization": 9.272}
+        """.utf8)
+        let extra = try JSONDecoder().decode(ExtraUsage.self, from: legacyCache)
+        XCTAssertTrue(extra.isEnabled)
+        XCTAssertEqual(extra.monthlyLimitCents, 25000)
+        XCTAssertEqual(extra.currency, "USD")
+    }
+
     // MARK: - GW-203: per-model + extra ride the display enum's .quota case
 
     func testQuotaDisplayCarriesPerModelAndExtra() throws {

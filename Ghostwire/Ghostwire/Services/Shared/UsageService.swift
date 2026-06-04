@@ -45,6 +45,21 @@ struct ExtraUsage: Equatable, Codable {
     var currency: String = "USD"
 }
 
+extension ExtraUsage {
+    /// Custom decode so a usage-cache.json written before `currency` existed
+    /// still loads (synthesized Codable would fail the whole cached object,
+    /// blanking quota/spend on startup until a network fetch). Lives in an
+    /// extension to keep the memberwise init.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        isEnabled = try container.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? false
+        monthlyLimitCents = try container.decodeIfPresent(Int.self, forKey: .monthlyLimitCents) ?? 0
+        usedCredits = try container.decodeIfPresent(Double.self, forKey: .usedCredits) ?? 0
+        utilization = try container.decodeIfPresent(Double.self, forKey: .utilization) ?? 0
+        currency = try container.decodeIfPresent(String.self, forKey: .currency) ?? "USD"
+    }
+}
+
 struct QuotaPeriod: Equatable, Codable {
     let utilization: Double     // 0-100
     let resetsAt: Date?

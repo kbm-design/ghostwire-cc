@@ -120,19 +120,10 @@ actor ToolApprovalHandler {
         }
     }
 
-    /// Read cmux socket password from the standard file location
+    /// GW-162: the socket password lives in cmux.json
+    /// (automation.socketPassword) - the old read targeted a
+    /// "socket-control-password" file cmux never writes
     private static func readCmuxSocketPassword() -> String? {
-        guard let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
-            return nil
-        }
-        let passwordFile = appSupport
-            .appendingPathComponent("cmux", isDirectory: true)
-            .appendingPathComponent("socket-control-password", isDirectory: false)
-        guard let data = try? Data(contentsOf: passwordFile),
-              let password = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .newlines),
-              !password.isEmpty else {
-            return nil
-        }
-        return password
+        CmuxAccessProbe.readConfig().socketPassword
     }
 }

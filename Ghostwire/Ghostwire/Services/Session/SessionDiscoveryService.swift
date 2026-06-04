@@ -27,26 +27,26 @@ actor SessionDiscoveryService {
     nonisolated static let logger = os.Logger(subsystem: "com.ghostwire.notch", category: "Discovery")
 
     private let claudeProjectsRoot: String
-    private let codexSessionsRoot: String
     private let maxAge: TimeInterval
     private let rescanInterval: TimeInterval
     private let isAgentProcessAlive: @Sendable (String) -> Bool
+    private let openCodexRolloutPaths: @Sendable () -> [String]
 
     /// Periodic rescan loop (nil when not started)
     private var rescanTask: Task<Void, Never>?
 
     init(
         claudeProjectsRoot: String = NSHomeDirectory() + "/.claude/projects",
-        codexSessionsRoot: String = NSHomeDirectory() + "/.codex/sessions",
         maxAge: TimeInterval = 24 * 3600,
         rescanInterval: TimeInterval = 5 * 60,
-        isAgentProcessAlive: @escaping @Sendable (String) -> Bool = SessionDiscoveryService.defaultProcessGate
+        isAgentProcessAlive: @escaping @Sendable (String) -> Bool = SessionDiscoveryService.defaultProcessGate,
+        openCodexRolloutPaths: @escaping @Sendable () -> [String] = SessionDiscoveryService.defaultOpenCodexRolloutPaths
     ) {
         self.claudeProjectsRoot = claudeProjectsRoot
-        self.codexSessionsRoot = codexSessionsRoot
         self.maxAge = maxAge
         self.rescanInterval = rescanInterval
         self.isAgentProcessAlive = isAgentProcessAlive
+        self.openCodexRolloutPaths = openCodexRolloutPaths
     }
 
     // MARK: - Lifecycle
@@ -73,8 +73,13 @@ actor SessionDiscoveryService {
 
     // MARK: - Scanning
 
-    /// One complete scan of both transcript trees. The result is a full
-    /// snapshot: callers may treat absence as "no longer discoverable".
+    /// One complete scan. The result is a full snapshot: callers may treat
+    /// absence as "no longer discoverable".
+    ///
+    /// Claude liveness is approximate (mtime window + agent-global gate):
+    /// claude appends-and-closes per transcript write, so no fd correlation
+    /// is possible. Codex liveness is exact: codex CLIs hold their rollout
+    /// open for the session's lifetime, so the open-fd set IS the live set.
     func discoverSessions(now: Date = Date()) -> [DiscoveredSession] {
         let cutoff = now.addingTimeInterval(-maxAge)
         var sessions: [DiscoveredSession] = []
@@ -82,9 +87,7 @@ actor SessionDiscoveryService {
         if isAgentProcessAlive("claude") {
             sessions += discoverClaudeSessions(cutoff: cutoff)
         }
-        if isAgentProcessAlive("codex") {
-            sessions += discoverCodexSessions(cutoff: cutoff)
-        }
+        sessions += discoverCodexSessions()
 
         return sessions
     }
@@ -123,16 +126,17 @@ actor SessionDiscoveryService {
         return sessions
     }
 
-    /// Codex: ~/.codex/sessions/<Y>/<M>/<D>/rollout-<ts>-<uuid>.jsonl
-    /// cwd lives in the session_meta first line; a rollout without one can't
-    /// produce a useful session row, so it's skipped.
-    private func discoverCodexSessions(cutoff: Date) -> [DiscoveredSession] {
-        let fileManager = FileManager.default
-        guard let enumerator = fileManager.enumerator(atPath: codexSessionsRoot) else { return [] }
-
+    /// Codex: a session is live iff a live codex process holds its rollout
+    /// fd (rollout-<ts>-<uuid>.jsonl). No mtime window — an idle-for-days
+    /// session with a held fd is live, and a fresh rollout with no holder is
+    /// dead. cwd lives in the session_meta first line; a rollout without one
+    /// can't produce a useful session row, so it's skipped.
+    private func discoverCodexSessions() -> [DiscoveredSession] {
+        var seenIds = Set<String>()
         var sessions: [DiscoveredSession] = []
-        while let relative = enumerator.nextObject() as? String {
-            let name = (relative as NSString).lastPathComponent
+
+        for path in openCodexRolloutPaths() {
+            let name = (path as NSString).lastPathComponent
             guard name.hasPrefix("rollout-"), name.hasSuffix(".jsonl") else { continue }
 
             // UUIDs are fixed-width 36 chars right before ".jsonl"
@@ -141,10 +145,14 @@ actor SessionDiscoveryService {
             let sessionId = String(stem.suffix(36))
             guard UUID(uuidString: sessionId) != nil else { continue }
 
-            let path = codexSessionsRoot + "/" + relative
-            guard let modified = regularFileModificationDate(path), modified >= cutoff else { continue }
+            // One line per fd in lsof output - several fds (or processes)
+            // can hold the same rollout
+            guard !seenIds.contains(sessionId) else { continue }
+
+            guard let modified = regularFileModificationDate(path) else { continue }
             guard let cwd = codexCwd(rolloutPath: path) else { continue }
 
+            seenIds.insert(sessionId)
             sessions.append(DiscoveredSession(
                 sessionId: sessionId,
                 cwd: cwd,
@@ -234,5 +242,33 @@ actor SessionDiscoveryService {
         return tree.values.contains { info in
             info.tty != nil && (info.command as NSString).lastPathComponent == agent
         }
+    }
+
+    /// Rollout files currently held open by live codex CLI processes —
+    /// the exact per-session liveness signal (verified empirically: codex
+    /// keeps its rollout fd for the session's lifetime; claude does not,
+    /// which is why Claude discovery can't use this).
+    @Sendable static func defaultOpenCodexRolloutPaths() -> [String] {
+        let tree = ProcessTreeBuilder.shared.buildTree()
+        let pids = tree.values
+            .filter { $0.tty != nil && ($0.command as NSString).lastPathComponent == "codex" }
+            .map { String($0.pid) }
+        guard !pids.isEmpty else { return [] }
+
+        // -Fn: machine-readable, one "n<path>" line per open file
+        guard let output = ProcessExecutor.shared.runSyncOrNil(
+            "/usr/sbin/lsof",
+            arguments: ["-p", pids.joined(separator: ","), "-Fn"]
+        ) else {
+            return []
+        }
+
+        return output.components(separatedBy: "\n")
+            .filter { $0.hasPrefix("n") }
+            .map { String($0.dropFirst()) }
+            .filter { path in
+                path.hasSuffix(".jsonl")
+                    && (path as NSString).lastPathComponent.hasPrefix("rollout-")
+            }
     }
 }

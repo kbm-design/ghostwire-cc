@@ -12,6 +12,12 @@
 //  cwd comes from transcript content (the encoded dirname is lossy — "/" and
 //  "." both encode to "-"); the dirname decode is only a fallback.
 //
+//  Codex liveness is exact: codex CLIs hold their rollout file open for the
+//  session's lifetime (verified empirically via lsof), so a codex session is
+//  discoverable iff some live codex process holds its rollout fd. Claude
+//  appends-and-closes per write — no held fd — so Claude falls back to the
+//  mtime window + agent-global process gate.
+//
 
 import XCTest
 @testable import Ghostwire
@@ -38,13 +44,14 @@ final class SessionDiscoveryServiceTests: XCTestCase {
 
     private func makeService(
         maxAge: TimeInterval = 24 * 3600,
-        gate: @escaping @Sendable (String) -> Bool = { _ in true }
+        gate: @escaping @Sendable (String) -> Bool = { _ in true },
+        openCodexRollouts: [String] = []
     ) -> SessionDiscoveryService {
         SessionDiscoveryService(
             claudeProjectsRoot: claudeRoot,
-            codexSessionsRoot: codexRoot,
             maxAge: maxAge,
-            isAgentProcessAlive: gate
+            isAgentProcessAlive: gate,
+            openCodexRolloutPaths: { openCodexRollouts }
         )
     }
 
@@ -170,12 +177,12 @@ final class SessionDiscoveryServiceTests: XCTestCase {
         XCTAssertTrue(sessions.isEmpty)
     }
 
-    // MARK: - Codex discovery
+    // MARK: - Codex discovery (open-fd liveness)
 
-    func testDiscoversCodexRolloutWithCwdFromSessionMeta() async throws {
-        _ = try writeCodexRollout(sessionId: codexSessionId, cwd: "/Users/test/work")
+    func testDiscoversOpenCodexRolloutWithCwdFromSessionMeta() async throws {
+        let path = try writeCodexRollout(sessionId: codexSessionId, cwd: "/Users/test/work")
 
-        let sessions = await makeService().discoverSessions()
+        let sessions = await makeService(openCodexRollouts: [path]).discoverSessions()
 
         XCTAssertEqual(sessions.count, 1)
         XCTAssertEqual(sessions.first?.sessionId, codexSessionId)
@@ -183,39 +190,72 @@ final class SessionDiscoveryServiceTests: XCTestCase {
         XCTAssertEqual(sessions.first?.cwd, "/Users/test/work")
     }
 
-    func testIgnoresCodexRolloutsOlderThanCutoff() async throws {
-        _ = try writeCodexRollout(
-            sessionId: codexSessionId,
-            cwd: "/Users/test/work",
-            modified: Date(timeIntervalSinceNow: -48 * 3600)
-        )
+    func testCodexRolloutNotHeldOpenIsNotDiscovered() async throws {
+        // Fresh mtime, but no live codex process holds the fd -> dead session
+        _ = try writeCodexRollout(sessionId: codexSessionId, cwd: "/Users/test/work")
 
-        let sessions = await makeService(maxAge: 24 * 3600).discoverSessions()
+        let sessions = await makeService(openCodexRollouts: []).discoverSessions()
 
         XCTAssertTrue(sessions.isEmpty)
+    }
+
+    func testOpenCodexRolloutDiscoveredRegardlessOfAge() async throws {
+        // Idle for days but the fd is held -> the session is live, period
+        let path = try writeCodexRollout(
+            sessionId: codexSessionId,
+            cwd: "/Users/test/work",
+            modified: Date(timeIntervalSinceNow: -72 * 3600)
+        )
+
+        let sessions = await makeService(maxAge: 24 * 3600, openCodexRollouts: [path]).discoverSessions()
+
+        XCTAssertEqual(sessions.map(\.sessionId), [codexSessionId])
+    }
+
+    func testDuplicateOpenPathsYieldOneSession() async throws {
+        // lsof reports one line per fd; a process can hold several fds on
+        // the same rollout (and several processes can hold the same file)
+        let path = try writeCodexRollout(sessionId: codexSessionId, cwd: "/Users/test/work")
+
+        let sessions = await makeService(openCodexRollouts: [path, path]).discoverSessions()
+
+        XCTAssertEqual(sessions.count, 1)
     }
 
     func testCodexRolloutWithoutSessionMetaIsSkipped() async throws {
         // No session_meta -> no cwd -> can't build a useful session row
-        _ = try writeCodexRollout(sessionId: codexSessionId, cwd: nil)
+        let path = try writeCodexRollout(sessionId: codexSessionId, cwd: nil)
 
-        let sessions = await makeService().discoverSessions()
+        let sessions = await makeService(openCodexRollouts: [path]).discoverSessions()
 
         XCTAssertTrue(sessions.isEmpty)
     }
 
-    // MARK: - Process gate
+    func testNonRolloutOpenPathsAreIgnored() async throws {
+        // lsof output can include other files under ~/.codex (db, logs)
+        let stray = codexRoot + "/state_5.sqlite"
+        try "not a rollout".write(toFile: stray, atomically: true, encoding: .utf8)
 
-    func testProcessGateExcludesAgentsWithNoLiveProcess() async throws {
+        let sessions = await makeService(openCodexRollouts: [stray]).discoverSessions()
+
+        XCTAssertTrue(sessions.isEmpty)
+    }
+
+    // MARK: - Process gate (Claude only — Codex liveness is the held fd)
+
+    func testProcessGateExcludesClaudeWithNoLiveProcess() async throws {
         _ = try writeClaudeTranscript(
             sessionId: claudeSessionId,
             projectDirName: "-Users-test-my-app",
             cwd: "/Users/test/my-app"
         )
-        _ = try writeCodexRollout(sessionId: codexSessionId, cwd: "/Users/test/work")
+        let codexPath = try writeCodexRollout(sessionId: codexSessionId, cwd: "/Users/test/work")
 
         // No claude process running -> every claude transcript is provably dead
-        let sessions = await makeService(gate: { agent in agent == "codex" }).discoverSessions()
+        let sessions = await makeService(
+            gate: { agent in agent == "codex" },
+            openCodexRollouts: [codexPath]
+        ).discoverSessions()
 
         XCTAssertEqual(sessions.map(\.agent), ["codex"])
     }
@@ -225,9 +265,9 @@ final class SessionDiscoveryServiceTests: XCTestCase {
     func testMissingRootsYieldEmpty() async {
         let service = SessionDiscoveryService(
             claudeProjectsRoot: claudeRoot + "/nope",
-            codexSessionsRoot: codexRoot + "/nope",
             maxAge: 24 * 3600,
-            isAgentProcessAlive: { _ in true }
+            isAgentProcessAlive: { _ in true },
+            openCodexRolloutPaths: { [] }
         )
 
         let sessions = await service.discoverSessions()

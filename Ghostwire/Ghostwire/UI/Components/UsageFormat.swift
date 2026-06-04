@@ -47,11 +47,44 @@ enum UsageFormat {
         return tokenCount(total) + " tok"
     }
 
+    /// Which quota window a dual-mode bar shows. Session (5H) normally;
+    /// switches to Weekly when 7D >=90% - the binding constraint - so the
+    /// label always names the window on screen (label = timeframe rule).
+    static func quotaBarSelection(fiveHour: QuotaPeriod?, sevenDay: QuotaPeriod?) -> (label: String, period: QuotaPeriod)? {
+        if let sd = sevenDay, sd.utilization >= 90 {
+            return ("Weekly", sd)
+        }
+        if let fh = fiveHour {
+            return ("Session", fh)
+        }
+        if let sd = sevenDay {
+            return ("Weekly", sd)
+        }
+        return nil
+    }
+
     private static let dayTimeFormatter: DateFormatter = {
         let f = DateFormatter()
         f.dateFormat = "EEE h a"
         return f
     }()
+
+    private static let dayOnlyFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "EEE"
+        return f
+    }()
+
+    /// Tooltip variant - whole single unit so "2h · 5h" stays as short as
+    /// "API · 7d": rounded hours within a day, minutes under an hour, day
+    /// name beyond 24h.
+    static func resetTimeCompact(_ date: Date) -> String {
+        let remaining = date.timeIntervalSinceNow
+        if remaining <= 0 { return "now" }
+        if remaining >= 24 * 3600 { return dayOnlyFormatter.string(from: date) }
+        if remaining >= 3600 { return "\(Int((remaining / 3600).rounded()))h" }
+        return "\(Int(remaining) / 60)m"
+    }
 
     /// "3h 57m" within a day, "Tue 9 AM" beyond (moved from BuddyTabView)
     static func resetTime(_ date: Date) -> String {

@@ -56,6 +56,13 @@ struct AgentTokenDisplay: Equatable {
     var estimatedCostUSD: Double?
     var contextUsed: Int?
     var contextWindow: Int?
+
+    /// Freshness rule (GW-151): locally-derived meters age out after 5h of
+    /// inactivity. Token activity in the 5H window proves this machine is
+    /// using the agent.
+    var hasRecentActivity: Bool {
+        fiveHour != .zero
+    }
 }
 
 /// One agent's parsed usage state for a polling window.

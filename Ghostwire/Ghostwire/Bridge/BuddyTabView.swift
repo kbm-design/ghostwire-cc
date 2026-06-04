@@ -78,8 +78,19 @@ struct BuddyTabView: View {
 
     // MARK: - GW-151 usage meters
 
+    /// Visibility = data source rule (GW-151): OAuth quota is server truth
+    /// (accurate even while idle) → pinned whenever configured. API-key
+    /// spend is locally derived → ages out like Codex: live session or
+    /// token activity within 5h.
     private var claudeMeterVisible: Bool {
-        usageService.isAvailable && usageService.display != nil
+        guard usageService.isAvailable, let display = usageService.display else { return false }
+        switch display {
+        case .quota:
+            return true
+        case .tokens(let tokens):
+            if sessions.contains(where: { ($0.agent ?? "claude") == "claude" }) { return true }
+            return tokens.hasRecentActivity
+        }
     }
 
     /// Codex meter shows only when relevant: a live Codex session in the
@@ -134,8 +145,13 @@ struct BuddyTabView: View {
         }
     }
 
+    // Label = timeframe, color = agent identity (matches the session-row
+    // badge tint), number = usage. Names never appear - once you know the
+    // color, you know.
+
     @ViewBuilder
     private func singleAgentRow(agent: String, display: AgentUsageDisplay) -> some View {
+        let tint = AgentIdentity.tint(for: agent)
         switch display {
         case .quota(let fiveHour, let sevenDay):
             HStack(spacing: 12) {
@@ -145,9 +161,10 @@ struct BuddyTabView: View {
                             label: "Session",
                             percent: fh.utilization / 100,
                             detail: "\(Int(fh.utilization))%",
-                            color: thresholdColor(fh.utilization, base: Self.legacyBarColor)
+                            color: thresholdColor(fh.utilization, base: tint)
                         )
                     }
+                    .help(Self.quotaHelp(own: fh, ownVerbose: true, sibling: nil))
                 }
                 if let sd = sevenDay {
                     meterButton(agent: agent) {
@@ -155,68 +172,101 @@ struct BuddyTabView: View {
                             label: "Weekly",
                             percent: sd.utilization / 100,
                             detail: "\(Int(sd.utilization))%",
-                            color: thresholdColor(sd.utilization, base: Self.legacyBarColor)
+                            color: thresholdColor(sd.utilization, base: tint)
                         )
                     }
+                    .help(Self.quotaHelp(own: sd, ownVerbose: false, sibling: nil))
                 }
             }
             .padding(.horizontal, 8)
         case .tokens(let tokens):
-            // API auth: static track + spend figure (fills toward a
-            // user-set limit once GW-144 ships limit entry)
-            meterButton(agent: agent) {
-                UsageBar(
-                    label: "Spend",
-                    percent: 0,
-                    detail: UsageFormat.tokenSummary(tokens),
-                    color: AgentIdentity.tint(for: agent)
-                )
-            }
-            .padding(.horizontal, 8)
+            tokenBar(agent: agent, tokens: tokens)
+                .padding(.horizontal, 8)
         }
     }
 
     @ViewBuilder
     private func agentSummaryBar(agent: String, display: AgentUsageDisplay) -> some View {
-        let label = agent.prefix(1).uppercased() + agent.dropFirst()
-        let tint = AgentIdentity.tint(for: agent)
-
-        meterButton(agent: agent) {
-            switch display {
-            case .quota(let fiveHour, let sevenDay):
-                // 5H is the bar; 7D surfaces only when it's about to bite
-                let fh = fiveHour?.utilization ?? 0
-                UsageBar(
-                    label: label,
-                    percent: fh / 100,
-                    detail: "\(Int(fh))%",
-                    color: thresholdColor(fh, base: tint),
-                    flag: (sevenDay?.utilization ?? 0) >= 90
-                        ? "7D \(Int(sevenDay?.utilization ?? 0))%" : nil
-                )
-            case .tokens(let tokens):
-                UsageBar(
-                    label: label,
-                    percent: 0,
-                    detail: UsageFormat.tokenSummary(tokens),
-                    color: tint
-                )
+        switch display {
+        case .quota(let fiveHour, let sevenDay):
+            // Session normally; switches to Weekly when 7D >=90% (the
+            // binding constraint) - the label names the window on screen
+            if let selection = UsageFormat.quotaBarSelection(fiveHour: fiveHour, sevenDay: sevenDay) {
+                let isWeekly = selection.label == "Weekly"
+                meterButton(agent: agent) {
+                    UsageBar(
+                        label: selection.label,
+                        percent: selection.period.utilization / 100,
+                        detail: "\(Int(selection.period.utilization))%",
+                        color: thresholdColor(selection.period.utilization, base: AgentIdentity.tint(for: agent))
+                    )
+                }
+                // Dual mode hides the other window's bar - the tooltip
+                // carries it as the sibling (e.g. "2h 45m · 41% Tue")
+                .help(Self.quotaHelp(
+                    own: selection.period,
+                    ownVerbose: !isWeekly,
+                    sibling: isWeekly ? fiveHour : sevenDay
+                ))
             }
+        case .tokens(let tokens):
+            tokenBar(agent: agent, tokens: tokens)
         }
     }
 
-    /// Click target wrapper: whole bar tappable → that agent's detail view
+    /// Hover precision for quota bars: only numbers the glance can't show -
+    /// own reset time, plus the hidden sibling window's "% reset" in dual
+    /// mode. Session gets verbose time ("2h 45m" - the payload); weekly
+    /// resets get the compact day ("Tue"), which itself implies weekly.
+    /// e.g. "2h 45m · 41% Tue"
+    private static func quotaHelp(own: QuotaPeriod, ownVerbose: Bool, sibling: QuotaPeriod?) -> String {
+        var parts: [String] = []
+        if let resetsAt = own.resetsAt {
+            parts.append(ownVerbose ? UsageFormat.resetTime(resetsAt) : UsageFormat.resetTimeCompact(resetsAt))
+        }
+        if let sibling {
+            var part = "\(Int(sibling.utilization))%"
+            if let resetsAt = sibling.resetsAt {
+                part += " \(UsageFormat.resetTimeCompact(resetsAt))"
+            }
+            parts.append(part)
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    /// API auth: disabled-button treatment - the track carries the agent
+    /// tint dimly (identity without implying a level); no fill until
+    /// GW-144 ships user-set spend limits to fill against.
+    /// Label system: one word naming the measure (Session/Weekly/Spend, same
+    /// register as the Buddi-inherited quota labels); the trailing-7d window
+    /// lives in the tooltip + detail view, not the label.
+    private func tokenBar(agent: String, tokens: AgentTokenDisplay) -> some View {
+        let tint = AgentIdentity.tint(for: agent)
+        return meterButton(agent: agent) {
+            UsageBar(
+                label: "Spend",
+                percent: 0,
+                detail: UsageFormat.tokenSummary(tokens),
+                color: tint,
+                trackColor: tint.opacity(0.18)
+            )
+        }
+        .help("API · 7d")
+    }
+
+    /// Click target wrapper: whole bar tappable → that agent's detail view.
+    /// Vertical padding fattens the hover/click target (the bar block alone
+    /// is ~20pt tall, which reads as a tiny tooltip target).
     private func meterButton<Content: View>(agent: String, @ViewBuilder content: () -> Content) -> some View {
         Button {
             withAnimation(.easeInOut(duration: 0.2)) { usageDetailAgent = agent }
         } label: {
             content()
+                .padding(.vertical, 4)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }
-
-    private static let legacyBarColor = Color(red: 0.35, green: 0.55, blue: 1.0)
 
     private func thresholdColor(_ utilization: Double, base: Color) -> Color {
         utilization > 80 ? .red : utilization > 60 ? .yellow : base
@@ -236,8 +286,9 @@ struct UsageBar: View {
     let percent: Double
     let detail: String
     let color: Color
-    /// GW-151: red urgency flag (e.g. "7D 92%") - only shown when set
-    var flag: String? = nil
+    /// GW-151: track override - API (token-mode) bars dim-tint the track
+    /// itself for identity (disabled-button treatment, no level implied)
+    var trackColor: Color = Color.white.opacity(0.08)
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
@@ -246,11 +297,6 @@ struct UsageBar: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()
-                if let flag {
-                    Text(flag)
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(.red)
-                }
                 Text(detail)
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -258,7 +304,7 @@ struct UsageBar: View {
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
                     RoundedRectangle(cornerRadius: 2)
-                        .fill(Color.white.opacity(0.08))
+                        .fill(trackColor)
                     RoundedRectangle(cornerRadius: 2)
                         .fill(color)
                         .frame(width: max(0, geo.size.width * percent))

@@ -6,6 +6,7 @@
 //
 
 import Combine
+import Defaults
 import SwiftUI
 import os
 
@@ -574,17 +575,33 @@ struct MessageItemView: View {
 struct UserMessageView: View {
     let text: String
 
+    // GW-144 message display size. Full raw = the prompt verbatim:
+    // monospaced, unrendered, and never truncated (GW-139 security rule —
+    // the human must see exactly what the agent was told).
+    @Default(.messageDisplayMode) private var displayMode
+
     var body: some View {
         HStack {
-            Spacer(minLength: 60)
+            Spacer(minLength: displayMode == .fullRaw ? 24 : 60)
 
-            GhostwireMarkdownText(text, color: .white, fontSize: 13)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
-                .background(
-                    RoundedRectangle(cornerRadius: 18)
-                        .fill(Color.white.opacity(0.15))
-                )
+            Group {
+                if displayMode == .fullRaw {
+                    Text(verbatim: text)
+                        .font(.system(size: 12, design: .monospaced))
+                        .foregroundColor(.white)
+                        .textSelection(.enabled)
+                        .multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    GhostwireMarkdownText(text, color: .white, fontSize: 13)
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 18)
+                    .fill(Color.white.opacity(0.15))
+            )
         }
     }
 }
@@ -657,6 +674,12 @@ struct ToolCallView: View {
     @State private var isExpanded: Bool = false
     @State private var isHovering: Bool = false
 
+    // GW-144/GW-139 full-raw: transcript tool rows show the exact command
+    // verbatim and never truncate — the history must match what ran.
+    @Default(.messageDisplayMode) private var displayMode
+
+    private var fullRaw: Bool { displayMode == .fullRaw }
+
     private var statusColor: Color {
         switch tool.status {
         case .running:
@@ -724,31 +747,41 @@ struct ToolCallView: View {
                     .foregroundColor(textColor)
                     .fixedSize()
 
-                if tool.name == "Task" && !tool.subagentTools.isEmpty {
+                if fullRaw && !tool.input.isEmpty {
+                    // Full-raw mode: EVERY input shape verbatim, no formatter
+                    // in the path — MCPToolFormatter.formatArgs truncates
+                    // values (30 chars) and caps args (3), which is lossy
+                    // long before lineLimit matters (GW-139 rule).
+                    Text(verbatim: Self.rawInput(tool.input))
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundColor(textColor.opacity(0.7))
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else if tool.name == "Task" && !tool.subagentTools.isEmpty {
                     let taskDesc = tool.input["description"] ?? "Running agent..."
                     Text("\(taskDesc) (\(tool.subagentTools.count) tools)")
                         .font(.system(size: 11))
                         .foregroundColor(textColor.opacity(0.7))
-                        .lineLimit(1)
+                        .lineLimit(fullRaw ? nil : 1)
                         .truncationMode(.tail)
                 } else if tool.name == "AgentOutputTool", let desc = agentDescription {
                     let blocking = tool.input["block"] == "true"
                     Text(blocking ? "Waiting: \(desc)" : desc)
                         .font(.system(size: 11))
                         .foregroundColor(textColor.opacity(0.7))
-                        .lineLimit(1)
+                        .lineLimit(fullRaw ? nil : 1)
                         .truncationMode(.tail)
                 } else if MCPToolFormatter.isMCPTool(tool.name) && !tool.input.isEmpty {
                     Text(MCPToolFormatter.formatArgs(tool.input))
                         .font(.system(size: 11))
                         .foregroundColor(textColor.opacity(0.7))
-                        .lineLimit(1)
+                        .lineLimit(fullRaw ? nil : 1)
                         .truncationMode(.tail)
                 } else {
                     Text(tool.statusDisplay.text)
                         .font(.system(size: 11))
                         .foregroundColor(textColor.opacity(0.7))
-                        .lineLimit(1)
+                        .lineLimit(fullRaw ? nil : 1)
                         .truncationMode(.tail)
                 }
 
@@ -815,6 +848,16 @@ struct ToolCallView: View {
             pulseOpacity = 0.15
         }
     }
+
+    /// Full-raw rendering of a tool's input: every key, every value,
+    /// untruncated, in stable order. Internal for tests (GW-139 rule:
+    /// the transcript must show exactly what the tool was given).
+    static func rawInput(_ input: [String: String]) -> String {
+        input
+            .sorted { $0.key < $1.key }
+            .map { "\($0.key): \($0.value)" }
+            .joined(separator: "\n")
+    }
 }
 
 // MARK: - Subagent Views
@@ -855,6 +898,7 @@ struct SubagentToolRow: View {
     let tool: SubagentToolCall
 
     @State private var dotOpacity: Double = 0.5
+    @Default(.messageDisplayMode) private var displayMode
 
     private var statusColor: Color {
         switch tool.status {
@@ -897,11 +941,12 @@ struct SubagentToolRow: View {
                 .font(.system(size: 10, weight: .medium))
                 .foregroundColor(.white.opacity(0.6))
 
-            // Status text (same format as regular tools)
+            // Status text (same format as regular tools); full-raw mode
+            // keeps even subagent summaries untruncated (GW-139 rule)
             Text(statusText)
                 .font(.system(size: 10))
                 .foregroundColor(.white.opacity(0.5))
-                .lineLimit(1)
+                .lineLimit(displayMode == .fullRaw ? nil : 1)
                 .truncationMode(.middle)
         }
     }
@@ -1086,6 +1131,10 @@ struct ChatApprovalBar: View {
     @State private var showAllowButton = false
     @State private var showDenyButton = false
 
+    // GW-144/GW-139: in full-raw mode the command under approval is shown
+    // verbatim and untruncated — what you approve is what runs.
+    @Default(.messageDisplayMode) private var displayMode
+
     var body: some View {
         HStack(spacing: 12) {
             // Tool info
@@ -1094,10 +1143,18 @@ struct ChatApprovalBar: View {
                     .font(.system(size: 12, weight: .medium, design: .monospaced))
                     .foregroundColor(TerminalColors.amber)
                 if let input = toolInput {
-                    Text(input)
-                        .font(.system(size: 11))
-                        .foregroundColor(.white.opacity(0.5))
-                        .lineLimit(1)
+                    if displayMode == .fullRaw {
+                        Text(verbatim: input)
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundColor(.white.opacity(0.7))
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } else {
+                        Text(input)
+                            .font(.system(size: 11))
+                            .foregroundColor(.white.opacity(0.5))
+                            .lineLimit(1)
+                    }
                 }
             }
             .opacity(showContent ? 1 : 0)

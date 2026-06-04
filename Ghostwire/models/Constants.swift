@@ -67,6 +67,16 @@ enum OptionKeyAction: String, CaseIterable, Identifiable, Defaults.Serializable 
     var id: String { self.rawValue }
 }
 
+// Message display in agent chat (GW-144). Full raw pairs with GW-139's
+// security rule: prompts shown verbatim — no markdown rendering, and the
+// view layer must never truncate.
+enum MessageDisplayMode: String, CaseIterable, Identifiable, Defaults.Serializable {
+    case inline = "Inline"
+    case fullRaw = "Full raw"
+
+    var id: String { rawValue }
+}
+
 extension Defaults.Keys {
     // MARK: General
     static let menubarIcon = Key<Bool>("menubarIcon", default: true)
@@ -200,4 +210,21 @@ extension Defaults.Keys {
     static let didClearLegacyURLCacheV1 = Key<Bool>("didClearLegacyURLCache_v1", default: false)
 
     static let notificationSound = Key<String>("notificationSound", default: "Pop")
+
+    // MARK: Agents (GW-144)
+    // Gate the silent launch-time hook auto-install per agent so an
+    // uninstall from the Agents tab sticks across relaunches.
+    static let claudeHooksEnabled = Key<Bool>("claudeHooksEnabled", default: true)
+    static let codexHooksEnabled = Key<Bool>("codexHooksEnabled", default: true)
+    static let messageDisplayMode = Key<MessageDisplayMode>("messageDisplayMode", default: .inline)
+    // Alert-history cap (GW-139 spec: 100 entries / 7 days, configurable)
+    static let alertHistoryMaxEntries = Key<Int>("alertHistoryMaxEntries", default: 100)
+    static let alertHistoryMaxAgeDays = Key<Int>("alertHistoryMaxAgeDays", default: 7)
+
+    // MARK: Modules + notch tabs (GW-144)
+    // Media's toggle only hides its settings pane (the player is core);
+    // the other modules reuse their feature master keys (see SettingsModule).
+    static let mediaModuleEnabled = Key<Bool>("mediaModuleEnabled", default: true)
+    static let notchTabOrder = Key<[String]>("notchTabOrder", default: ["agents", "dashboard", "shelf"])
+    static let hiddenNotchTabs = Key<Set<String>>("hiddenNotchTabs", default: [])
 }

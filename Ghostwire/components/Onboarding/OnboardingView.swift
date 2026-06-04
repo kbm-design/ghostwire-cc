@@ -6,6 +6,7 @@
 
 import SwiftUI
 import AVFoundation
+import Defaults
 
 enum OnboardingStep {
     case welcome
@@ -203,6 +204,8 @@ struct HooksInstallOnboardingView: View {
             } else {
                 Button {
                     HookInstaller.installIfNeeded()
+                    Defaults[.claudeHooksEnabled] = true
+                    HookStatusModel.shared.refresh()
                     installed = HookInstaller.isInstalled()
                 } label: {
                     Text("Install Hooks")

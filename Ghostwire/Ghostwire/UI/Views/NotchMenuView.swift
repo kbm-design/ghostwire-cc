@@ -7,6 +7,7 @@
 
 import ApplicationServices
 import Combine
+import Defaults
 import SwiftUI
 import ServiceManagement
 import Sparkle
@@ -18,8 +19,14 @@ struct NotchMenuView: View {
     @ObservedObject private var updateManager = UpdateManager.shared
     @ObservedObject private var screenSelector = ScreenSelector.shared
     @ObservedObject private var soundSelector = SoundSelector.shared
-    @State private var hooksInstalled: Bool = false
+    // Shared across all hook surfaces (GW-144 review F4) — the Agents
+    // settings rows and this menu can never disagree.
+    @ObservedObject private var hookStatus = HookStatusModel.shared
     @State private var launchAtLogin: Bool = false
+
+    private var hooksInstalled: Bool {
+        hookStatus.status(for: "claude").installed
+    }
 
     var body: some View {
         VStack(spacing: 4) {
@@ -69,11 +76,12 @@ struct NotchMenuView: View {
             ) {
                 if hooksInstalled {
                     HookInstaller.uninstall()
-                    hooksInstalled = false
+                    Defaults[.claudeHooksEnabled] = false
                 } else {
                     HookInstaller.installIfNeeded()
-                    hooksInstalled = true
+                    Defaults[.claudeHooksEnabled] = true
                 }
+                hookStatus.refresh()
             }
 
             AccessibilityRow(isEnabled: AXIsProcessTrusted())
@@ -120,7 +128,7 @@ struct NotchMenuView: View {
     }
 
     private func refreshStates() {
-        hooksInstalled = HookInstaller.isInstalled()
+        hookStatus.refresh()
         launchAtLogin = SMAppService.mainApp.status == .enabled
         screenSelector.refreshScreens()
     }

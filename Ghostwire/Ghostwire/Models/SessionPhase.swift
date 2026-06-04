@@ -19,7 +19,10 @@ struct PermissionContext: Sendable {
     var formattedInput: String? {
         guard let input = toolInput else { return nil }
         var parts: [String] = []
-        for (key, value) in input {
+        for (rawKey, value) in input {
+            // Codex's exec_command uses "cmd" where Claude's Bash uses
+            // "command" - normalize so approval rows read the same (GW-197)
+            let key = rawKey == "cmd" ? "command" : rawKey
             let valueStr: String
             switch value.value {
             case let str as String:
@@ -86,6 +89,8 @@ enum SessionPhase: Sendable {
             return true
         case (.idle, .waitingForApproval):
             return true  // Direct permission request on idle session
+        case (.idle, .waitingForInput):
+            return true  // Stop seen while idle (e.g. app launched mid-turn) - GW-171
         case (.idle, .compacting):
             return true
 

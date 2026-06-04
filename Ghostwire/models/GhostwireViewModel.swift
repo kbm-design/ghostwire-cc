@@ -240,7 +240,16 @@ class GhostwireViewModel: NSObject, ObservableObject {
         if !ShelfStateViewModel.shared.isEmpty && Defaults[.openShelfByDefault] {
             coordinator.currentView = .shelf
         } else if !coordinator.openLastTabByDefault {
-            coordinator.currentView = .buddy
+            // GW-199: this runs on close and only sets the NEXT open's tab,
+            // so the idle->Home default never yanks a tab mid-look. Both
+            // agents quiet 5h+ and nothing live -> rest on Home.
+            let idle = IdleStateRule.isIdle(
+                now: Date(),
+                claudeLastActivity: UsageService.shared.lastActivityDate,
+                codexLastActivity: CodexUsageService.shared.lastActivityDate,
+                hasLiveSessions: !GhostwireSessionBridge.shared.sessionMonitor.instances.isEmpty
+            )
+            coordinator.currentView = idle ? .home : .buddy
         }
     }
 

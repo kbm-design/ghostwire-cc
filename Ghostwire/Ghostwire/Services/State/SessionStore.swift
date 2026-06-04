@@ -142,7 +142,13 @@ actor SessionStore {
 
         let newPhase = event.determinePhase()
 
-        if session.phase.canTransition(to: newPhase) {
+        if !mayExitWaitingForApproval(current: session.phase, newPhase: newPhase, event: event) {
+            // GW-192: a pending approval must never vanish while the agent is still
+            // blocked on it. Concurrent subagent events (PreToolUse/PostToolUse with
+            // the same session_id) would otherwise recompute the phase to .processing
+            // and drop the approval row from the notch.
+            Self.logger.debug("Holding waitingForApproval against \(event.event, privacy: .public) (unrelated to pending tool)")
+        } else if session.phase.canTransition(to: newPhase) {
             session.phase = newPhase
         } else {
             Self.logger.debug("Invalid transition: \(String(describing: session.phase), privacy: .public) -> \(String(describing: newPhase), privacy: .public), ignoring")
@@ -166,6 +172,27 @@ actor SessionStore {
         if event.shouldSyncFile {
             scheduleFileSync(sessionId: sessionId, cwd: event.cwd)
         }
+    }
+
+    /// GW-192: while a permission is pending, only events that actually resolve it
+    /// may move the phase. Everything else (concurrent subagent tool events, idle
+    /// notifications, phase recomputes) must hold the approval in place — the hook
+    /// socket is still held open and the agent is still blocked waiting.
+    ///
+    /// Legitimate exits:
+    /// - another PermissionRequest (queueing/replacement, existing behavior)
+    /// - PostToolUse for the pending tool itself (user approved in the terminal)
+    /// - Stop (turn ended, e.g. denied in the terminal — monitor cancels the socket)
+    /// - session ended
+    /// User verdicts from the notch, JSONL tool completion, socket failures and
+    /// interrupts flow through their own SessionEvent cases, not this path.
+    private func mayExitWaitingForApproval(current: SessionPhase, newPhase: SessionPhase, event: HookEvent) -> Bool {
+        guard case .waitingForApproval(let ctx) = current else { return true }
+        if newPhase.isWaitingForApproval { return true }
+        if case .ended = newPhase { return true }
+        if event.event == "PostToolUse", event.toolUseId == ctx.toolUseId { return true }
+        if event.event == "Stop" { return true }
+        return false
     }
 
     private func createSession(from event: HookEvent) -> SessionState {

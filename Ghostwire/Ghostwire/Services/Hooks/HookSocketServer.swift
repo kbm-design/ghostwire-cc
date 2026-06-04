@@ -330,7 +330,8 @@ class HookSocketServer {
     }
 
     /// Cache tool_use_id from PreToolUse event (FIFO queue per key)
-    private func cacheToolUseId(event: HookEvent) {
+    /// (internal for unit tests)
+    func cacheToolUseId(event: HookEvent) {
         guard let toolUseId = event.toolUseId else { return }
 
         let key = cacheKey(sessionId: event.sessionId, toolName: event.tool, toolInput: event.toolInput)
@@ -346,7 +347,8 @@ class HookSocketServer {
     }
 
     /// Pop and return cached tool_use_id for PermissionRequest (FIFO)
-    private func popCachedToolUseId(event: HookEvent) -> String? {
+    /// (internal for unit tests)
+    func popCachedToolUseId(event: HookEvent) -> String? {
         let key = cacheKey(sessionId: event.sessionId, toolName: event.tool, toolInput: event.toolInput)
 
         cacheLock.lock()
@@ -366,6 +368,27 @@ class HookSocketServer {
 
         logger.debug("Retrieved cached tool_use_id for \(event.sessionId.prefix(8), privacy: .public) tool:\(event.tool ?? "?", privacy: .public) id:\(toolUseId.prefix(12), privacy: .public)")
         return toolUseId
+    }
+
+    /// Evict a tool_use_id from the correlation cache once its tool has run (PostToolUse).
+    /// GW-192: without eviction, tools that ran without needing permission (auto-approved)
+    /// leave stale ids at the head of the FIFO, and a later PermissionRequest with
+    /// identical tool+input correlates to the wrong (already-executed) id.
+    func evictCachedToolUseId(_ toolUseId: String) {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        for (key, var queue) in toolUseIdCache {
+            if let idx = queue.firstIndex(of: toolUseId) {
+                queue.remove(at: idx)
+                if queue.isEmpty {
+                    toolUseIdCache.removeValue(forKey: key)
+                } else {
+                    toolUseIdCache[key] = queue
+                }
+                logger.debug("Evicted executed tool_use_id from cache: \(toolUseId.prefix(12), privacy: .public)")
+                return
+            }
+        }
     }
 
     /// Clean up cache entries for a session (on session end)
@@ -442,6 +465,11 @@ class HookSocketServer {
 
         if event.event == "PreToolUse" {
             cacheToolUseId(event: event)
+        }
+
+        if event.event == "PostToolUse", let toolUseId = event.toolUseId {
+            // The tool ran - its id can no longer be the one a PermissionRequest is about
+            evictCachedToolUseId(toolUseId)
         }
 
         if event.event == "SessionEnd" {

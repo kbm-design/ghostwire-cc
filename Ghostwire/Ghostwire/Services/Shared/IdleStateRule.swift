@@ -13,12 +13,17 @@ enum IdleStateRule {
     /// Trailing window in which any agent activity counts as "active"
     static let activityWindow: TimeInterval = 5 * 3600
 
+    /// `signalsReady`: pass false until both services' first activity scans
+    /// complete - a nil date before the scan means "unknown", not "stale",
+    /// and must not produce a cold-start false idle (review fix).
     static func isIdle(
         now: Date,
         claudeLastActivity: Date?,
         codexLastActivity: Date?,
-        hasLiveSessions: Bool
+        hasLiveSessions: Bool,
+        signalsReady: Bool = true
     ) -> Bool {
+        guard signalsReady else { return false }
         if hasLiveSessions { return false }
 
         // Any agent active within the window keeps the whole surface awake;

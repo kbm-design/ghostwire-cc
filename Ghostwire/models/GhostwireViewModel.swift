@@ -247,7 +247,9 @@ class GhostwireViewModel: NSObject, ObservableObject {
                 now: Date(),
                 claudeLastActivity: UsageService.shared.lastActivityDate,
                 codexLastActivity: CodexUsageService.shared.lastActivityDate,
-                hasLiveSessions: !GhostwireSessionBridge.shared.sessionMonitor.instances.isEmpty
+                hasLiveSessions: !GhostwireSessionBridge.shared.sessionMonitor.instances.isEmpty,
+                signalsReady: UsageService.shared.activityScanComplete
+                    && CodexUsageService.shared.activityScanComplete
             )
             coordinator.currentView = idle ? .home : .buddy
         }

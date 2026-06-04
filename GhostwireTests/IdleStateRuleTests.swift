@@ -69,6 +69,19 @@ final class IdleStateRuleTests: XCTestCase {
         ))
     }
 
+    func testNotIdleBeforeSignalsReady() {
+        // Review fix (cold-start false idle): nil-because-unscanned must not
+        // read as nil-because-stale. Until both services' first activity
+        // scans complete, never declare idle.
+        XCTAssertFalse(IdleStateRule.isIdle(
+            now: now,
+            claudeLastActivity: nil,
+            codexLastActivity: nil,
+            hasLiveSessions: false,
+            signalsReady: false
+        ))
+    }
+
     // MARK: - Idle
 
     func testNoActivityNoSessionsIsIdle() {

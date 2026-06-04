@@ -19,6 +19,8 @@ final class CodexUsageService: ObservableObject {
     /// Mtime of the newest rollout - AgentsTabView shows the Codex meter only
     /// when there's a live session or activity within the current 5H window.
     @Published private(set) var lastActivityDate: Date?
+    /// True once the first activity scan has completed (see UsageService)
+    @Published private(set) var activityScanComplete = false
 
     private var pollTimer: Timer?
     private var pollTask: Task<Void, Never>?
@@ -66,6 +68,7 @@ final class CodexUsageService: ObservableObject {
             guard !Task.isCancelled else { return }
             display = result.display
             lastActivityDate = result.activity
+            activityScanComplete = true
             scheduleNextPoll()
         }
     }

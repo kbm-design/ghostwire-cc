@@ -124,7 +124,8 @@ struct AgentsTabView: View {
             now: Date(),
             claudeLastActivity: usageService.lastActivityDate,
             codexLastActivity: codexUsageService.lastActivityDate,
-            hasLiveSessions: !sessions.isEmpty
+            hasLiveSessions: !sessions.isEmpty,
+            signalsReady: usageService.activityScanComplete && codexUsageService.activityScanComplete
         )
     }
 

@@ -16,6 +16,12 @@ import SwiftUIIntrospect
 struct SettingsView: View {
     @State private var selectedTab = "General"
     @State private var accentColorUpdateTrigger = UUID()
+    @State private var searchQuery = ""
+
+    /// Pane ids matching the search query (everything when empty).
+    private var matchingPanes: Set<String> {
+        SettingsSearchIndex.matches(searchQuery)
+    }
 
     let updaterController: SPUStandardUpdaterController?
 
@@ -25,44 +31,53 @@ struct SettingsView: View {
 
     var body: some View {
         NavigationSplitView {
-            List(selection: $selectedTab) {
-                // Core sections (GW-144 IA: fixed up top, MODULES below)
-                Section {
-                    NavigationLink(value: "General") {
-                        Label("General", systemImage: "gear")
-                    }
-                    NavigationLink(value: "Agents") {
-                        Label("Agents", systemImage: "terminal")
-                    }
-                    NavigationLink(value: "Appearance") {
-                        Label("Appearance", systemImage: "eye")
-                    }
-                    NavigationLink(value: "Shortcuts") {
-                        Label("Shortcuts", systemImage: "keyboard")
-                    }
-                    NavigationLink(value: "Advanced") {
-                        Label("Advanced", systemImage: "gearshape.2")
-                    }
-                    NavigationLink(value: "About") {
-                        Label("About", systemImage: "info.circle")
-                    }
+            VStack(spacing: 0) {
+                // Settings search (GW-144, MacNotch pattern)
+                HStack(spacing: 6) {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundStyle(.secondary)
+                        .imageScale(.small)
+                    TextField("Search", text: $searchQuery)
+                        .textFieldStyle(.plain)
                 }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(Color(nsColor: .quaternarySystemFill))
+                )
+                .padding(.horizontal, 10)
+                .padding(.top, 8)
 
-                Section {
-                    ForEach(SettingsModule.all) { module in
-                        NavigationLink(value: module.id) {
-                            HStack {
-                                Label(module.label, systemImage: module.icon)
-                                Spacer()
-                                ModuleSidebarToggle(module)
+                List(selection: $selectedTab) {
+                    // Core sections (GW-144 IA: fixed up top, MODULES below)
+                    Section {
+                        ForEach(SettingsSearchIndex.core.filter { matchingPanes.contains($0.id) }) { entry in
+                            NavigationLink(value: entry.id) {
+                                Label(entry.label, systemImage: entry.icon)
                             }
                         }
                     }
-                } header: {
-                    Text("Modules")
+
+                    let visibleModules = SettingsModule.all.filter { matchingPanes.contains($0.id) }
+                    if !visibleModules.isEmpty {
+                        Section {
+                            ForEach(visibleModules) { module in
+                                NavigationLink(value: module.id) {
+                                    HStack {
+                                        Label(module.label, systemImage: module.icon)
+                                        Spacer()
+                                        ModuleSidebarToggle(module)
+                                    }
+                                }
+                            }
+                        } header: {
+                            Text("Modules")
+                        }
+                    }
                 }
+                .listStyle(SidebarListStyle())
             }
-            .listStyle(SidebarListStyle())
             .tint(.effectiveAccent)
             .toolbar(removing: .sidebarToggle)
             .navigationSplitViewColumnWidth(200)

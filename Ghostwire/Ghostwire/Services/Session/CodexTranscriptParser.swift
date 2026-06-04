@@ -21,6 +21,7 @@
 //
 
 import Foundation
+import SQLite3
 import os
 
 actor CodexTranscriptParser {
@@ -49,9 +50,52 @@ actor CodexTranscriptParser {
     /// rollout path -> cached full conversation keyed by file modification date
     private var conversationCache: [String: (modificationDate: Date, conversation: CodexConversation)] = [:]
 
-    init(sessionsRoot: String = NSHomeDirectory() + "/.codex/sessions", negativeCacheTTL: TimeInterval = 5) {
+    /// Codex's sqlite index over rollouts (threads table: id, rollout_path, title)
+    private let stateDBPath: String
+
+    init(
+        sessionsRoot: String = NSHomeDirectory() + "/.codex/sessions",
+        stateDBPath: String = NSHomeDirectory() + "/.codex/state_5.sqlite",
+        negativeCacheTTL: TimeInterval = 5
+    ) {
         self.sessionsRoot = sessionsRoot
+        self.stateDBPath = stateDBPath
         self.negativeCacheTTL = negativeCacheTTL
+    }
+
+    // MARK: - Codex thread index (state_5.sqlite)
+
+    /// Read (title, rollout_path) for a session from Codex's own sqlite index.
+    /// GW-197: titles are set once by the launching surface (desktop app, Codex
+    /// Companion, computer-use) and exist ONLY here, not in the rollout JSONL.
+    /// Read-only open; returns nil whenever the db is missing, locked, or has
+    /// no row (pre-first-turn sessions - rollouts and thread rows are lazy).
+    private func threadIndexEntry(sessionId: String) -> (title: String?, rolloutPath: String?)? {
+        guard FileManager.default.fileExists(atPath: stateDBPath) else { return nil }
+
+        var db: OpaquePointer?
+        guard sqlite3_open_v2(stateDBPath, &db, SQLITE_OPEN_READONLY, nil) == SQLITE_OK else {
+            sqlite3_close(db)
+            return nil
+        }
+        defer { sqlite3_close(db) }
+
+        var statement: OpaquePointer?
+        let sql = "SELECT title, rollout_path FROM threads WHERE id = ?1 LIMIT 1;"
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else { return nil }
+        defer { sqlite3_finalize(statement) }
+
+        let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+        sqlite3_bind_text(statement, 1, sessionId, -1, transient)
+
+        guard sqlite3_step(statement) == SQLITE_ROW else { return nil }
+
+        let title = sqlite3_column_text(statement, 0).map { String(cString: $0) }
+        let rolloutPath = sqlite3_column_text(statement, 1).map { String(cString: $0) }
+        return (
+            title: (title?.isEmpty == false) ? title : nil,
+            rolloutPath: (rolloutPath?.isEmpty == false) ? rolloutPath : nil
+        )
     }
 
     /// A parsed Codex conversation: history plus tool completion state
@@ -78,6 +122,14 @@ actor CodexTranscriptParser {
         if let lastMiss = missCache[sessionId],
            Date().timeIntervalSince(lastMiss) < negativeCacheTTL {
             return nil
+        }
+
+        // Codex's own index is authoritative and O(1) - prefer it over the walk
+        if let indexed = threadIndexEntry(sessionId: sessionId)?.rolloutPath,
+           FileManager.default.fileExists(atPath: indexed) {
+            pathCache[sessionId] = indexed
+            missCache.removeValue(forKey: sessionId)
+            return indexed
         }
 
         let fileManager = FileManager.default
@@ -111,8 +163,9 @@ actor CodexTranscriptParser {
     // MARK: - ConversationInfo (title / preview)
 
     /// Parse rollout into ConversationInfo (cached by file modification date).
-    /// summary stays nil — Codex has no ai-title equivalent, so the UI falls
-    /// back to firstUserMessage, same as a Claude session without a title.
+    /// summary comes from Codex's sqlite thread index when the launching surface
+    /// set one (GW-197); otherwise nil and the UI falls back to firstUserMessage,
+    /// same as Codex's own default.
     func parse(sessionId: String) -> ConversationInfo {
         let empty = ConversationInfo(
             summary: nil, lastMessage: nil, lastMessageRole: nil,
@@ -185,8 +238,13 @@ actor CodexTranscriptParser {
             }
         }
 
+        // Title from Codex's sqlite index (GW-197) - set by the launching
+        // surface; nil falls back to firstUserMessage in the UI, matching
+        // Codex's own default
+        let title = threadIndexEntry(sessionId: sessionId)?.title
+
         let info = ConversationInfo(
-            summary: nil,
+            summary: title,
             lastMessage: lastMessage,
             lastMessageRole: lastMessageRole,
             lastToolName: lastToolName,

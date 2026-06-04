@@ -42,7 +42,8 @@ struct ClaudeTokenUsageParser {
     /// would roughly double-count.
     func snapshot(now: Date) -> ClaudeTokenSnapshot {
         let sevenDayStart = now.addingTimeInterval(-7 * 24 * 3600)
-        let fiveHourStart = now.addingTimeInterval(-5 * 3600)
+        // GW-203: the 5H bucket is the same activity window as AgentActivity
+        let fiveHourStart = now.addingTimeInterval(-AgentActivity.window)
 
         var snapshot = ClaudeTokenSnapshot()
         var seenMessages = Set<String>()

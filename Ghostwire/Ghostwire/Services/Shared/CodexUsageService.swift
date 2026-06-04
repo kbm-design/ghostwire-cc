@@ -52,14 +52,16 @@ final class CodexUsageService: ObservableObject {
         let authJSONPath = self.authJSONPath
 
         pollTask = Task {
-            // File IO off the main actor
+            // File IO off the main actor. GW-203: one scan yields both the
+            // display and the activity signal (snapshot.latestActivity) - no
+            // second mtime-walk of the rollout tree.
             let result: (display: AgentUsageDisplay?, activity: Date?) =
                 await Task.detached(priority: .utility) {
                     let snapshot = parser.snapshot(now: Date())
                     let authMode = Self.readAuthMode(path: authJSONPath)
                     return (
                         Self.makeDisplay(snapshot: snapshot, authMode: authMode),
-                        Self.newestRolloutDate(sessionsRoot: parser.sessionsRoot)
+                        snapshot.latestActivity
                     )
                 }.value
 
@@ -108,35 +110,5 @@ final class CodexUsageService: ObservableObject {
             return nil
         }
         return json["auth_mode"] as? String
-    }
-
-    // MARK: - Activity
-
-    /// Newest rollout mtime, scanning only the last two day-shards (a live
-    /// session's file is always today's or - around midnight - yesterday's).
-    nonisolated private static func newestRolloutDate(sessionsRoot: String) -> Date? {
-        let fileManager = FileManager.default
-
-        func newestSubdir(_ path: String) -> String? {
-            (try? fileManager.contentsOfDirectory(atPath: path))?.sorted(by: >).first
-        }
-
-        guard let year = newestSubdir(sessionsRoot),
-              let month = newestSubdir(sessionsRoot + "/" + year) else { return nil }
-        let monthPath = sessionsRoot + "/" + year + "/" + month
-        let days = ((try? fileManager.contentsOfDirectory(atPath: monthPath)) ?? []).sorted(by: >).prefix(2)
-
-        var newest: Date?
-        for day in days {
-            let dayPath = monthPath + "/" + day
-            for file in (try? fileManager.contentsOfDirectory(atPath: dayPath)) ?? []
-            where file.hasSuffix(".jsonl") {
-                if let modDate = (try? fileManager.attributesOfItem(atPath: dayPath + "/" + file))?[.modificationDate] as? Date,
-                   modDate > (newest ?? .distantPast) {
-                    newest = modDate
-                }
-            }
-        }
-        return newest
     }
 }

@@ -37,10 +37,11 @@ actor SessionDiscoveryService {
 
     init(
         claudeProjectsRoot: String = NSHomeDirectory() + "/.claude/projects",
-        // 5h aligns with the GW-199 idle threshold and caps stale-provisional
-        // noise; a >5h-idle Claude session reappears on its next transcript
-        // write or hook event. (Codex ignores this — open-fd liveness is exact.)
-        maxAge: TimeInterval = 5 * 3600,
+        // GW-203: the GW-199 idle threshold, owned by AgentActivity.window.
+        // Caps stale-provisional noise; a >5h-idle Claude session reappears on
+        // its next transcript write or hook event. (Codex ignores this —
+        // open-fd liveness is exact.)
+        maxAge: TimeInterval = AgentActivity.window,
         rescanInterval: TimeInterval = 5 * 60,
         isAgentProcessAlive: @escaping @Sendable (String) -> Bool = SessionDiscoveryService.defaultProcessGate,
         openCodexRolloutPaths: @escaping @Sendable () -> [String] = SessionDiscoveryService.defaultOpenCodexRolloutPaths

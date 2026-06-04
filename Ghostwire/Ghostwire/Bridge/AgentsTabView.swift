@@ -105,10 +105,7 @@ struct AgentsTabView: View {
     private var codexMeterVisible: Bool {
         guard codexUsageService.display != nil else { return false }
         if sessions.contains(where: { $0.agent == "codex" }) { return true }
-        if let last = codexUsageService.lastActivityDate {
-            return Date().timeIntervalSince(last) < 5 * 3600
-        }
-        return false
+        return AgentActivity.isRecent(codexUsageService.lastActivityDate)
     }
 
     private func usageDisplay(for agent: String) -> AgentUsageDisplay? {

@@ -24,6 +24,12 @@ final class UsageService: ObservableObject {
 
     @Published private(set) var usage = UsageData.empty
     @Published private(set) var isAvailable = false
+    /// GW-151: auth-branched display - .quota when OAuth creds exist (the
+    /// existing endpoint path), .tokens aggregated from local transcripts
+    /// when the user is API-key-only. Same shape as CodexUsageService.
+    @Published private(set) var display: AgentUsageDisplay?
+
+    private let tokenParser = ClaudeTokenUsageParser()
 
     private var pollTimer: Timer?
     private var pollTask: Task<Void, Never>?
@@ -70,7 +76,9 @@ final class UsageService: ObservableObject {
     private func poll() {
         pollTask = Task {
             guard let token = Self.readOAuthToken() else {
-                isAvailable = false
+                // GW-151: no OAuth → API-key user → token mode from local
+                // transcripts (subscription quota only exists behind OAuth)
+                await pollTokenMode()
                 scheduleNextPoll()
                 return
             }
@@ -80,6 +88,7 @@ final class UsageService: ObservableObject {
             do {
                 let result = try await Self.fetchUsage(token: token)
                 usage = result
+                display = .quota(fiveHour: result.fiveHour, sevenDay: result.sevenDay)
                 consecutiveFailures = 0
                 backoffCount = 0
                 currentInterval = baseInterval
@@ -95,6 +104,29 @@ final class UsageService: ObservableObject {
             }
             scheduleNextPoll()
         }
+    }
+
+    /// API-key mode: aggregate transcript usage{} into 5H/7D token totals
+    /// (ClaudeTokenUsageParser - tested) + estimated cost (AgentCostTable).
+    private func pollTokenMode() async {
+        let parser = tokenParser
+        let snapshot = await Task.detached(priority: .utility) {
+            parser.snapshot(now: Date())
+        }.value
+
+        guard !Task.isCancelled else { return }
+        guard snapshot.hasData else {
+            isAvailable = false
+            display = nil
+            return
+        }
+
+        isAvailable = true
+        display = .tokens(AgentTokenDisplay(
+            fiveHour: snapshot.fiveHour,
+            sevenDay: snapshot.sevenDay,
+            estimatedCostUSD: AgentCostTable.estimateUSD(tokensByModel: snapshot.tokensByModel)
+        ))
     }
 
     // MARK: - Cache
@@ -115,6 +147,7 @@ final class UsageService: ObservableObject {
         guard let data = try? Data(contentsOf: Self.cacheURL),
               let cached = try? JSONDecoder().decode(CachedUsage.self, from: data) else { return }
         usage = cached.usage
+        display = .quota(fiveHour: cached.usage.fiveHour, sevenDay: cached.usage.sevenDay)
         isAvailable = true
     }
 

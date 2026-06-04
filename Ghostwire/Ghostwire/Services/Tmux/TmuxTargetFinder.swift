@@ -82,6 +82,33 @@ actor TmuxTargetFinder {
         return nil
     }
 
+    /// Find the tmux target whose pane tty matches. `tty` is stored without
+    /// the /dev/ prefix (GW-162: moved here from ChatView - the precise
+    /// tmux path, preferred over dir/PID heuristics)
+    func findTarget(forTty tty: String) async -> TmuxTarget? {
+        guard let tmuxPath = await TmuxPathFinder.shared.getTmuxPath() else {
+            return nil
+        }
+
+        guard let output = await runCommand(path: tmuxPath, args: [
+            "list-panes", "-a", "-F", "#{session_name}:#{window_index}.#{pane_index} #{pane_tty}"
+        ]) else {
+            return nil
+        }
+
+        for line in output.components(separatedBy: "\n") {
+            let parts = line.split(separator: " ", maxSplits: 1)
+            guard parts.count == 2 else { continue }
+
+            let paneTty = String(parts[1]).replacingOccurrences(of: "/dev/", with: "")
+            if paneTty == tty {
+                return TmuxTarget(from: String(parts[0]))
+            }
+        }
+
+        return nil
+    }
+
     private func findTmuxTargetByDir(workingDir: String) async -> TmuxTarget? {
         guard let tmuxPath = await TmuxPathFinder.shared.getTmuxPath() else {
             return nil

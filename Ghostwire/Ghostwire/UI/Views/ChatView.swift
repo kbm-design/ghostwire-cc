@@ -26,6 +26,8 @@ struct ChatView: View {
     @State private var newMessageCount: Int = 0
     @State private var previousHistoryCount: Int = 0
     @State private var isBottomVisible: Bool = true
+    /// GW-162: why the last send failed (sends used to drop silently)
+    @State private var sendFailureHint: String?
     @FocusState private var isInputFocused: Bool
 
     init(sessionId: String, initialSession: SessionState, sessionMonitor: ClaudeSessionMonitor, viewModel: AgentPanelViewModel) {
@@ -346,9 +348,29 @@ struct ChatView: View {
 
     // MARK: - Input Bar
 
-    /// Can send messages only if session is in a multiplexer (tmux or cmux)
+    /// GW-162: input enables only when the session's pane is actually
+    /// addressable (cmux refs or tmux tty) - not off process-tree flags,
+    /// which phantom-enabled input and then dropped sends silently
+    private var targetResolution: MultiplexerTargetResolution {
+        MultiplexerTargetResolver.resolve(session: session)
+    }
+
     private var canSendMessages: Bool {
-        session.isInMultiplexer && session.tty != nil
+        targetResolution.isResolvable
+    }
+
+    /// Placeholder names the gap when input is disabled
+    private var inputPlaceholder: String {
+        switch targetResolution {
+        case .cmux, .tmuxTty:
+            return "Message \(agentName)..."
+        case .unresolvable(.cmuxRefsMissing):
+            return "Waiting for \(agentName)'s pane identity (hooks)..."
+        case .unresolvable(.ttyMissing):
+            return "No tty recorded for this session"
+        case .unresolvable(.notInMultiplexer):
+            return "Open \(agentName) in tmux/cmux to enable messaging"
+        }
     }
 
     /// Display name for this session's agent ("Claude" / "Codex"); neutral fallback if untagged
@@ -357,8 +379,42 @@ struct ChatView: View {
     }
 
     private var inputBar: some View {
+        VStack(spacing: 6) {
+            // GW-162: failed sends surface here instead of vanishing into
+            // debug logs (cmux socket policy, vanished panes, ...)
+            if let hint = sendFailureHint {
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.caption2)
+                    Text(hint)
+                        .font(.caption2)
+                        .lineLimit(2)
+                    Spacer()
+                }
+                .foregroundColor(.yellow.opacity(0.9))
+            }
+
+            inputRow
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(Color.black.opacity(0.2))
+        .overlay(alignment: .top) {
+            LinearGradient(
+                colors: [fadeColor.opacity(0), fadeColor.opacity(0.7)],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .frame(height: 24)
+            .offset(y: -24) // Push above input bar
+            .allowsHitTesting(false)
+        }
+        .zIndex(1) // Render above message list
+    }
+
+    private var inputRow: some View {
         HStack(spacing: 10) {
-            TextField(canSendMessages ? "Message \(agentName)..." : "Open \(agentName) in tmux/cmux to enable messaging", text: $inputText)
+            TextField(inputPlaceholder, text: $inputText)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13))
                 .foregroundColor(canSendMessages ? .white : .white.opacity(0.4))
@@ -388,20 +444,6 @@ struct ChatView: View {
             .buttonStyle(.plain)
             .disabled(!canSendMessages || inputText.isEmpty)
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
-        .background(Color.black.opacity(0.2))
-        .overlay(alignment: .top) {
-            LinearGradient(
-                colors: [fadeColor.opacity(0), fadeColor.opacity(0.7)],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-            .frame(height: 24)
-            .offset(y: -24) // Push above input bar
-            .allowsHitTesting(false)
-        }
-        .zIndex(1) // Render above message list
     }
 
     // MARK: - Approval Bar
@@ -479,72 +521,68 @@ struct ChatView: View {
 
     private func sendToSession(_ text: String) async {
         let logger = os.Logger(subsystem: "com.ghostwire.notch", category: "ChatSend")
-        logger.debug("sendToSession: isInTmux=\(session.isInTmux) isInCmux=\(session.isInCmux) tty=\(session.tty ?? "nil") pid=\(session.pid ?? 0) cmuxWS=\(session.cmuxWorkspaceRef ?? "nil") cmuxSurf=\(session.cmuxSurfaceRef ?? "nil")")
+        let resolution = targetResolution
+        logger.debug("sendToSession: resolution=\(String(describing: resolution), privacy: .public) pid=\(session.pid ?? 0)")
 
-        guard session.isInMultiplexer else {
-            logger.debug("sendToSession: not in multiplexer, aborting")
+        guard let target = await findTarget(for: resolution) else {
+            logger.debug("sendToSession: no target found")
+            sendFailureHint = noTargetHint(for: resolution)
             return
         }
 
-        if let target = await findMultiplexerTarget() {
-            logger.debug("sendToSession: found target \(target.targetString) multiplexer=\(String(describing: target.multiplexer))")
-            let result = await ToolApprovalHandler.shared.sendMessage(text, to: target)
-            logger.debug("sendToSession: sendMessage result=\(result)")
+        logger.debug("sendToSession: found target \(target.targetString, privacy: .public)")
+        let result = await TmuxController.shared.sendMessage(text, to: target)
+        logger.debug("sendToSession: sendMessage result=\(result)")
+
+        if result {
+            sendFailureHint = nil
         } else {
-            logger.debug("sendToSession: no target found")
+            // GW-162: a failed send must say why - on cmux the usual cause
+            // is the socket policy (cmuxOnly default / pending restart)
+            sendFailureHint = await Self.failureHint(for: target)
         }
     }
 
-    private func findMultiplexerTarget() async -> TmuxTarget? {
-        // Try cmux first: use stored surface ref from hook event
-        if session.isInCmux,
-           let ws = session.cmuxWorkspaceRef,
-           let surf = session.cmuxSurfaceRef {
-            return .cmux(workspace: ws, surface: surf)
-        }
-
-        // Try tmux via TTY matching
-        if session.isInTmux, let tty = session.tty,
-           let target = await findTmuxTargetByTty(tty: tty) {
-            return target
-        }
-
-        // Cmux fallback: PID-based lookup
-        if session.isInCmux, let pid = session.pid {
-            return await TmuxTargetFinder.shared.findTarget(forClaudePid: pid)
-        }
-
-        return nil
-    }
-
-    private func findTmuxTargetByTty(tty: String) async -> TmuxTarget? {
-        guard let tmuxPath = await TmuxPathFinder.shared.getTmuxPath() else {
+    /// Resolution -> concrete target (tmux needs a live pane-tty lookup)
+    private func findTarget(for resolution: MultiplexerTargetResolution) async -> TmuxTarget? {
+        switch resolution {
+        case .cmux(let workspace, let surface):
+            return .cmux(workspace: workspace, surface: surface)
+        case .tmuxTty(let tty):
+            return await TmuxTargetFinder.shared.findTarget(forTty: tty)
+        case .unresolvable:
             return nil
         }
+    }
 
-        do {
-            let output = try await ProcessExecutor.shared.run(
-                tmuxPath,
-                arguments: ["list-panes", "-a", "-F", "#{session_name}:#{window_index}.#{pane_index} #{pane_tty}"]
-            )
+    private func noTargetHint(for resolution: MultiplexerTargetResolution) -> String {
+        switch resolution {
+        case .tmuxTty:
+            return "No tmux pane matches this session's tty"
+        case .cmux, .unresolvable:
+            return "Couldn't locate this session's pane"
+        }
+    }
 
-            let lines = output.components(separatedBy: "\n")
-            for line in lines {
-                let parts = line.components(separatedBy: " ")
-                guard parts.count >= 2 else { continue }
-
-                let target = parts[0]
-                let paneTty = parts[1].replacingOccurrences(of: "/dev/", with: "")
-
-                if paneTty == tty {
-                    return TmuxTarget(from: target)
-                }
+    /// Why did a resolved send fail? For cmux, probe the socket policy.
+    private static func failureHint(for target: TmuxTarget) async -> String {
+        switch target.multiplexer {
+        case .tmux:
+            return "tmux send failed — the pane may have closed"
+        case .cmux:
+            switch await CmuxAccessProbe.probe() {
+            case .closedByPolicy(_, needsRestart: true):
+                return "Restart cmux to apply its automation socket mode"
+            case .closedByPolicy(_, needsRestart: false):
+                return "cmux blocks external apps — set Settings → Automation → Socket Control Mode to Automation, then restart cmux"
+            case .notRunning:
+                return "cmux isn't running"
+            case .unavailable:
+                return "cmux CLI not found"
+            case .ok:
+                return "Send failed — the pane may have closed"
             }
-        } catch {
-            return nil
         }
-
-        return nil
     }
 }
 

@@ -14,6 +14,11 @@ struct AgentUsageDetailView: View {
     /// "claude" | "codex"
     let agent: String
     let display: AgentUsageDisplay
+    /// GW-201: per-model weekly sub-limits (Claude OAuth only; non-null
+    /// fields from the usage endpoint, e.g. [("Sonnet", period)])
+    var perModelWeeklies: [(label: String, period: QuotaPeriod)] = []
+    /// GW-201: server-provided extra-usage spend - rendered only when enabled
+    var extraUsage: ExtraUsage? = nil
     let onBack: () -> Void
 
     private var tint: Color { AgentIdentity.tint(for: agent) }
@@ -61,6 +66,32 @@ struct AgentUsageDetailView: View {
             }
             if let sd = sevenDay {
                 quotaBar(label: "Weekly", period: sd, resetPrefix: "refills")
+            }
+
+            // GW-201: per-model weekly sub-limits (only non-null on the wire)
+            ForEach(perModelWeeklies, id: \.label) { entry in
+                UsageBar(
+                    label: entry.label,
+                    percent: entry.period.utilization / 100,
+                    detail: "\(Int(entry.period.utilization))%",
+                    color: barColor(entry.period.utilization)
+                )
+            }
+
+            // GW-201: server-truth spend toward the monthly extra-usage cap -
+            // the one Spend bar whose fill means something (no tilde: exact)
+            if let extra = extraUsage, extra.isEnabled {
+                VStack(alignment: .leading, spacing: 2) {
+                    UsageBar(
+                        label: "Spend",
+                        percent: extra.utilization / 100,
+                        detail: UsageFormat.spendDetail(usedCents: extra.usedCredits, limitCents: extra.monthlyLimitCents),
+                        color: barColor(extra.utilization)
+                    )
+                    Text("extra usage · monthly")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
             }
         }
     }

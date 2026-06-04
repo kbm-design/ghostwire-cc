@@ -29,8 +29,8 @@ struct SettingsView: View {
                 NavigationLink(value: "General") {
                     Label("General", systemImage: "gear")
                 }
-                NavigationLink(value: "claudeCode") {
-                    Label("Claude Code", systemImage: "terminal")
+                NavigationLink(value: "Agents") {
+                    Label("Agents", systemImage: "terminal")
                 }
                 NavigationLink(value: "Appearance") {
                     Label("Appearance", systemImage: "eye")
@@ -75,8 +75,8 @@ struct SettingsView: View {
                 switch selectedTab {
                 case "General":
                     GeneralSettings()
-                case "claudeCode":
-                    ClaudeCodeSettings()
+                case "Agents":
+                    AgentsSettings()
                 case "Appearance":
                     Appearance()
                 case "Media":

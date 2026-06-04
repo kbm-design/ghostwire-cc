@@ -7,6 +7,7 @@
 
 import ApplicationServices
 import Combine
+import Defaults
 import SwiftUI
 import ServiceManagement
 import Sparkle
@@ -69,9 +70,11 @@ struct NotchMenuView: View {
             ) {
                 if hooksInstalled {
                     HookInstaller.uninstall()
+                    Defaults[.claudeHooksEnabled] = false
                     hooksInstalled = false
                 } else {
                     HookInstaller.installIfNeeded()
+                    Defaults[.claudeHooksEnabled] = true
                     hooksInstalled = true
                 }
             }

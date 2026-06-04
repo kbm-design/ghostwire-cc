@@ -200,4 +200,10 @@ extension Defaults.Keys {
     static let didClearLegacyURLCacheV1 = Key<Bool>("didClearLegacyURLCache_v1", default: false)
 
     static let notificationSound = Key<String>("notificationSound", default: "Pop")
+
+    // MARK: Agents (GW-144)
+    // Gate the silent launch-time hook auto-install per agent so an
+    // uninstall from the Agents tab sticks across relaunches.
+    static let claudeHooksEnabled = Key<Bool>("claudeHooksEnabled", default: true)
+    static let codexHooksEnabled = Key<Bool>("codexHooksEnabled", default: true)
 }

@@ -476,8 +476,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         previousScreens = NSScreen.screens
-        HookInstaller.installIfNeeded()
-        CodexHookInstaller.installIfNeeded()
+        AgentHookConfig.installEnabledAgents()
         GhostwireSessionBridge.shared.startMonitoring()
         UsageService.shared.startPolling()
         CodexUsageService.shared.startPolling()

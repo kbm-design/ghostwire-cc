@@ -201,15 +201,16 @@ struct NotchTabManagementSection: View {
                     .controlSize(.mini)
                     .labelsHidden()
                     .tint(.effectiveAccent)
-                    // Last visible tab can't be hidden; shelf is governed
+                    // Agents can't be hidden (approval surface, GW-139);
+                    // last visible tab can't be hidden; shelf is governed
                     // by its module toggle while the module is off.
-                    .disabled(isShelfGated || (isVisible && visibleTabs.count == 1))
+                    .disabled(tab == .agents || isShelfGated || (isVisible && visibleTabs.count == 1))
                 }
             }
         } header: {
             Text("Notch tabs")
         } footer: {
-            Text("Reorder and hide tabs in the open notch. Shelf follows its module toggle.")
+            Text("Reorder and hide tabs in the open notch. Agents stays visible — it's where approvals surface. Shelf follows its module toggle.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }

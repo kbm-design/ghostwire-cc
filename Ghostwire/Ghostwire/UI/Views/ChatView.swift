@@ -747,7 +747,17 @@ struct ToolCallView: View {
                     .foregroundColor(textColor)
                     .fixedSize()
 
-                if tool.name == "Task" && !tool.subagentTools.isEmpty {
+                if fullRaw && !tool.input.isEmpty {
+                    // Full-raw mode: EVERY input shape verbatim, no formatter
+                    // in the path — MCPToolFormatter.formatArgs truncates
+                    // values (30 chars) and caps args (3), which is lossy
+                    // long before lineLimit matters (GW-139 rule).
+                    Text(verbatim: Self.rawInput(tool.input))
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundColor(textColor.opacity(0.7))
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else if tool.name == "Task" && !tool.subagentTools.isEmpty {
                     let taskDesc = tool.input["description"] ?? "Running agent..."
                     Text("\(taskDesc) (\(tool.subagentTools.count) tools)")
                         .font(.system(size: 11))
@@ -761,13 +771,6 @@ struct ToolCallView: View {
                         .foregroundColor(textColor.opacity(0.7))
                         .lineLimit(fullRaw ? nil : 1)
                         .truncationMode(.tail)
-                } else if fullRaw, let command = tool.input["command"] {
-                    // The exact command string, not the friendly description
-                    Text(verbatim: command)
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundColor(textColor.opacity(0.7))
-                        .textSelection(.enabled)
-                        .fixedSize(horizontal: false, vertical: true)
                 } else if MCPToolFormatter.isMCPTool(tool.name) && !tool.input.isEmpty {
                     Text(MCPToolFormatter.formatArgs(tool.input))
                         .font(.system(size: 11))
@@ -844,6 +847,16 @@ struct ToolCallView: View {
         ) {
             pulseOpacity = 0.15
         }
+    }
+
+    /// Full-raw rendering of a tool's input: every key, every value,
+    /// untruncated, in stable order. Internal for tests (GW-139 rule:
+    /// the transcript must show exactly what the tool was given).
+    static func rawInput(_ input: [String: String]) -> String {
+        input
+            .sorted { $0.key < $1.key }
+            .map { "\($0.key): \($0.value)" }
+            .joined(separator: "\n")
     }
 }
 

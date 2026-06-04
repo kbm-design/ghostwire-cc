@@ -94,12 +94,14 @@ enum NotchTab: String, CaseIterable, Identifiable {
         Defaults[.notchTabOrder] = order.map(\.rawValue)
     }
 
-    /// Hide/show a tab. Refuses to hide the last visible tab; if the
-    /// currently shown view loses its tab, falls back to the first visible.
+    /// Hide/show a tab. Refuses to hide the Agents tab (it's the approval
+    /// surface — hiding it would strand pending permissions, GW-139) and
+    /// the last visible tab.
     @MainActor
     static func setHidden(_ tab: NotchTab, _ hidden: Bool) {
         var hiddenIds = Defaults[.hiddenNotchTabs]
         if hidden {
+            guard tab != .agents else { return }
             let remaining = currentlyVisible.filter { $0 != tab }
             guard !remaining.isEmpty else { return }
             hiddenIds.insert(tab.rawValue)
@@ -109,6 +111,18 @@ enum NotchTab: String, CaseIterable, Identifiable {
             hiddenIds.remove(tab.rawValue)
             Defaults[.hiddenNotchTabs] = hiddenIds
         }
+    }
+
+    /// The Agents tab must be reachable whenever an approval is pending.
+    /// setHidden refuses to hide it, but persisted prefs from before that
+    /// rule (or direct Defaults writes) can still carry the entry — the
+    /// bridge calls this on every new pending permission.
+    @MainActor
+    static func ensureAgentsVisibleForApproval() {
+        var hiddenIds = Defaults[.hiddenNotchTabs]
+        guard hiddenIds.contains(NotchTab.agents.rawValue) else { return }
+        hiddenIds.remove(NotchTab.agents.rawValue)
+        Defaults[.hiddenNotchTabs] = hiddenIds
     }
 
     /// Repair `currentView` after any path that can orphan it: module

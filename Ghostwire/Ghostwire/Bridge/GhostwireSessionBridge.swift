@@ -116,8 +116,14 @@ final class GhostwireSessionBridge: ObservableObject {
             !knownPendingPermissionIDs.contains($0)
         }
 
-        guard hasNewPendingPermission,
-              ghostwireViewModel?.notchState == .closed,
+        guard hasNewPendingPermission else { return }
+
+        // The Agents tab is the approval surface — clear any persisted
+        // hidden state (pre-rule prefs) so the pending approval is
+        // reachable regardless of how this alert is surfaced (GW-144).
+        NotchTab.ensureAgentsVisibleForApproval()
+
+        guard ghostwireViewModel?.notchState == .closed,
               !TerminalVisibilityDetector.isTerminalVisibleOnCurrentSpace()
         else {
             return

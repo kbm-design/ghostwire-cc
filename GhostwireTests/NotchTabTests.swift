@@ -115,6 +115,39 @@ final class NotchTabTests: XCTestCase {
 @MainActor
 final class NotchTabRepairTests: XCTestCase {
 
+    func testSetHiddenRefusesToHideAgentsTab() {
+        // The Agents tab is the approval surface (GW-139): hiding it would
+        // strand pending permissions, so setHidden must be a no-op.
+        let savedHidden = Defaults[.hiddenNotchTabs]
+        defer { Defaults[.hiddenNotchTabs] = savedHidden }
+        Defaults[.hiddenNotchTabs] = []
+
+        NotchTab.setHidden(.agents, true)
+
+        XCTAssertFalse(Defaults[.hiddenNotchTabs].contains(NotchTab.agents.rawValue))
+    }
+
+    func testEnsureAgentsVisibleForApprovalClearsLegacyState() {
+        // Prefs persisted before the no-hiding rule can still carry the
+        // entry — the bridge calls this on every new pending permission
+        // (GhostwireSessionBridge.handlePendingPermissionSessions), so a
+        // stranded approval restores its tab.
+        let savedHidden = Defaults[.hiddenNotchTabs]
+        let savedShelf = Defaults[.shelf]
+        defer {
+            Defaults[.hiddenNotchTabs] = savedHidden
+            Defaults[.shelf] = savedShelf
+        }
+        Defaults[.shelf] = true
+        Defaults[.hiddenNotchTabs] = [NotchTab.agents.rawValue, NotchTab.dashboard.rawValue]
+        XCTAssertFalse(NotchTab.currentlyVisible.contains(.agents))
+
+        NotchTab.ensureAgentsVisibleForApproval()
+
+        XCTAssertEqual(Defaults[.hiddenNotchTabs], [NotchTab.dashboard.rawValue])
+        XCTAssertTrue(NotchTab.currentlyVisible.contains(.agents))
+    }
+
     func testShelfModuleToggleRepairsCurrentView() async throws {
         let savedShelf = Defaults[.shelf]
         let savedHidden = Defaults[.hiddenNotchTabs]

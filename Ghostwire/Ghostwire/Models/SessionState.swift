@@ -29,6 +29,11 @@ struct SessionState: Equatable, Identifiable, Sendable {
     /// Which agent CLI produced this session ("claude" | "codex" | …), from the hook's source tag
     var agent: String?
 
+    /// True for sessions registered from a transcript scan (GW-194) that no
+    /// hook event has confirmed yet. No pid/tty; pruned when the transcript
+    /// falls out of the discovery snapshot; cleared by the first hook event.
+    var isProvisional: Bool
+
     // MARK: - State Machine
 
     /// Current phase in the session lifecycle
@@ -79,6 +84,7 @@ struct SessionState: Equatable, Identifiable, Sendable {
         isInTmux: Bool = false,
         isInCmux: Bool = false,
         agent: String? = nil,
+        isProvisional: Bool = false,
         phase: SessionPhase = .idle,
         chatItems: [ChatHistoryItem] = [],
         toolTracker: ToolTracker = ToolTracker(),
@@ -99,6 +105,7 @@ struct SessionState: Equatable, Identifiable, Sendable {
         self.isInTmux = isInTmux
         self.isInCmux = isInCmux
         self.agent = agent
+        self.isProvisional = isProvisional
         self.phase = phase
         self.chatItems = chatItems
         self.toolTracker = toolTracker

@@ -26,6 +26,11 @@ actor SessionStore {
     /// Pending file syncs (debounced)
     private var pendingSyncs: [String: Task<Void, Never>] = [:]
 
+    /// Sessions archived or ended this app run (GW-194). Their transcripts
+    /// keep a fresh mtime, so without a tombstone the next discovery rescan
+    /// would resurrect them as provisional rows. Cleared by a real hook event.
+    private var dismissedSessionIds: Set<String> = []
+
     /// Sync debounce interval (100ms)
     private let syncDebounceNs: UInt64 = 100_000_000
 
@@ -70,6 +75,9 @@ actor SessionStore {
 
         case .clearDetected(let sessionId):
             await processClearDetected(sessionId: sessionId)
+
+        case .sessionsDiscovered(let snapshot):
+            await processSessionsDiscovered(snapshot)
 
         case .sessionEnded(let sessionId):
             await processSessionEnd(sessionId: sessionId)
@@ -116,8 +124,15 @@ actor SessionStore {
 
     private func processHookEvent(_ event: HookEvent) async {
         let sessionId = event.sessionId
+        // A real hook event always registers, even for a session that was
+        // archived earlier this run (e.g. claude --resume)
+        dismissedSessionIds.remove(sessionId)
+
         let isNewSession = sessions[sessionId] == nil
         var session = sessions[sessionId] ?? createSession(from: event)
+        if session.isProvisional {
+            session = Self.upgradedFromProvisional(session, event: event)
+        }
 
         session.pid = event.pid
         if let pid = event.pid {
@@ -137,6 +152,7 @@ actor SessionStore {
         if event.status == "ended" {
             sessions.removeValue(forKey: sessionId)
             cancelPendingSync(sessionId: sessionId)
+            dismissedSessionIds.insert(sessionId)
             return
         }
 
@@ -206,6 +222,29 @@ actor SessionStore {
             agent: event.source,
             phase: .idle
         )
+    }
+
+    /// GW-194: the first real hook event confirms a provisional session in
+    /// place — same sessionId key, so no duplicate rows. The discovery cwd
+    /// can be a lossy dirname decode; the hook event's cwd is authoritative.
+    private static func upgradedFromProvisional(_ session: SessionState, event: HookEvent) -> SessionState {
+        var upgraded = session
+        upgraded.isProvisional = false
+        if session.cwd != event.cwd {
+            upgraded = SessionState(
+                sessionId: session.sessionId,
+                cwd: event.cwd,
+                agent: session.agent,
+                phase: session.phase,
+                chatItems: session.chatItems,
+                toolTracker: session.toolTracker,
+                subagentState: session.subagentState,
+                conversationInfo: session.conversationInfo,
+                lastActivity: session.lastActivity,
+                createdAt: session.createdAt
+            )
+        }
+        return upgraded
     }
 
     private func processToolTracking(event: HookEvent, session: inout SessionState) {
@@ -872,11 +911,51 @@ actor SessionStore {
         Self.logger.info("/clear processed for session \(sessionId.prefix(8), privacy: .public) - marked for reconciliation")
     }
 
+    // MARK: - Discovery Processing (GW-194)
+
+    private func processSessionsDiscovered(_ snapshot: [DiscoveredSession]) async {
+        let snapshotIds = Set(snapshot.map(\.sessionId))
+
+        // A snapshot is a complete scan: a provisional absent from it aged
+        // past the cutoff, lost its transcript, or its agent CLI is gone.
+        // Hook-backed sessions have a real lifecycle and are never touched.
+        for (id, session) in sessions where session.isProvisional && !snapshotIds.contains(id) {
+            sessions.removeValue(forKey: id)
+            cancelPendingSync(sessionId: id)
+            Self.logger.debug("Pruned stale provisional session \(id.prefix(8), privacy: .public)")
+        }
+
+        for discovered in snapshot {
+            if var existing = sessions[discovered.sessionId] {
+                if existing.isProvisional {
+                    existing.lastActivity = discovered.fileModified
+                    sessions[discovered.sessionId] = existing
+                }
+                continue
+            }
+
+            // Archived/ended this app run — don't resurrect from the same file
+            guard !dismissedSessionIds.contains(discovered.sessionId) else { continue }
+
+            sessions[discovered.sessionId] = SessionState(
+                sessionId: discovered.sessionId,
+                cwd: discovered.cwd,
+                agent: discovered.agent,
+                isProvisional: true,
+                phase: .idle,
+                lastActivity: discovered.fileModified,
+                createdAt: discovered.fileModified
+            )
+            Self.logger.info("Registered provisional \(discovered.agent, privacy: .public) session \(discovered.sessionId.prefix(8), privacy: .public)")
+        }
+    }
+
     // MARK: - Session End Processing
 
     private func processSessionEnd(sessionId: String) async {
         sessions.removeValue(forKey: sessionId)
         cancelPendingSync(sessionId: sessionId)
+        dismissedSessionIds.insert(sessionId)
     }
 
     // MARK: - History Loading

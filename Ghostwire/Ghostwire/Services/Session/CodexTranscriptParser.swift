@@ -151,7 +151,13 @@ actor CodexTranscriptParser {
                 }
             } else if lineType == "response_item", payloadType == "function_call" {
                 let name = payload["name"] as? String ?? "Tool"
-                lastMessage = Self.toolPreview(name: name, arguments: payload["arguments"] as? String)
+                // Input preview ONLY - the UI renders lastToolName next to
+                // lastMessage, so including the name here doubles it ("get get")
+                lastMessage = ToolUseBlock(
+                    id: "",
+                    name: name,
+                    input: Self.parseArguments(payload["arguments"] as? String)
+                ).preview
                 lastMessageRole = "tool"
                 lastToolName = name
             }
@@ -279,15 +285,6 @@ actor CodexTranscriptParser {
             }
         }
         return input
-    }
-
-    private static func toolPreview(name: String, arguments: String?) -> String {
-        let input = parseArguments(arguments)
-        if let command = input["command"] {
-            let firstLine = command.components(separatedBy: "\n").first ?? command
-            return "\(name): \(firstLine.prefix(50))"
-        }
-        return name
     }
 
     private static func truncate(_ message: String, maxLength: Int) -> String {

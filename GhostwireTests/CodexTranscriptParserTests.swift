@@ -112,6 +112,45 @@ final class CodexTranscriptParserTests: XCTestCase {
         )
     }
 
+    func testTrailingToolCallPreviewIsInputOnly() async throws {
+        // The UI renders lastToolName and lastMessage side by side
+        // (ClaudeInstancesView), so lastMessage must be the INPUT preview only.
+        // Regression: a trailing argless-style MCP call (qmd "get") rendered as
+        // "get get" because lastMessage duplicated the tool name.
+        let toolSessionId = "019e8bd5-0000-7681-8840-4830234ab999"
+        let dayDir = tempRoot + "/2026/06/03"
+        try FileManager.default.createDirectory(atPath: dayDir, withIntermediateDirectories: true)
+        let fixture = """
+{"timestamp":"2026-06-03T20:00:00.000Z","type":"session_meta","payload":{"id":"\(toolSessionId)","cwd":"/tmp"}}
+{"timestamp":"2026-06-03T20:00:01.000Z","type":"event_msg","payload":{"type":"user_message","message":"look up my notes"}}
+{"timestamp":"2026-06-03T20:00:02.000Z","type":"response_item","payload":{"type":"function_call","name":"get","arguments":"{\\"path\\":\\"notes/foo.md\\"}","call_id":"call_qmd_get"}}
+"""
+        try fixture.write(toFile: dayDir + "/rollout-2026-06-03T20-00-00-\(toolSessionId).jsonl", atomically: true, encoding: .utf8)
+
+        let info = await parser.parse(sessionId: toolSessionId)
+        XCTAssertEqual(info.lastMessageRole, "tool")
+        XCTAssertEqual(info.lastToolName, "get")
+        XCTAssertEqual(info.lastMessage, "notes/foo.md",
+                       "lastMessage must be input-only; the UI prepends the tool name itself")
+        XCTAssertEqual(info.lastMessage?.contains("get"), false)
+    }
+
+    func testTrailingCommandToolPreviewIsCommandOnly() async throws {
+        let toolSessionId = "019e8bd5-0000-7681-8840-4830234ab998"
+        let dayDir = tempRoot + "/2026/06/03"
+        try FileManager.default.createDirectory(atPath: dayDir, withIntermediateDirectories: true)
+        let fixture = """
+{"timestamp":"2026-06-03T20:00:00.000Z","type":"session_meta","payload":{"id":"\(toolSessionId)","cwd":"/tmp"}}
+{"timestamp":"2026-06-03T20:00:02.000Z","type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\\"cmd\\":\\"echo hello > out.txt\\"}","call_id":"call_exec"}}
+"""
+        try fixture.write(toFile: dayDir + "/rollout-2026-06-03T20-00-01-\(toolSessionId).jsonl", atomically: true, encoding: .utf8)
+
+        let info = await parser.parse(sessionId: toolSessionId)
+        XCTAssertEqual(info.lastToolName, "exec_command")
+        XCTAssertEqual(info.lastMessage, "echo hello > out.txt",
+                       "command preview must not be prefixed with the tool name")
+    }
+
     func testMessagesHaveStableIds() async {
         let first = await parser.parseConversation(sessionId: sessionId)
         let second = await parser.parseConversation(sessionId: sessionId)

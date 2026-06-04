@@ -26,6 +26,11 @@ actor SessionStore {
     /// Pending file syncs (debounced)
     private var pendingSyncs: [String: Task<Void, Never>] = [:]
 
+    /// Sessions archived or ended this app run (GW-194). Their transcripts
+    /// keep a fresh mtime, so without a tombstone the next discovery rescan
+    /// would resurrect them as provisional rows. Cleared by a real hook event.
+    private var dismissedSessionIds: Set<String> = []
+
     /// Sync debounce interval (100ms)
     private let syncDebounceNs: UInt64 = 100_000_000
 
@@ -70,6 +75,9 @@ actor SessionStore {
 
         case .clearDetected(let sessionId):
             await processClearDetected(sessionId: sessionId)
+
+        case .sessionsDiscovered(let snapshot):
+            await processSessionsDiscovered(snapshot)
 
         case .sessionEnded(let sessionId):
             await processSessionEnd(sessionId: sessionId)
@@ -116,8 +124,16 @@ actor SessionStore {
 
     private func processHookEvent(_ event: HookEvent) async {
         let sessionId = event.sessionId
+        // A real hook event always registers, even for a session that was
+        // archived earlier this run (e.g. claude --resume)
+        dismissedSessionIds.remove(sessionId)
+
         let isNewSession = sessions[sessionId] == nil
         var session = sessions[sessionId] ?? createSession(from: event)
+        let wasProvisional = session.isProvisional
+        if wasProvisional {
+            session = Self.upgradedFromProvisional(session, event: event)
+        }
 
         session.pid = event.pid
         if let pid = event.pid {
@@ -137,6 +153,7 @@ actor SessionStore {
         if event.status == "ended" {
             sessions.removeValue(forKey: sessionId)
             cancelPendingSync(sessionId: sessionId)
+            dismissedSessionIds.insert(sessionId)
             return
         }
 
@@ -168,6 +185,15 @@ actor SessionStore {
 
         sessions[sessionId] = session
         publishState()
+
+        if isNewSession || wasProvisional {
+            // GW-193: events that never sync the file (Notification, …) left
+            // new sessions titled by folder name — parse once at adoption.
+            // A provisional's first hook also re-adopts: its discovery-time
+            // parse may have read a lossy-decoded (wrong) cwd and come up
+            // empty — the fill-only guard makes the retry clobber-safe.
+            await adoptConversationInfo(sessionId: sessionId, agent: session.agent, cwd: session.cwd)
+        }
 
         if event.shouldSyncFile {
             scheduleFileSync(sessionId: sessionId, cwd: event.cwd)
@@ -206,6 +232,29 @@ actor SessionStore {
             agent: event.source,
             phase: .idle
         )
+    }
+
+    /// GW-194: the first real hook event confirms a provisional session in
+    /// place — same sessionId key, so no duplicate rows. The discovery cwd
+    /// can be a lossy dirname decode; the hook event's cwd is authoritative.
+    private static func upgradedFromProvisional(_ session: SessionState, event: HookEvent) -> SessionState {
+        var upgraded = session
+        upgraded.isProvisional = false
+        if session.cwd != event.cwd {
+            upgraded = SessionState(
+                sessionId: session.sessionId,
+                cwd: event.cwd,
+                agent: session.agent,
+                phase: session.phase,
+                chatItems: session.chatItems,
+                toolTracker: session.toolTracker,
+                subagentState: session.subagentState,
+                conversationInfo: session.conversationInfo,
+                lastActivity: session.lastActivity,
+                createdAt: session.createdAt
+            )
+        }
+        return upgraded
     }
 
     private func processToolTracking(event: HookEvent, session: inout SessionState) {
@@ -872,11 +921,86 @@ actor SessionStore {
         Self.logger.info("/clear processed for session \(sessionId.prefix(8), privacy: .public) - marked for reconciliation")
     }
 
+    // MARK: - Discovery Processing (GW-194)
+
+    private func processSessionsDiscovered(_ snapshot: [DiscoveredSession]) async {
+        let snapshotIds = Set(snapshot.map(\.sessionId))
+
+        // A snapshot is a complete scan: a provisional absent from it aged
+        // past the cutoff, lost its transcript, or its agent CLI is gone.
+        // Hook-backed sessions have a real lifecycle and are never touched.
+        for (id, session) in sessions where session.isProvisional && !snapshotIds.contains(id) {
+            sessions.removeValue(forKey: id)
+            cancelPendingSync(sessionId: id)
+            Self.logger.debug("Pruned stale provisional session \(id.prefix(8), privacy: .public)")
+        }
+
+        for discovered in snapshot {
+            if var existing = sessions[discovered.sessionId] {
+                if existing.isProvisional {
+                    existing.lastActivity = discovered.fileModified
+                    sessions[discovered.sessionId] = existing
+                }
+                continue
+            }
+
+            // Archived/ended this app run — don't resurrect from the same file
+            guard !dismissedSessionIds.contains(discovered.sessionId) else { continue }
+
+            sessions[discovered.sessionId] = SessionState(
+                sessionId: discovered.sessionId,
+                cwd: discovered.cwd,
+                agent: discovered.agent,
+                isProvisional: true,
+                phase: .idle,
+                lastActivity: discovered.fileModified,
+                createdAt: discovered.fileModified
+            )
+            Self.logger.info("Registered provisional \(discovered.agent, privacy: .public) session \(discovered.sessionId.prefix(8), privacy: .public)")
+
+            await adoptConversationInfo(
+                sessionId: discovered.sessionId,
+                agent: discovered.agent,
+                cwd: discovered.cwd
+            )
+        }
+    }
+
+    /// GW-194 / GW-193: parse title/preview when a session is adopted —
+    /// idle pre-existing sessions never produce the file-sync events that
+    /// normally populate conversationInfo, leaving titles stuck on the
+    /// folder name. Parsers cache by mtime, so this is cheap on re-adoption.
+    /// Internal for tests (GW-192 precedent).
+    func adoptConversationInfo(sessionId: String, agent: String?, cwd: String) async {
+        let info: ConversationInfo
+        if agent == "codex" {
+            info = await CodexTranscriptParser.shared.parse(sessionId: sessionId)
+        } else {
+            info = await ConversationParser.shared.parse(sessionId: sessionId, cwd: cwd)
+        }
+
+        // Re-fetch after the await: the session may have been pruned or
+        // upgraded while the parser ran
+        guard var session = sessions[sessionId] else { return }
+
+        // Fill-only: a concurrent file sync may have populated richer info
+        // while the adoption parse was in flight — never regress it
+        let emptyInfo = ConversationInfo(
+            summary: nil, lastMessage: nil, lastMessageRole: nil,
+            lastToolName: nil, firstUserMessage: nil, lastUserMessageDate: nil
+        )
+        guard session.conversationInfo == emptyInfo else { return }
+
+        session.conversationInfo = info
+        sessions[sessionId] = session
+    }
+
     // MARK: - Session End Processing
 
     private func processSessionEnd(sessionId: String) async {
         sessions.removeValue(forKey: sessionId)
         cancelPendingSync(sessionId: sessionId)
+        dismissedSessionIds.insert(sessionId)
     }
 
     // MARK: - History Loading

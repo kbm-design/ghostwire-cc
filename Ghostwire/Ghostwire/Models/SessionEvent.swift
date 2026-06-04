@@ -65,6 +65,12 @@ enum SessionEvent: Sendable {
     /// User issued /clear command - reset UI state while keeping session alive
     case clearDetected(sessionId: String)
 
+    // MARK: - Discovery Events (from SessionDiscoveryService, GW-194)
+
+    /// A complete scan snapshot of transcript files on disk. Registers
+    /// provisional sessions; provisionals absent from the snapshot are pruned.
+    case sessionsDiscovered([DiscoveredSession])
+
     // MARK: - Session Lifecycle
 
     /// Session has ended
@@ -197,6 +203,8 @@ extension SessionEvent: CustomStringConvertible {
             return "interruptDetected(session: \(sessionId.prefix(8)))"
         case .clearDetected(let sessionId):
             return "clearDetected(session: \(sessionId.prefix(8)))"
+        case .sessionsDiscovered(let snapshot):
+            return "sessionsDiscovered(\(snapshot.count) sessions)"
         case .sessionEnded(let sessionId):
             return "sessionEnded(session: \(sessionId.prefix(8)))"
         case .loadHistory(let sessionId, _):

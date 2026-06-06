@@ -169,8 +169,14 @@ final class ClipboardHistoryService {
     }
 
     /// Read the bits of the live pasteboard we care about into a value type.
+    /// Codex review P2: check the declared types BEFORE touching any payload -
+    /// concealed/transient (password managers) and our own writes must never
+    /// be read into this process at all, not just rejected after the fact.
     private func snapshot(of pasteboard: NSPasteboard) -> ClipboardSnapshot {
         let types = pasteboard.types?.map(\.rawValue) ?? []
+        let gate = ClipboardSnapshot(types: types, string: nil, filePath: nil, sourceBundleId: nil)
+        guard !gate.isConcealedOrTransient, !gate.isOwnWrite else { return gate }
+
         // Read a file URL first (Finder copies set both .fileURL and .string).
         var filePath: String?
         if let url = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL],

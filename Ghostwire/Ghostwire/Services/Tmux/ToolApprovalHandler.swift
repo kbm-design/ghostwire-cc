@@ -48,6 +48,15 @@ actor ToolApprovalHandler {
         await sendKeys(to: target, keys: message, pressEnter: true)
     }
 
+    /// GW-164: land text in the target's input without auto-submitting.
+    /// The chat send path (`sendMessage`) always presses Enter; send-to-agent
+    /// defaults to *not* submitting (safety — the human reviews then sends),
+    /// so the multiplexer tiers of `AgentInjectionService` route through here
+    /// rather than re-implementing the cmux/tmux + password send contract.
+    func sendText(_ text: String, to target: TmuxTarget, submit: Bool) async -> Bool {
+        await sendKeys(to: target, keys: text, pressEnter: submit)
+    }
+
     // MARK: - Private Methods
 
     private func sendKeys(to target: TmuxTarget, keys: String, pressEnter: Bool) async -> Bool {

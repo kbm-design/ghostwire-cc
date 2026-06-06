@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import Defaults
 import Foundation
 import SwiftUI
 
@@ -158,17 +159,52 @@ final class GhostwireSessionBridge: ObservableObject {
         // reachable regardless of how this alert is surfaced (GW-144).
         NotchTab.ensureAgentsVisibleForApproval()
 
-        guard ghostwireViewModel?.notchState == .closed,
-              !TerminalVisibilityDetector.isTerminalVisibleOnCurrentSpace()
-        else {
+        // GW-209: resolve the triggering session FIRST (its pid drives the
+        // per-session visibility check), against the *current* known set —
+        // `defer` rewrites `knownPendingPermissionIDs` on function exit, so
+        // capture it here before the async hop.
+        guard let triggering = pendingInstances.first(where: {
+            guard let id = $0.pendingToolId else { return false }
+            return !knownPendingPermissionIDs.contains(id)
+        }) else {
             return
         }
 
-        // Tint the glow to the agent that raised the new pending permission (GW-138).
-        if let triggering = pendingInstances.first(where: {
-            guard let id = $0.pendingToolId else { return false }
-            return !knownPendingPermissionIDs.contains(id)
-        }) {
+        // The gate (glow/haptic/record vs open) hinges on whether the
+        // triggering session's own pane is focused — an async probe routed to
+        // the multiplexer when relevant. Mirror playWaitingForInputNotification:
+        // hop into a Task and finish the main-actor effects there, leaving the
+        // synchronous publish/seed flow above untouched.
+        Task { [weak self] in
+            await self?.raisePendingPermissionAlert(for: triggering)
+        }
+    }
+
+    /// GW-209: apply the per-session open rule for a freshly-arrived pending
+    /// permission and raise the matching effects. `paneFocused` is the triggering
+    /// session's own pane — not "any terminal on screen" — so a hidden lane pings
+    /// even with cmux in front. Falls back to the coarse space check only when the
+    /// triggering session has no pid (degrade honestly).
+    private func raisePendingPermissionAlert(for triggering: SessionState) async {
+        let paneFocused: Bool
+        if let pid = triggering.pid {
+            paneFocused = await TerminalVisibilityDetector.isSessionFocused(sessionPid: pid)
+        } else {
+            // No pid → can't resolve a specific pane; degrade to the old coarse
+            // "any terminal visible on this space" signal.
+            paneFocused = TerminalVisibilityDetector.isTerminalVisibleOnCurrentSpace()
+        }
+
+        let decision = PermissionOpenRule.decide(
+            mode: Defaults[.permissionAutoOpenMode],
+            notchClosed: ghostwireViewModel?.notchState == .closed,
+            paneFocused: paneFocused
+        )
+
+        guard decision.alert || decision.open else { return }
+
+        if decision.alert {
+            // Tint the glow to the agent that raised the new pending permission (GW-138).
             passiveAlertTint = AgentIdentity.tint(for: triggering.agent)
             // GW-144/GW-207: alert history records the alerts actually raised,
             // with the folder + command + tool_use_id so the row reads and the
@@ -182,12 +218,14 @@ final class GhostwireSessionBridge: ObservableObject {
                 command: triggering.pendingCommandSummary,
                 toolUseId: triggering.pendingToolId
             )
+
+            NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
+            passiveAlertPulse = UUID()
         }
 
-        NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
-        passiveAlertPulse = UUID()
-
-        GhostwireViewCoordinator.shared.toggleExpandingView(status: true, type: .buddy)
+        if decision.open {
+            GhostwireViewCoordinator.shared.toggleExpandingView(status: true, type: .buddy)
+        }
     }
 
     private func playWaitingForInputNotificationIfNeeded(for sessions: [SessionState]) async {

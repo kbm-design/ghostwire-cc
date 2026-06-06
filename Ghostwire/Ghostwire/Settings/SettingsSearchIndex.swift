@@ -58,7 +58,7 @@ enum SettingsSearchIndex {
         ),
         SettingsSearchEntry(
             id: "About", label: "About", icon: "info.circle",
-            keywords: ["version", "update", "github", "release"]
+            keywords: ["version", "update", "github"]
         ),
     ]
 

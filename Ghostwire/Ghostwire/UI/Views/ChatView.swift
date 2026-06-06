@@ -532,12 +532,18 @@ struct ChatView: View {
         panel.prompt = "Attach"
         // The notch is a non-activating borderless panel - without explicit
         // app activation the open panel presents behind other apps (test-drive
-        // finding: "paperclip doesn't pull up my finder"). Activate first and
-        // float the panel above the notch's window level.
+        // finding: "paperclip doesn't pull up my finder"). Activate first.
+        // Hold the notch open for the panel's lifetime (it steals focus and
+        // the hover-out auto-close fired mid-pick - second test-drive finding);
+        // SharingStateManager is the existing hold-open used by the share
+        // sheet. Center the panel so it doesn't sit under the notch strip.
         NSApp.activate(ignoringOtherApps: true)
+        SharingStateManager.shared.beginInteraction()
         panel.level = .modalPanel
+        panel.center()
         panel.makeKeyAndOrderFront(nil)
         panel.begin { response in
+            defer { SharingStateManager.shared.endInteraction() }
             guard response == .OK, let url = panel.url else { return }
             Task {
                 let result = await AgentInjectionService.shared.inject(file: url, into: session)

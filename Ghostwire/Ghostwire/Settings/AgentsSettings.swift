@@ -19,6 +19,7 @@ struct AgentsSettings: View {
     @Default(.alertHistoryMaxAgeDays) private var alertHistoryMaxAgeDays
 
     @ObservedObject private var hookStatus = HookStatusModel.shared
+    @ObservedObject private var cmuxStatus = CmuxSocketStatusModel.shared
 
     /// Agents whose hooks are installed but no longer trusted by the CLI.
     private var retrustAgents: [AgentHookConfig] {
@@ -155,18 +156,21 @@ struct AgentsSettings: View {
                     .foregroundStyle(.secondary)
             }
 
-            if FileManager.default.fileExists(atPath: "/Applications/cmux.app") {
+            // cmux socket access (GW-206). Multiplexer-level, not per-agent:
+            // cmux addresses surfaces for whichever agent runs in them, so one
+            // row covers Claude and Codex alike. Hidden entirely when cmux
+            // isn't installed (.unavailable) — never alarm non-cmux users.
+            if let access = cmuxStatus.access,
+               CmuxSocketStatusPresentation.isVisible(access),
+               let row = CmuxSocketStatusPresentation.row(for: access) {
                 Section {
-                    HStack {
-                        Text("Socket Control Mode")
-                        Spacer()
-                        Text("Automation mode")
-                            .foregroundStyle(.secondary)
+                    CmuxSocketRow(row: row, isRefreshing: cmuxStatus.isRefreshing) {
+                        cmuxStatus.refresh()
                     }
                 } header: {
                     Text("cmux")
                 } footer: {
-                    Text("To send messages from Ghostwire to cmux sessions, set Socket Control Mode to \"Automation mode\" in cmux Settings > Automation.")
+                    Text("Lets Ghostwire send messages and focus cmux surfaces. cmux is optional.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -177,6 +181,9 @@ struct AgentsSettings: View {
             // Re-check install + trust from disk every time the tab appears, so
             // a hook change made outside the app (rename, CLI edit) shows up.
             hookStatus.refresh()
+            // Live cmux socket probe (off the main thread) on every appearance —
+            // catches a cmux start/stop or a mode change made outside the app.
+            cmuxStatus.refresh()
         }
     }
 }
@@ -314,5 +321,66 @@ private struct CodexTrustRow: View {
         pb.setString(instruction, forType: .string)
         copied = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { copied = false }
+    }
+}
+
+/// cmux socket-access row (GW-206). Glyph + tint encode severity (green ok /
+/// amber action / gray neutral); the remedy line is shown beneath and is
+/// copyable. A refresh affordance re-runs the live probe on demand. Drives off
+/// the pure `CmuxSocketStatusPresentation.Row` so the mapping stays testable.
+private struct CmuxSocketRow: View {
+    let row: CmuxSocketStatusPresentation.Row
+    let isRefreshing: Bool
+    let onRefresh: () -> Void
+
+    @State private var copied = false
+
+    private var tint: Color {
+        switch row.severity {
+        case .ok:      return .green
+        case .action:  return .orange
+        case .neutral: return .secondary
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text("Socket access")
+                Spacer()
+                Image(systemName: row.glyph)
+                    .foregroundStyle(tint)
+                Text(row.status)
+                    .foregroundStyle(.secondary)
+                if let remedy = row.remedy {
+                    Button {
+                        let pb = NSPasteboard.general
+                        pb.clearContents()
+                        pb.setString(remedy, forType: .string)
+                        copied = true
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { copied = false }
+                    } label: {
+                        Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                    }
+                    .buttonStyle(.plain)
+                    .help("Copy fix")
+                }
+                Button {
+                    onRefresh()
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .buttonStyle(.plain)
+                .disabled(isRefreshing)
+                .help("Re-check cmux socket access")
+            }
+
+            if let remedy = row.remedy {
+                Text(remedy)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
     }
 }

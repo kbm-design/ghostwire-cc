@@ -65,6 +65,18 @@ class ClaudeSessionMonitor: ObservableObject {
                 }
             },
             onPermissionFailure: { sessionId, toolUseId in
+                // GW-207: a held permission socket that can no longer be written
+                // (hook process gone / its wait elapsed) is the provable
+                // "timed out" signal. Stamp the matching history alert. Pending
+                // permissions cleared by a plain Stop with no verdict carry no
+                // such signal — they stay unanswered (the absence state).
+                Task { @MainActor in
+                    AlertHistoryStore.shared.markPermissionOutcome(
+                        sessionId: sessionId,
+                        toolUseId: toolUseId,
+                        outcome: "timedOut"
+                    )
+                }
                 Task {
                     await SessionStore.shared.process(
                         .permissionSocketFailed(sessionId: sessionId, toolUseId: toolUseId)
@@ -92,6 +104,13 @@ class ClaudeSessionMonitor: ObservableObject {
                 decision: "allow"
             )
 
+            // GW-207: stamp the history alert for this exact tool_use_id.
+            AlertHistoryStore.shared.markPermissionOutcome(
+                sessionId: sessionId,
+                toolUseId: permission.toolUseId,
+                outcome: "allowed"
+            )
+
             await SessionStore.shared.process(
                 .permissionApproved(sessionId: sessionId, toolUseId: permission.toolUseId)
             )
@@ -109,6 +128,13 @@ class ClaudeSessionMonitor: ObservableObject {
                 toolUseId: permission.toolUseId,
                 decision: "deny",
                 reason: reason
+            )
+
+            // GW-207: stamp the history alert for this exact tool_use_id.
+            AlertHistoryStore.shared.markPermissionOutcome(
+                sessionId: sessionId,
+                toolUseId: permission.toolUseId,
+                outcome: "denied"
             )
 
             await SessionStore.shared.process(

@@ -179,6 +179,16 @@ struct SessionState: Equatable, Identifiable, Sendable {
         activePermission?.rawInput
     }
 
+    /// GW-207: single-line command summary for the alert-history row.
+    var pendingCommandSummary: String? {
+        activePermission?.commandSummary
+    }
+
+    /// GW-207: project dir last path component, for alert-history rows.
+    var folderName: String {
+        URL(fileURLWithPath: cwd).lastPathComponent
+    }
+
     /// Last message content
     var lastMessage: String? {
         conversationInfo.lastMessage

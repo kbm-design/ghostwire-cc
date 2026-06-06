@@ -11,9 +11,12 @@ import SwiftUI
 struct ClaudeInstancesView: View {
     @ObservedObject var sessionMonitor: ClaudeSessionMonitor
     @ObservedObject var viewModel: AgentPanelViewModel
+    /// GW-207: the alert history rides as a trailing section in this same
+    /// scroll — below the live rows, reachable only by scrolling past them.
+    @ObservedObject private var alertHistory = AlertHistoryStore.shared
 
     var body: some View {
-        if sessionMonitor.instances.isEmpty {
+        if sessionMonitor.instances.isEmpty && alertHistory.alerts.isEmpty {
             emptyState
         } else {
             instancesList
@@ -79,6 +82,9 @@ struct ClaudeInstancesView: View {
                     )
                     .id(session.stableId)
                 }
+
+                // GW-207: history below the live rows — one feed, present → past.
+                AlertHistorySection()
             }
             .padding(.vertical, 4)
         }

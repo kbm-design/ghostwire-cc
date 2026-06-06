@@ -10,11 +10,8 @@ struct AgentsTabView: View {
     @State private var isSuppressing = false
     /// GW-151: which agent's usage detail replaces the sessions list (nil = list)
     @State private var usageDetailAgent: String?
-    /// GW-139: when true the alerts-history list replaces the home content
-    @State private var showingAlertHistory = false
     /// GW-151: meter slot order - first agent to come alive keeps slot 1
     @State private var agentOrder: [String] = []
-    @ObservedObject private var alertHistory = AlertHistoryStore.shared
 
     private var isInChat: Bool {
         if case .chat = panelVM.contentType { return true }
@@ -52,14 +49,7 @@ struct AgentsTabView: View {
 
     private var homeContent: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if showingAlertHistory {
-                // GW-139: recent terminal alerts. Same detail-swap IA as the
-                // usage detail below — no new window, back returns to the list.
-                AlertHistoryView {
-                    withAnimation(.easeInOut(duration: 0.2)) { showingAlertHistory = false }
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            } else if let agent = usageDetailAgent, let display = usageDisplay(for: agent) {
+            if let agent = usageDetailAgent, let display = usageDisplay(for: agent) {
                 // GW-203: per-model weeklies + extra-usage spend ride the
                 // display enum's .quota case - no agent-name gate, no reach
                 // into UsageService.usage. The detail view reads them off
@@ -74,17 +64,15 @@ struct AgentsTabView: View {
             } else {
                 usageSummaryRow
 
+                // GW-207: the alert history rides BELOW the live session rows,
+                // inside ClaudeInstancesView's own scroll — reachable only by
+                // scrolling past the present into the past. The quick view
+                // spends zero pixels on alerts (no footer, no overlay).
                 ClaudeInstancesView(
                     sessionMonitor: bridge.sessionMonitor,
                     viewModel: panelVM
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-                // GW-139: entry point to the recent-alerts history. Shown only
-                // once alerts exist so the home stays quiet when there's nothing.
-                if !alertHistory.alerts.isEmpty {
-                    alertHistoryButton
-                }
             }
         }
         .padding(.top, 10)
@@ -97,32 +85,6 @@ struct AgentsTabView: View {
         .onAppear { syncAgentOrder() }
         .onChange(of: claudeMeterVisible) { _ in syncAgentOrder() }
         .onChange(of: codexMeterVisible) { _ in syncAgentOrder() }
-    }
-
-    /// GW-139: subtle footer affordance opening the recent-alerts history.
-    /// Glyph + count, no heavy chrome — detail/numbers live in the list view.
-    private var alertHistoryButton: some View {
-        Button {
-            withAnimation(.easeInOut(duration: 0.2)) { showingAlertHistory = true }
-        } label: {
-            HStack(spacing: 6) {
-                Image(systemName: "clock.arrow.circlepath")
-                    .font(.system(size: 10, weight: .medium))
-                Text("Recent alerts")
-                    .font(.caption)
-                Spacer()
-                Text("\(alertHistory.alerts.count)")
-                    .font(.caption2.monospacedDigit())
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 9, weight: .semibold))
-            }
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .padding(.horizontal, 8)
     }
 
     // MARK: - GW-151 usage meters

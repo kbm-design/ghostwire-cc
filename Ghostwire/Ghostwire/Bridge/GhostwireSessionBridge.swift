@@ -25,6 +25,10 @@ final class GhostwireSessionBridge: ObservableObject {
     private var hasSeededWaitingForInputSessions = false
     private var knownPendingPermissionIDs = Set<String>()
     private var hasSeededPendingPermissions = false
+    /// GW-207: last-seen user-message date per session, to detect a fresh user
+    /// reply that should resolve a prior "ready" alert to "responded".
+    private var lastUserMessageDates: [String: Date] = [:]
+    private var hasSeededUserMessageDates = false
 
     private init() {
         panelViewModel.$contentType
@@ -46,6 +50,7 @@ final class GhostwireSessionBridge: ObservableObject {
         sessionMonitor.$instances
             .sink { [weak self] (instances: [SessionState]) in
                 self?.handleWaitingForInputSessions(instances)
+                self?.handleUserRepliesForReadyAlerts(instances)
             }
             .store(in: &cancellables)
 
@@ -107,6 +112,31 @@ final class GhostwireSessionBridge: ObservableObject {
         }
     }
 
+    /// GW-207: when a session's last user-message date advances, the user
+    /// replied — resolve any prior unanswered "ready" alert for it to
+    /// "responded". The cheapest honest signal: conversationInfo already
+    /// carries lastUserMessageDate, so this rides the existing instances feed
+    /// with no new file watching. Seeds silently on the first emission so
+    /// historical dates don't retroactively mark old alerts.
+    private func handleUserRepliesForReadyAlerts(_ instances: [SessionState]) {
+        defer { hasSeededUserMessageDates = true }
+
+        for session in instances {
+            guard let newDate = session.lastUserMessageDate else { continue }
+            let previous = lastUserMessageDates[session.sessionId]
+            lastUserMessageDates[session.sessionId] = newDate
+
+            guard hasSeededUserMessageDates else { continue }
+            // Only a strictly newer user message counts as a fresh reply.
+            guard previous == nil || newDate > previous! else { continue }
+
+            AlertHistoryStore.shared.markReadyResponded(
+                sessionId: session.sessionId,
+                userMessageDate: newDate
+            )
+        }
+    }
+
     private func handlePendingPermissionSessions(_ pendingInstances: [SessionState]) {
         let currentPendingPermissionIDs = Set(pendingInstances.compactMap { $0.pendingToolId })
 
@@ -140,12 +170,17 @@ final class GhostwireSessionBridge: ObservableObject {
             return !knownPendingPermissionIDs.contains(id)
         }) {
             passiveAlertTint = AgentIdentity.tint(for: triggering.agent)
-            // GW-144: alert history records the alerts actually raised
+            // GW-144/GW-207: alert history records the alerts actually raised,
+            // with the folder + command + tool_use_id so the row reads and the
+            // verdict can later stamp an outcome (allowed/denied/timedOut).
             AlertHistoryStore.shared.record(
                 agent: triggering.agent,
                 sessionId: triggering.sessionId,
                 kind: "permission",
-                detail: triggering.pendingToolName
+                detail: triggering.pendingToolName,
+                folder: triggering.folderName,
+                command: triggering.pendingCommandSummary,
+                toolUseId: triggering.pendingToolId
             )
         }
 
@@ -169,11 +204,14 @@ final class GhostwireSessionBridge: ObservableObject {
             if let soundName = GhostwireSettings.notificationSound.soundName {
                 NSSound(named: soundName)?.play()
             }
-            // GW-144: alert history records the alerts actually raised
+            // GW-144/GW-207: alert history records the alerts actually raised,
+            // with the folder so the row reads. Outcome ("responded") is
+            // stamped later if a user message follows this ping.
             AlertHistoryStore.shared.record(
                 agent: session.agent,
                 sessionId: session.sessionId,
-                kind: "ready"
+                kind: "ready",
+                folder: session.folderName
             )
             return
         }

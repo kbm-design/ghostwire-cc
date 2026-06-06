@@ -5,6 +5,7 @@
 //  Redesigned chat interface with clean visual hierarchy
 //
 
+import AppKit
 import Combine
 import Defaults
 import SwiftUI
@@ -414,6 +415,21 @@ struct ChatView: View {
 
     private var inputRow: some View {
         HStack(spacing: 10) {
+            // GW-163: attach a file as an `@path` reference into THIS session's
+            // input (the agent reads the file itself — no bytes sent). Lands
+            // unsubmitted, like the send-to-agent path.
+            Button {
+                attachFile()
+            } label: {
+                Image(systemName: "paperclip")
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundColor(canSendMessages ? .white.opacity(0.6) : .white.opacity(0.2))
+                    .frame(width: 28, height: 28)
+            }
+            .buttonStyle(.plain)
+            .disabled(!canSendMessages)
+            .help("Attach a file as @path")
+
             TextField(inputPlaceholder, text: $inputText)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13))
@@ -503,6 +519,30 @@ struct ChatView: View {
 
     private func denyPermission() {
         sessionMonitor.denyPermission(sessionId: sessionId, reason: nil)
+    }
+
+    /// GW-163: pick a file and inject it as an `@path` reference into this
+    /// session's input (unsubmitted). Failures surface through the same hint
+    /// the chat send path uses.
+    private func attachFile() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Attach"
+        panel.begin { response in
+            guard response == .OK, let url = panel.url else { return }
+            Task {
+                let result = await AgentInjectionService.shared.inject(file: url, into: session)
+                await MainActor.run {
+                    if case .failure = result {
+                        sendFailureHint = "Couldn't reach the agent's terminal"
+                    } else {
+                        sendFailureHint = nil
+                    }
+                }
+            }
+        }
     }
 
     private func sendMessage() {

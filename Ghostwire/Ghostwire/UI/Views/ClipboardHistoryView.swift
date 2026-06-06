@@ -27,6 +27,7 @@ import SwiftUI
 enum ClipboardRowAction {
     case recopy
     case pinToShelf
+    case sendToAgent
     case delete
 }
 
@@ -195,6 +196,11 @@ private struct ClipboardHistoryRow: View {
 
     @State private var isHovered = false
     @State private var didCopy = false
+    /// GW-163: send-to-agent feedback — glyph swaps to a checkmark on delivery,
+    /// to a slash on a quiet failure (no agent reachable). Resets after a beat.
+    @State private var sendFeedback: SendFeedback = .idle
+
+    private enum SendFeedback { case idle, sent, failed }
 
     private var preview: String {
         switch entry.resolvedKind {
@@ -266,21 +272,41 @@ private struct ClipboardHistoryRow: View {
 
             actionButton(systemName: "pin", help: "Pin to shelf") { perform(.pinToShelf) }
 
+            actionButton(systemName: sendGlyph, help: "Send to agent", tint: sendTint) { perform(.sendToAgent) }
+
             actionButton(systemName: "trash", help: "Delete") { perform(.delete) }
         }
         .layoutPriority(1)
     }
 
-    private func actionButton(systemName: String, help: String, action: @escaping () -> Void) -> some View {
+    private func actionButton(systemName: String, help: String, tint: Color = .secondary, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: systemName)
                 .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(tint)
                 .frame(width: 16, height: 16)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .help(help)
+    }
+
+    /// GW-163: terminal/arrow glyph; swaps to a checkmark on delivery and a
+    /// slashed glyph on a quiet failure.
+    private var sendGlyph: String {
+        switch sendFeedback {
+        case .idle: return "terminal"
+        case .sent: return "checkmark"
+        case .failed: return "terminal.fill"
+        }
+    }
+
+    private var sendTint: Color {
+        switch sendFeedback {
+        case .idle: return .secondary
+        case .sent: return TerminalColors.green
+        case .failed: return TerminalColors.amber
+        }
     }
 
     /// Single dispatch point — the seam GW-164 extends. Adding `.sendToAgent`
@@ -296,8 +322,51 @@ private struct ClipboardHistoryRow: View {
             }
         case .pinToShelf:
             pinToShelf()
+        case .sendToAgent:
+            sendToAgent()
         case .delete:
             ClipboardHistoryStore.shared.remove(entry)
+        }
+    }
+
+    /// GW-163: route this entry to the active agent's input. Text → inject(text:),
+    /// file → inject(file:). The coordinator handles target resolution + picker;
+    /// here we only reflect the immediate outcome in the glyph (the picker path
+    /// resolves on its own, so it reads as a quiet no-op confirmation).
+    private func sendToAgent() {
+        let payload: SendToAgentCoordinator.Payload
+        switch entry.resolvedKind {
+        case .text:
+            guard let content = entry.content, !content.isEmpty else { return }
+            payload = .text(content)
+        case .file:
+            guard let path = entry.path,
+                  FileManager.default.fileExists(atPath: path) else {
+                flashSendFeedback(.failed)
+                return
+            }
+            payload = .file(URL(fileURLWithPath: path))
+        }
+
+        Task { @MainActor in
+            let result = await SendToAgentCoordinator.shared.send(payload)
+            switch result {
+            case .delivered:
+                flashSendFeedback(.sent)
+            case .failed:
+                flashSendFeedback(.failed)
+            case .awaitingPick:
+                // Picker is showing; the user's choice carries the feedback.
+                break
+            }
+        }
+    }
+
+    private func flashSendFeedback(_ state: SendFeedback) {
+        withAnimation { sendFeedback = state }
+        Task {
+            try? await Task.sleep(for: .seconds(1.2))
+            await MainActor.run { withAnimation { sendFeedback = .idle } }
         }
     }
 

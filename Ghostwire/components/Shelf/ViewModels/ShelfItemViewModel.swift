@@ -317,6 +317,8 @@ final class ShelfItemViewModel: ObservableObject {
         }
 
         menu.addItem(NSMenuItem.separator())
+        // GW-163: route the held item(s) to the active agent's input.
+        addMenuItem(title: "Send to Agent")
         addMenuItem(title: "Share…")
         
         // Add image processing options for image files grouped under "Image Actions"
@@ -474,6 +476,9 @@ final class ShelfItemViewModel: ObservableObject {
                 let selected = ShelfSelectionModel.shared.selectedItems(in: ShelfStateViewModel.shared.items)
                 for it in selected { ShelfActionService.open(it) }
 
+            case "Send to Agent":
+                sendSelectedToAgent()
+
             case "Share…":
                 viewModel.shareItem(from: view)
 
@@ -578,6 +583,39 @@ final class ShelfItemViewModel: ObservableObject {
                 
             default:
                 break
+            }
+        }
+
+        /// GW-163: route the selected shelf item(s) to the active agent's input.
+        /// File → inject(file:) (resolves the security-scoped bookmark to a path);
+        /// text → inject(text:); link → inject(text:) with the URL string. The
+        /// coordinator owns target resolution + the disambiguation picker.
+        @MainActor
+        private func sendSelectedToAgent() {
+            let selected = ShelfSelectionModel.shared.selectedItems(in: ShelfStateViewModel.shared.items)
+            Task {
+                for item in selected {
+                    let payload: SendToAgentCoordinator.Payload?
+                    switch item.kind {
+                    case .file:
+                        // Immediate (user-initiated) resolve keeps the bookmark fresh.
+                        if let url = ShelfStateViewModel.shared.resolveAndUpdateBookmark(for: item) {
+                            payload = .file(url)
+                        } else {
+                            payload = nil
+                        }
+                    case .text(let string):
+                        payload = .text(string)
+                    case .link(let url):
+                        payload = .text(url.absoluteString)
+                    }
+                    guard let payload else { continue }
+                    let result = await SendToAgentCoordinator.shared.send(payload)
+                    // If a disambiguation picker came up, stop before the next
+                    // item clobbers the pending payload — the user resolves the
+                    // raised one; re-invoke Send to Agent for the rest.
+                    if result == .awaitingPick { break }
+                }
             }
         }
 

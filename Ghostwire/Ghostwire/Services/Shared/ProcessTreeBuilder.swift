@@ -112,6 +112,24 @@ struct ProcessTreeBuilder: Sendable {
         return nil
     }
 
+    /// The chain of PIDs starting at `pid` and walking up through its parents
+    /// (inclusive of `pid`), stopping at the root or after 20 hops. Used to read
+    /// inherited env vars (GW-204): the cmux pane env lives on an ancestor.
+    nonisolated func ancestorChain(of pid: Int, tree: [Int: GhostwireProcessInfo]) -> [Int] {
+        var chain: [Int] = []
+        var current = pid
+        var depth = 0
+
+        while current > 1 && depth < 20 {
+            chain.append(current)
+            guard let info = tree[current] else { break }
+            current = info.ppid
+            depth += 1
+        }
+
+        return chain
+    }
+
     /// Check if targetPid is a descendant of ancestorPid
     nonisolated func isDescendant(targetPid: Int, ofAncestor ancestorPid: Int, tree: [Int: GhostwireProcessInfo]) -> Bool {
         var current = targetPid

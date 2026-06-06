@@ -24,15 +24,14 @@ actor TmuxTargetFinder {
         return await findCmuxTarget(forClaudePid: claudePid)
     }
 
-    /// Find the multiplexer target for a given working directory (tries tmux first, then cmux)
+    /// Find the multiplexer target for a given working directory.
+    ///
+    /// tmux can be matched by `#{pane_current_path}`, but cmux has no
+    /// working-directory handle - its precise refs come from the pane env, which
+    /// requires a PID. A bare working directory therefore resolves to tmux only;
+    /// cmux callers must go through `findTarget(forClaudePid:)` (GW-204).
     func findTarget(forWorkingDirectory workingDir: String) async -> TmuxTarget? {
-        // Try tmux first
-        if let tmuxTarget = await findTmuxTargetByDir(workingDir: workingDir) {
-            return tmuxTarget
-        }
-
-        // Fall back to cmux
-        return await findCmuxTarget(forWorkingDirectory: workingDir)
+        await findTmuxTargetByDir(workingDir: workingDir)
     }
 
     /// Check if a session's pane is currently the active/focused pane
@@ -156,12 +155,15 @@ actor TmuxTargetFinder {
 
     // MARK: - cmux Target Finding
 
-    /// Find cmux surface for a Claude PID by matching process tree to surface content
+    /// Find the cmux surface for a Claude PID by reading the pane's inherited
+    /// env (GW-204). cmux exports CMUX_SURFACE_ID / CMUX_WORKSPACE_ID per pane;
+    /// the agent process inherits them, so we walk from the agent PID up its
+    /// ancestor chain reading `KERN_PROCARGS2` env until both refs are present.
+    ///
+    /// This replaces the old screen-content matcher (which picked the first pane
+    /// whose visible text mentioned the project folder - wrong-pane roulette with
+    /// parallel worktrees in one repo). No screen-content fallback.
     private func findCmuxTarget(forClaudePid claudePid: Int) async -> TmuxTarget? {
-        guard let cmuxPath = await TmuxPathFinder.shared.getCmuxPath() else {
-            return nil
-        }
-
         let tree = ProcessTreeBuilder.shared.buildTree()
 
         // Verify the Claude process is actually in cmux
@@ -169,62 +171,12 @@ actor TmuxTargetFinder {
             return nil
         }
 
-        // Get all cmux surfaces across all workspaces
-        let surfaces = await enumerateCmuxSurfaces(cmuxPath: cmuxPath)
-
-        // Get the working directory of the Claude process for matching
-        let claudeCwd = ProcessTreeBuilder.shared.getWorkingDirectory(forPid: claudePid)
-
-        for surface in surfaces {
-            guard surface.type == "terminal" else { continue }
-
-            // Read screen content and check for the working directory or project path
-            if let claudeCwd = claudeCwd {
-                let cwdName = URL(fileURLWithPath: claudeCwd).lastPathComponent
-                if let content = await readCmuxScreen(
-                    cmuxPath: cmuxPath, workspace: surface.workspace, surface: surface.ref, lines: 10
-                ) {
-                    if content.contains(cwdName) {
-                        return .cmux(workspace: surface.workspace, surface: surface.ref)
-                    }
-                }
-            }
-        }
-
-        // Fallback: try matching by surface title
-        for surface in surfaces {
-            guard surface.type == "terminal" else { continue }
-
-            if let claudeCwd = claudeCwd {
-                let projectName = URL(fileURLWithPath: claudeCwd).lastPathComponent
-                if surface.title.localizedCaseInsensitiveContains(projectName) {
-                    return .cmux(workspace: surface.workspace, surface: surface.ref)
-                }
-            }
-        }
-
-        return nil
-    }
-
-    /// Find cmux surface for a working directory
-    private func findCmuxTarget(forWorkingDirectory workingDir: String) async -> TmuxTarget? {
-        guard let cmuxPath = await TmuxPathFinder.shared.getCmuxPath() else {
-            return nil
-        }
-
-        let dirName = URL(fileURLWithPath: workingDir).lastPathComponent
-        let surfaces = await enumerateCmuxSurfaces(cmuxPath: cmuxPath)
-
-        for surface in surfaces {
-            guard surface.type == "terminal" else { continue }
-
-            // Check screen content for the directory
-            if let content = await readCmuxScreen(
-                cmuxPath: cmuxPath, workspace: surface.workspace, surface: surface.ref, lines: 10
-            ) {
-                if content.contains(dirName) {
-                    return .cmux(workspace: surface.workspace, surface: surface.ref)
-                }
+        // Walk PID -> ancestors; the pane env is inherited, so the nearest
+        // ancestor that carries both refs wins.
+        for pid in ProcessTreeBuilder.shared.ancestorChain(of: claudePid, tree: tree) {
+            if let env = CmuxEnvReader.environment(forPid: pid),
+               let target = CmuxEnvReader.cmuxTarget(fromEnv: env) {
+                return target
             }
         }
 
@@ -253,90 +205,6 @@ actor TmuxTargetFinder {
         }
 
         return target.cmuxSurfaceRef == focusedSurface
-    }
-
-    // MARK: - cmux Helpers
-
-    /// A cmux surface with its metadata
-    private struct CmuxSurface {
-        let workspace: String
-        let pane: String
-        let ref: String
-        let type: String
-        let title: String
-    }
-
-    /// Enumerate all cmux terminal surfaces across all workspaces
-    private func enumerateCmuxSurfaces(cmuxPath: String) async -> [CmuxSurface] {
-        // Get all workspaces
-        guard let wsOutput = await runCommand(path: cmuxPath, args: ["--json", "list-workspaces"]) else {
-            return []
-        }
-
-        guard let wsData = wsOutput.data(using: .utf8),
-              let wsJson = try? JSONSerialization.jsonObject(with: wsData) as? [String: Any],
-              let workspaces = wsJson["workspaces"] as? [[String: Any]] else {
-            return []
-        }
-
-        var allSurfaces: [CmuxSurface] = []
-
-        for ws in workspaces {
-            guard let wsRef = ws["ref"] as? String else { continue }
-
-            // Get panes for this workspace
-            guard let panesOutput = await runCommand(
-                path: cmuxPath, args: ["--json", "list-panes", "--workspace", wsRef]
-            ) else { continue }
-
-            guard let panesData = panesOutput.data(using: .utf8),
-                  let panesJson = try? JSONSerialization.jsonObject(with: panesData) as? [String: Any],
-                  let panes = panesJson["panes"] as? [[String: Any]] else { continue }
-
-            for pane in panes {
-                guard let paneRef = pane["ref"] as? String,
-                      let surfaceRefs = pane["surface_refs"] as? [String] else { continue }
-
-                // Get surface details
-                guard let surfOutput = await runCommand(
-                    path: cmuxPath,
-                    args: ["--json", "list-pane-surfaces", "--workspace", wsRef, "--pane", paneRef]
-                ) else { continue }
-
-                guard let surfData = surfOutput.data(using: .utf8),
-                      let surfJson = try? JSONSerialization.jsonObject(with: surfData) as? [String: Any],
-                      let surfaces = surfJson["surfaces"] as? [[String: Any]] else { continue }
-
-                for surface in surfaces {
-                    guard let sRef = surface["ref"] as? String,
-                          let sType = surface["type"] as? String else { continue }
-
-                    let title = surface["title"] as? String ?? ""
-                    allSurfaces.append(CmuxSurface(
-                        workspace: wsRef, pane: paneRef, ref: sRef, type: sType, title: title
-                    ))
-                }
-            }
-        }
-
-        return allSurfaces
-    }
-
-    /// Read screen content from a cmux surface
-    private func readCmuxScreen(cmuxPath: String, workspace: String, surface: String, lines: Int) async -> String? {
-        guard let output = await runCommand(path: cmuxPath, args: [
-            "--json", "read-screen", "--workspace", workspace, "--surface", surface, "--lines", String(lines)
-        ]) else {
-            return nil
-        }
-
-        guard let data = output.data(using: .utf8),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let text = json["text"] as? String else {
-            return nil
-        }
-
-        return text.isEmpty ? nil : text
     }
 
     // MARK: - Common Helpers

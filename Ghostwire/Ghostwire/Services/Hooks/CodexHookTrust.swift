@@ -28,17 +28,39 @@
 //  A changed hook produces a NEW key at the next free index (the trust block is
 //  append-only), so a position whose state key is missing has never been trusted.
 //
-//  Detection strategy — coverage, not hash recompute:
+//  Detection strategy — two layers, neither recomputes the hash:
 //    The exact bytes Codex feeds into the sha256 are NOT documented and live
 //    inside the Codex binary, so we deliberately do NOT try to recompute the
-//    hash (guessing it would be fragile and silently wrong). Instead we check
-//    that every Ghostwire hook position currently present in hooks.json has a
-//    corresponding trusted `[hooks.state]` entry that is not explicitly
-//    disabled. The rename failure mode surfaces exactly here: the new command
-//    lands at a position whose state key is absent (or its old hash entry was
-//    superseded), so coverage drops and we report `.retrustRequired`.
+//    hash (guessing it would be fragile and silently wrong).
+//
+//    1. Coverage. Every Ghostwire hook position present in hooks.json must have
+//       a corresponding trusted, not-disabled `[hooks.state]` entry. When a new
+//       command lands at a *new* position (state key absent) this drops and we
+//       report `.retrustRequired`. This catches new installs and appended hooks.
+//
+//    2. Installer-anchored stale-trust (GW-196 P1). Coverage alone is fooled by
+//       an *in-place* command change: when a Ghostwire hook's command changes at
+//       the SAME (event, arrayIndex, hookIndex) position — exactly the
+//       buddi -> ghostwire rename — Codex leaves the old state entry in place with
+//       its now-stale `trusted_hash`, then silently skips the hook. Coverage sees
+//       a trusted entry at that key and wrongly reports `.trusted`.
+//       To close this we lean on the installer (which runs every launch): before
+//       it rewrites hooks.json it records, per changed position, the stale
+//       `trusted_hash` then present in config.toml into a pending re-trust map
+//       (see CodexHookInstaller + `Defaults.codexPendingRetrust`). Here, after
+//       coverage, we report `.retrustRequired` for any position whose current
+//       `trusted_hash` still equals that recorded stale value. Once Codex rewrites
+//       the hash (the user re-trusted via `/hooks`), the values diverge and we
+//       clear the pending entry and treat the hook as trusted.
+//
+//    Honest limitation: an in-place command change that happened BEFORE this
+//    feature shipped has no recorded stale hash, so it can't be detected
+//    retroactively (it looks identical to a genuinely-trusted hook). Acceptable:
+//    the installer records on every launch from now on, so the next rename is
+//    covered.
 //
 
+import Defaults
 import Foundation
 
 enum CodexHookTrust {
@@ -72,11 +94,22 @@ enum CodexHookTrust {
             .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
         let configTOML = (try? String(contentsOf: configFile, encoding: .utf8)) ?? ""
 
-        return status(
+        // Apply the installer-anchored stale-trust map (GW-196). Pure evaluation
+        // returns both the verdict and any pending entries to drop (Codex has
+        // since rewritten the hash ⇒ the user re-trusted), which we persist here.
+        let pending = Defaults[.codexPendingRetrust]
+        let result = evaluate(
             hooksJSON: hooksJSON,
             configTOML: configTOML,
-            hooksFilePath: hooksFile.path
+            hooksFilePath: hooksFile.path,
+            pendingRetrust: pending
         )
+        if !result.clearedKeys.isEmpty {
+            var next = pending
+            for key in result.clearedKeys { next.removeValue(forKey: key) }
+            Defaults[.codexPendingRetrust] = next
+        }
+        return result.status
     }
 
     // MARK: - Pure detection (unit-tested over sample inputs)
@@ -94,29 +127,81 @@ enum CodexHookTrust {
         }
     }
 
+    /// Outcome of a pure trust evaluation: the verdict plus any pending
+    /// re-trust keys that should be dropped because Codex has since rewritten
+    /// the hash (the user re-trusted). Persistence happens at the caller's edge.
+    struct Evaluation: Equatable {
+        let status: TrustStatus
+        let clearedKeys: [String]
+    }
+
     /// Pure form: derive trust from the parsed hooks.json, the raw config.toml
     /// text, and the absolute hooks-file path used to key state entries.
+    /// Convenience wrapper over `evaluate` for callers that only want the
+    /// verdict and carry no pending re-trust map (and for coverage-only tests).
     static func status(
         hooksJSON: [String: Any]?,
         configTOML: String,
-        hooksFilePath: String
+        hooksFilePath: String,
+        pendingRetrust: [String: String] = [:]
     ) -> TrustStatus {
+        evaluate(
+            hooksJSON: hooksJSON,
+            configTOML: configTOML,
+            hooksFilePath: hooksFilePath,
+            pendingRetrust: pendingRetrust
+        ).status
+    }
+
+    /// Pure trust evaluation over (hooks.json, config.toml, hooks-file path,
+    /// pending re-trust map). Layer 1 is coverage; layer 2 is the
+    /// installer-anchored stale-trust check (GW-196) — see the file header.
+    static func evaluate(
+        hooksJSON: [String: Any]?,
+        configTOML: String,
+        hooksFilePath: String,
+        pendingRetrust: [String: String]
+    ) -> Evaluation {
         let installed = ghostwireHooks(in: hooksJSON)
         // No Ghostwire hooks present → nothing for Codex to trust.
-        guard !installed.isEmpty else { return .notConfigured }
+        guard !installed.isEmpty else { return Evaluation(status: .notConfigured, clearedKeys: []) }
 
         let state = parseHooksState(configTOML)
         // No trust block at all yet (e.g. brand-new install, user hasn't opened
         // /hooks once) → the hooks won't fire until trusted.
-        guard !state.isEmpty else { return .retrustRequired }
+        guard !state.isEmpty else { return Evaluation(status: .retrustRequired, clearedKeys: []) }
 
+        // Layer 1 — coverage: every installed position needs a trusted entry.
         for hook in installed {
             let key = hook.stateKey(hooksFilePath: hooksFilePath)
             guard let entry = state[key], entry.isTrusted else {
-                return .retrustRequired
+                return Evaluation(status: .retrustRequired, clearedKeys: [])
             }
         }
-        return .trusted
+
+        // Layer 2 — installer-anchored stale-trust. A pending entry means the
+        // installer changed that hook's command in place and saved the
+        // trusted_hash that was current at the time. If config.toml still carries
+        // that exact stale hash, Codex is skipping the hook → re-trust required.
+        // If the hash has since changed, Codex re-trusted the new command; drop
+        // the pending entry and keep treating the position as trusted.
+        var clearedKeys: [String] = []
+        var staleStillPresent = false
+        for hook in installed {
+            let key = hook.stateKey(hooksFilePath: hooksFilePath)
+            guard let staleHash = pendingRetrust[key] else { continue }
+            let currentHash = state[key]?.trustedHash
+            if currentHash == staleHash {
+                staleStillPresent = true
+            } else {
+                clearedKeys.append(key)
+            }
+        }
+
+        return Evaluation(
+            status: staleStillPresent ? .retrustRequired : .trusted,
+            clearedKeys: clearedKeys
+        )
     }
 
     /// Enumerate the Ghostwire hook positions in hooks.json, in the same
@@ -141,6 +226,55 @@ enum CodexHookTrust {
             }
         }
         return result
+    }
+
+    /// The command string at a given (event, arrayIndex, hookIndex) position in
+    /// a parsed hooks.json, or nil if no hook exists there. Used to diff the old
+    /// and new hooks.json across an installer rewrite.
+    static func command(at hook: InstalledHook, in json: [String: Any]?) -> String? {
+        guard let hooks = json?["hooks"] as? [String: Any],
+              let entries = hooks[hook.event] as? [[String: Any]],
+              hook.arrayIndex < entries.count,
+              let entryHooks = entries[hook.arrayIndex]["hooks"] as? [[String: Any]],
+              hook.hookIndex < entryHooks.count else {
+            return nil
+        }
+        return entryHooks[hook.hookIndex]["command"] as? String
+    }
+
+    /// Installer-side stale-trust capture (GW-196). Given the hooks.json the
+    /// installer is about to overwrite (`oldHooksJSON`), the hooks.json it will
+    /// write (`newHooksJSON`), the current `[hooks.state]` map, and the hooks-file
+    /// path, return the pending re-trust entries to record: position key ->
+    /// stale trusted_hash.
+    ///
+    /// An entry is recorded only for a Ghostwire position whose command changes
+    /// IN PLACE (same key, old command is also ours but differs from the new one)
+    /// AND that currently has a trusted_hash in config.toml. A position with no
+    /// current trusted_hash needs no entry — coverage detection already flags it.
+    /// Pure over the parsed inputs so it's unit-testable on sample strings.
+    static func staleTrustPositions(
+        oldHooksJSON: [String: Any]?,
+        newHooksJSON: [String: Any]?,
+        state: [String: StateEntry],
+        hooksFilePath: String
+    ) -> [String: String] {
+        var pending: [String: String] = [:]
+        for hook in ghostwireHooks(in: newHooksJSON) {
+            let newCmd = command(at: hook, in: newHooksJSON)
+            guard let oldCmd = command(at: hook, in: oldHooksJSON),
+                  isGhostwireHookCommand(oldCmd),
+                  oldCmd != newCmd else {
+                continue
+            }
+            let key = hook.stateKey(hooksFilePath: hooksFilePath)
+            // Only record if Codex had actually trusted the old command here;
+            // otherwise coverage detection handles the missing-entry case.
+            if let staleHash = state[key]?.trustedHash {
+                pending[key] = staleHash
+            }
+        }
+        return pending
     }
 
     /// A single `[hooks.state]` entry's trust state.

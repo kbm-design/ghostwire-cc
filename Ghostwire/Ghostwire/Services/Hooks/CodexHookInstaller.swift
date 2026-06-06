@@ -18,6 +18,7 @@
 //     first-run UX should surface this. See GW-149.
 //
 
+import Defaults
 import Foundation
 
 struct CodexHookInstaller {
@@ -59,6 +60,9 @@ struct CodexHookInstaller {
            let existing = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
             json = existing
         }
+        // Snapshot the hooks.json we're about to overwrite so we can detect any
+        // Ghostwire hook command that changes IN PLACE this write (GW-196).
+        let oldJSON = json
 
         let python = detectPython()
         let command = "GHOSTWIRE_AGENT=codex \(python) ~/.codex/hooks/ghostwire-hook.py"
@@ -102,12 +106,47 @@ struct CodexHookInstaller {
 
         json["hooks"] = hooks
 
+        // Record stale-trust entries for any Ghostwire hook whose command changed
+        // in place (e.g. buddi -> ghostwire). Codex keeps the old trusted_hash at
+        // the same [hooks.state] key and silently skips the hook; coverage
+        // detection can't see this, so we persist the stale hash for the detector
+        // to match against until Codex rewrites it (user re-trusts). See GW-196.
+        recordPendingRetrust(oldJSON: oldJSON, newJSON: json, hooksFilePath: hooksURL.path)
+
         if let data = try? JSONSerialization.data(
             withJSONObject: json,
             options: [.prettyPrinted, .sortedKeys]
         ) {
             try? data.write(to: hooksURL)
         }
+    }
+
+    /// Merge any in-place Ghostwire command changes into the pending re-trust map
+    /// (GW-196). Reads the current `[hooks.state]` from config.toml, asks
+    /// CodexHookTrust for the stale-hash positions, and unions them into
+    /// `Defaults.codexPendingRetrust`. No-op when nothing changed in place.
+    private static func recordPendingRetrust(
+        oldJSON: [String: Any],
+        newJSON: [String: Any],
+        hooksFilePath: String
+    ) {
+        let configFile = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".codex")
+            .appendingPathComponent("config.toml")
+        let configTOML = (try? String(contentsOf: configFile, encoding: .utf8)) ?? ""
+        let state = CodexHookTrust.parseHooksState(configTOML)
+
+        let newEntries = CodexHookTrust.staleTrustPositions(
+            oldHooksJSON: oldJSON,
+            newHooksJSON: newJSON,
+            state: state,
+            hooksFilePath: hooksFilePath
+        )
+        guard !newEntries.isEmpty else { return }
+
+        var pending = Defaults[.codexPendingRetrust]
+        for (key, hash) in newEntries { pending[key] = hash }
+        Defaults[.codexPendingRetrust] = pending
     }
 
     /// Check if Codex hooks are currently installed
@@ -186,6 +225,10 @@ struct CodexHookInstaller {
         ) {
             try? data.write(to: hooksFile)
         }
+
+        // Drop any pending re-trust entries — there are no Ghostwire hooks left
+        // to re-trust, so the recorded stale hashes are dead weight (GW-196).
+        Defaults[.codexPendingRetrust] = [:]
     }
 
     /// Matches our hook command, including the legacy buddi-hook.py name so upgrades clean it up.

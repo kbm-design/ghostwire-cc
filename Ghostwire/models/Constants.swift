@@ -216,6 +216,14 @@ extension Defaults.Keys {
     // uninstall from the Agents tab sticks across relaunches.
     static let claudeHooksEnabled = Key<Bool>("claudeHooksEnabled", default: true)
     static let codexHooksEnabled = Key<Bool>("codexHooksEnabled", default: true)
+    // Pending Codex re-trust map (GW-196): `[hooks.state]` position key ->
+    // the stale `trusted_hash` that was in config.toml when we changed that
+    // hook's command in place (e.g. buddi -> ghostwire). The installer records
+    // it on rewrite; the detector reports `.retrustRequired` while the config
+    // still carries that exact stale hash, and clears the entry once Codex
+    // rewrites the hash (user re-trusted via `/hooks`). Catches the in-place
+    // command change that coverage detection can't see (same key, stale hash).
+    static let codexPendingRetrust = Key<[String: String]>("codexPendingRetrust", default: [:])
     static let messageDisplayMode = Key<MessageDisplayMode>("messageDisplayMode", default: .inline)
     // Alert-history cap (GW-139 spec: 100 entries / 7 days, configurable)
     static let alertHistoryMaxEntries = Key<Int>("alertHistoryMaxEntries", default: 100)

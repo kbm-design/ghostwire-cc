@@ -216,6 +216,160 @@ final class CodexHookTrustTests: XCTestCase {
         XCTAssertEqual(status, .retrustRequired)
     }
 
+    // MARK: - Installer-anchored stale-trust (GW-196 P1)
+
+    // The in-place command change the ticket exists for: buddi -> ghostwire at
+    // the SAME [hooks.state] key. Codex leaves the old trusted_hash in place and
+    // silently skips the hook; coverage alone is fooled. The installer recorded
+    // the stale hash, and config.toml still carries it ⇒ re-trust required.
+    func testStaleHashAtSamePositionReportsRetrust() {
+        let staleHash = "sha256:stalehash000000000000000000000000000000000000000000000000000000"
+        let toml = """
+        [hooks.state."\(hooksPath):pre_tool_use:0:0"]
+        trusted_hash = "\(staleHash)"
+        enabled = true
+
+        [hooks.state."\(hooksPath):stop:0:0"]
+        trusted_hash = "sha256:bbb"
+        enabled = true
+        """
+        let pending = ["\(hooksPath):pre_tool_use:0:0": staleHash]
+        let eval = CodexHookTrust.evaluate(
+            hooksJSON: hooksJSON(),
+            configTOML: toml,
+            hooksFilePath: hooksPath,
+            pendingRetrust: pending
+        )
+        XCTAssertEqual(eval.status, .retrustRequired)
+        // Stale hash still present ⇒ nothing cleared.
+        XCTAssertTrue(eval.clearedKeys.isEmpty)
+    }
+
+    // Codex rewrote the hash at that key (the user re-trusted via /hooks): the
+    // current hash now differs from the recorded stale value ⇒ trusted, and the
+    // pending entry is reported for clearing.
+    func testHashChangedAfterRetrustClearsEntryAndTrusts() {
+        let staleHash = "sha256:stalehash000000000000000000000000000000000000000000000000000000"
+        let toml = """
+        [hooks.state."\(hooksPath):pre_tool_use:0:0"]
+        trusted_hash = "sha256:freshhash11111111111111111111111111111111111111111111111111111111"
+        enabled = true
+
+        [hooks.state."\(hooksPath):stop:0:0"]
+        trusted_hash = "sha256:bbb"
+        enabled = true
+        """
+        let pending = ["\(hooksPath):pre_tool_use:0:0": staleHash]
+        let eval = CodexHookTrust.evaluate(
+            hooksJSON: hooksJSON(),
+            configTOML: toml,
+            hooksFilePath: hooksPath,
+            pendingRetrust: pending
+        )
+        XCTAssertEqual(eval.status, .trusted)
+        XCTAssertEqual(eval.clearedKeys, ["\(hooksPath):pre_tool_use:0:0"])
+    }
+
+    // Documented limitation: an in-place change that happened BEFORE this feature
+    // shipped has no pending entry. With every position covered and no pending
+    // map, it looks identical to a genuinely-trusted hook ⇒ trusted. Acceptable.
+    func testPreFeatureInPlaceChangeWithoutPendingEntryIsTrusted() {
+        let toml = """
+        [hooks.state."\(hooksPath):pre_tool_use:0:0"]
+        trusted_hash = "sha256:aaa"
+        enabled = true
+
+        [hooks.state."\(hooksPath):stop:0:0"]
+        trusted_hash = "sha256:bbb"
+        enabled = true
+        """
+        let eval = CodexHookTrust.evaluate(
+            hooksJSON: hooksJSON(),
+            configTOML: toml,
+            hooksFilePath: hooksPath,
+            pendingRetrust: [:]
+        )
+        XCTAssertEqual(eval.status, .trusted)
+        XCTAssertTrue(eval.clearedKeys.isEmpty)
+    }
+
+    // Coverage (layer 1) still wins over the pending map: a missing entry is
+    // re-trust required even before the stale-hash check runs.
+    func testCoverageMissStillRetrustEvenWithPendingMap() {
+        let toml = """
+        [hooks.state."\(hooksPath):pre_tool_use:0:0"]
+        trusted_hash = "sha256:aaa"
+        enabled = true
+        """ // Stop has no entry.
+        let eval = CodexHookTrust.evaluate(
+            hooksJSON: hooksJSON(),
+            configTOML: toml,
+            hooksFilePath: hooksPath,
+            pendingRetrust: ["\(hooksPath):pre_tool_use:0:0": "sha256:whatever"]
+        )
+        XCTAssertEqual(eval.status, .retrustRequired)
+    }
+
+    // MARK: - Installer-side "command will change" diff detection
+
+    private let buddiCmd = "BUDDI_AGENT=codex python3 ~/.codex/hooks/buddi-hook.py"
+    private let ghostwireCmd = "GHOSTWIRE_AGENT=codex python3 ~/.codex/hooks/ghostwire-hook.py"
+
+    // Old hooks.json runs the buddi command at pre_tool_use:0:0 with a trusted
+    // hash; the new write swaps it to ghostwire at the same key ⇒ record the
+    // stale hash so the detector can flag it.
+    func testStaleTrustPositionsRecordsInPlaceRename() {
+        let old = hooksJSON(command: buddiCmd)
+        let new = hooksJSON(command: ghostwireCmd)
+        let state = CodexHookTrust.parseHooksState("""
+        [hooks.state."\(hooksPath):pre_tool_use:0:0"]
+        trusted_hash = "sha256:stale-pre"
+        enabled = true
+
+        [hooks.state."\(hooksPath):stop:0:0"]
+        trusted_hash = "sha256:stale-stop"
+        enabled = true
+        """)
+        let pending = CodexHookTrust.staleTrustPositions(
+            oldHooksJSON: old,
+            newHooksJSON: new,
+            state: state,
+            hooksFilePath: hooksPath
+        )
+        XCTAssertEqual(pending["\(hooksPath):pre_tool_use:0:0"], "sha256:stale-pre")
+        XCTAssertEqual(pending["\(hooksPath):stop:0:0"], "sha256:stale-stop")
+    }
+
+    // No change in command ⇒ nothing recorded (a plain re-write of the same hook).
+    func testStaleTrustPositionsIgnoresUnchangedCommand() {
+        let same = hooksJSON(command: ghostwireCmd)
+        let state = CodexHookTrust.parseHooksState("""
+        [hooks.state."\(hooksPath):pre_tool_use:0:0"]
+        trusted_hash = "sha256:aaa"
+        """)
+        let pending = CodexHookTrust.staleTrustPositions(
+            oldHooksJSON: same,
+            newHooksJSON: same,
+            state: state,
+            hooksFilePath: hooksPath
+        )
+        XCTAssertTrue(pending.isEmpty)
+    }
+
+    // Command changed in place but Codex never trusted it (no trusted_hash) ⇒ no
+    // entry needed; coverage detection already catches the missing-trust case.
+    func testStaleTrustPositionsSkipsUntrustedPosition() {
+        let old = hooksJSON(command: buddiCmd)
+        let new = hooksJSON(command: ghostwireCmd)
+        let pending = CodexHookTrust.staleTrustPositions(
+            oldHooksJSON: old,
+            newHooksJSON: new,
+            state: [:],
+            hooksFilePath: hooksPath
+        )
+        XCTAssertTrue(pending.isEmpty)
+    }
+
     func testRealWorldKeyShape() {
         // Guards the exact key format against a real ~/.codex/config.toml line:
         // [hooks.state."<path>:pre_tool_use:0:0"] with a sha256: hash.

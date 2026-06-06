@@ -166,27 +166,96 @@ actor AgentInjectionService {
 
     // MARK: - Baseline tier (focus + pasteboard + ⌘V)
 
-    /// Live-verify only: focuses the session's terminal then synthesizes a ⌘V.
+    /// Baseline tier: bring the session's OWN terminal to the front, VERIFY it
+    /// took, then paste. We never paste into whatever happens to be frontmost —
+    /// an unconfirmed front app could be Slack, a browser form, etc.
+    ///
+    /// `SessionFocusController.focus` is tiered (GW-162): for a plain terminal
+    /// (`.unresolvable` -> `.none` strategy) it returns false WITHOUT focusing
+    /// anything. So a false result is the norm here, and we fall back to the
+    /// honest baseline: walk the session pid's ancestors to the owning terminal
+    /// app and activate it ourselves, confirming the activation before sending
+    /// ⌘V. If we can't get the terminal frontmost, we refuse.
     private func injectViaBaseline(text: String, into session: SessionState, submit: Bool) async -> Result<Void, InjectionError> {
-        // Without a pid we can't focus the right terminal — refuse rather than
+        // Without a pid we can't find the right terminal — refuse rather than
         // paste into whatever is frontmost.
-        guard session.pid != nil else {
+        guard let pid = session.pid else {
             Self.logger.error("Baseline inject: session has no pid to focus")
             return .failure(.noDeliverablePath)
         }
 
+        // First try the shared focus controller (handles mux re-focus etc.);
+        // for plain terminals it returns false, so fall through to our own
+        // verified activation rather than trusting the frontmost app.
         let focused = await SessionFocusController.shared.focus(session: session)
-        if !focused {
-            Self.logger.debug("Baseline inject: focus returned false; pasting into frontmost terminal")
+        let frontmost = focused
+            ? await Self.terminalIsFrontmost(forSessionPid: pid)
+            : await Self.activateAndVerifyTerminal(forSessionPid: pid)
+
+        guard frontmost else {
+            Self.logger.error("Baseline inject: could not confirm the session's terminal is frontmost; refusing to paste")
+            return .failure(.noDeliverablePath)
         }
 
         let pasted = await Self.pasteIntoFrontmost(text: text, submit: submit)
         return pasted ? .success(()) : .failure(.noDeliverablePath)
     }
 
+    /// Resolve the bundle id of the terminal app that owns `pid` by walking the
+    /// process tree to the terminal ancestor. Pure-ish seam (process tree +
+    /// NSRunningApplication lookup); returns nil if no terminal ancestor or the
+    /// app isn't running. Live-verify (depends on the real process tree).
+    @MainActor
+    private static func terminalBundleId(forSessionPid pid: Int) -> String? {
+        let tree = ProcessTreeBuilder.shared.buildTree()
+        guard let terminalPid = ProcessTreeBuilder.shared.findTerminalPid(forProcess: pid, tree: tree),
+              let app = NSRunningApplication(processIdentifier: pid_t(terminalPid)) else {
+            return nil
+        }
+        return app.bundleIdentifier
+    }
+
+    /// True when the frontmost app is the terminal that owns `pid`. Used to
+    /// confirm a focus/activation actually landed before we paste.
+    @MainActor
+    private static func terminalIsFrontmost(forSessionPid pid: Int) -> Bool {
+        guard let bundleId = terminalBundleId(forSessionPid: pid),
+              let front = NSWorkspace.shared.frontmostApplication?.bundleIdentifier else {
+            return false
+        }
+        return front == bundleId
+    }
+
+    /// Activate the session's owning terminal app, then VERIFY it became
+    /// frontmost (with a short settle wait, since `activate()` is async). Only
+    /// returns true once the terminal's bundle id matches the frontmost app —
+    /// the precondition for a safe ⌘V. Live-verify only.
+    @MainActor
+    private static func activateAndVerifyTerminal(forSessionPid pid: Int) async -> Bool {
+        let tree = ProcessTreeBuilder.shared.buildTree()
+        guard let terminalPid = ProcessTreeBuilder.shared.findTerminalPid(forProcess: pid, tree: tree),
+              let app = NSRunningApplication(processIdentifier: pid_t(terminalPid)),
+              let bundleId = app.bundleIdentifier else {
+            return false
+        }
+
+        app.activate()
+
+        // Poll briefly for the activation to take — frontmost updates async.
+        for _ in 0..<10 {
+            if NSWorkspace.shared.frontmostApplication?.bundleIdentifier == bundleId {
+                return true
+            }
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        return false
+    }
+
     /// Put `text` on the pasteboard and synthesize ⌘V (and Return when
-    /// `submit`) into the frontmost app. Returns false if event sources can't
-    /// be created (e.g. Accessibility/Input-Monitoring not granted).
+    /// `submit`) into the frontmost app. PRECONDITION: the caller has already
+    /// confirmed the session's own terminal is frontmost — this never decides
+    /// where to paste. Returns false if event sources can't be created (e.g.
+    /// Accessibility/Input-Monitoring not granted).
     @MainActor
     private static func pasteIntoFrontmost(text: String, submit: Bool) async -> Bool {
         let pasteboard = NSPasteboard.general

@@ -131,4 +131,64 @@ final class AgentInjectionServiceTests: XCTestCase {
         XCTAssertEqual(claude, codex)
         XCTAssertEqual(codex, "@src/x.swift")
     }
+
+    // MARK: - Injection tier selection (pure seam)
+    //
+    // Tier picks HOW we deliver: an addressable mux pane -> .multiplexer; a
+    // plain terminal with a pid -> .baseline (focus + paste); neither -> nil
+    // (no deliverable path, which the baseline injector maps to
+    // .noDeliverablePath rather than blind-pasting). The actual focus/activation
+    // + ⌘V is live-verify only.
+
+    func testTierIsMultiplexerForAddressableCmuxPane() {
+        let s = makeSession(id: "cmux", isInCmux: true, ws: "w", surface: "s")
+        XCTAssertEqual(AgentTargetResolver.injectionTier(for: s), .multiplexer)
+    }
+
+    func testTierIsMultiplexerForAddressableTmuxPane() {
+        let s = makeSession(id: "tmux", isInTmux: true, tty: "ttys004")
+        XCTAssertEqual(AgentTargetResolver.injectionTier(for: s), .multiplexer)
+    }
+
+    func testTierIsBaselineForPlainTerminalWithPid() {
+        let s = makeSession(id: "plain", pid: 4321)
+        XCTAssertEqual(AgentTargetResolver.injectionTier(for: s), .baseline)
+    }
+
+    func testTierIsBaselineWhenMuxRefsMissingButPidPresent() {
+        // In cmux per flags but the hook never delivered refs -> not addressable
+        // as a pane, but we still have a pid to focus -> baseline, not dropped.
+        let s = makeSession(id: "cmuxbad", pid: 4321, isInCmux: true)
+        XCTAssertEqual(AgentTargetResolver.injectionTier(for: s), .baseline)
+    }
+
+    func testTierIsNilWhenNoPaneAndNoPid() {
+        let s = makeSession(id: "orphan", pid: nil)
+        XCTAssertNil(AgentTargetResolver.injectionTier(for: s))
+    }
+
+    // MARK: - Helpers
+
+    private func makeSession(
+        id: String,
+        pid: Int? = 1234,
+        isInTmux: Bool = false,
+        isInCmux: Bool = false,
+        ws: String? = nil,
+        surface: String? = nil,
+        tty: String? = nil
+    ) -> SessionState {
+        var session = SessionState(
+            sessionId: id,
+            cwd: "/tmp/\(id)",
+            pid: pid,
+            tty: tty,
+            isInTmux: isInTmux,
+            isInCmux: isInCmux,
+            agent: "claude"
+        )
+        session.cmuxWorkspaceRef = ws
+        session.cmuxSurfaceRef = surface
+        return session
+    }
 }

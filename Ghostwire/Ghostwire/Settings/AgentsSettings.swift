@@ -15,6 +15,7 @@ struct AgentsSettings: View {
     @State private var selectedSound = GhostwireSettings.notificationSound
     @ObservedObject private var usageService = UsageService.shared
     @Default(.messageDisplayMode) private var messageDisplayMode
+    @Default(.permissionAutoOpenMode) private var permissionAutoOpenMode
     @Default(.alertHistoryMaxEntries) private var alertHistoryMaxEntries
     @Default(.alertHistoryMaxAgeDays) private var alertHistoryMaxAgeDays
 
@@ -74,12 +75,20 @@ struct AgentsSettings: View {
                     Text("Inline").tag(MessageDisplayMode.inline)
                     Text("Full raw").tag(MessageDisplayMode.fullRaw)
                 }
+                Picker("Open for approvals", selection: $permissionAutoOpenMode) {
+                    Text("Smart").tag(PermissionAutoOpenMode.smart)
+                    Text("Always").tag(PermissionAutoOpenMode.always)
+                    Text("Never").tag(PermissionAutoOpenMode.never)
+                }
             } header: {
                 Text("Display")
             } footer: {
-                Text("Full raw shows prompts and commands verbatim — monospaced, unrendered, never truncated.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Full raw shows prompts and commands verbatim — monospaced, unrendered, never truncated.")
+                    Text("Smart opens the notch only when the asking session's pane isn't already in front of you. Always opens on every approval; Never only glows.")
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
             }
 
             Section {

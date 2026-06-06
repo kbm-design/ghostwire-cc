@@ -77,6 +77,20 @@ enum MessageDisplayMode: String, CaseIterable, Identifiable, Defaults.Serializab
     var id: String { rawValue }
 }
 
+// When to auto-open the notch for a new pending permission (GW-209).
+// Smart  = open only when the triggering session's own pane isn't focused
+//          (so a hidden lane pings you even with other terminals on screen).
+// Always = open on every new permission (still requires the notch closed).
+// Never  = never auto-open; the glow/haptic/record still follow the Smart
+//          visibility rule — Never only suppresses the OPEN.
+enum PermissionAutoOpenMode: String, CaseIterable, Identifiable, Defaults.Serializable {
+    case smart = "Smart"
+    case always = "Always"
+    case never = "Never"
+
+    var id: String { rawValue }
+}
+
 extension Defaults.Keys {
     // MARK: General
     static let menubarIcon = Key<Bool>("menubarIcon", default: true)
@@ -218,6 +232,11 @@ extension Defaults.Keys {
     // command change that coverage detection can't see (same key, stale hash).
     static let codexPendingRetrust = Key<[String: String]>("codexPendingRetrust", default: [:])
     static let messageDisplayMode = Key<MessageDisplayMode>("messageDisplayMode", default: .inline)
+    // GW-209: when to auto-open the notch for a new pending permission.
+    static let permissionAutoOpenMode = Key<PermissionAutoOpenMode>(
+        "permissionAutoOpenMode",
+        default: .smart
+    )
     // Alert-history cap (GW-139 spec: 100 entries / 7 days, configurable)
     static let alertHistoryMaxEntries = Key<Int>("alertHistoryMaxEntries", default: 100)
     static let alertHistoryMaxAgeDays = Key<Int>("alertHistoryMaxAgeDays", default: 7)

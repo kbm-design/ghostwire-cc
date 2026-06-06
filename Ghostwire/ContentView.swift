@@ -23,6 +23,7 @@ struct ContentView: View {
     @ObservedObject var brightnessManager = BrightnessManager.shared
     @ObservedObject var volumeManager = VolumeManager.shared
     @ObservedObject private var sessionBridge = GhostwireSessionBridge.shared
+    @ObservedObject private var sendToAgent = SendToAgentCoordinator.shared
     @State private var hoverTask: Task<Void, Never>?
     @State private var isHovering: Bool = false
     @State private var anyDropDebounceTask: Task<Void, Never>?
@@ -380,6 +381,18 @@ struct ContentView: View {
                 .zIndex(1)
                 .allowsHitTesting(vm.notchState == .open)
                 .opacity(gestureProgress != 0 ? 1.0 - min(abs(gestureProgress) * 0.1, 0.3) : 1.0)
+                // GW-163: send-to-agent picker, shown when several live agents
+                // are addressable and none is focused (resolver `.candidates`).
+                .overlay {
+                    if !sendToAgent.pickerCandidates.isEmpty {
+                        SendToAgentPicker(
+                            candidates: sendToAgent.pickerCandidates,
+                            onPick: { sendToAgent.resolvePick($0) },
+                            onDismiss: { sendToAgent.dismissPicker() }
+                        )
+                        .zIndex(3)
+                    }
+                }
             }
         }
         .onDrop(of: [.fileURL, .url, .utf8PlainText, .plainText, .data], delegate: GeneralDropTargetDelegate(isTargeted: $vm.generalDropTargeting))

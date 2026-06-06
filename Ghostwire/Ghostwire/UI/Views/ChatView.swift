@@ -5,6 +5,7 @@
 //  Redesigned chat interface with clean visual hierarchy
 //
 
+import AppKit
 import Combine
 import Defaults
 import SwiftUI
@@ -414,6 +415,11 @@ struct ChatView: View {
 
     private var inputRow: some View {
         HStack(spacing: 10) {
+            // GW-163 note: a paperclip/NSOpenPanel attach was tried and removed -
+            // the notch's window level sits above every system panel, so the
+            // picker rendered underneath it (test-drive finding). File attach
+            // flows are Finder-copy -> clipboard -> send, or drag -> Shelf ->
+            // Send to Agent; both land @path without fighting the windowing.
             TextField(inputPlaceholder, text: $inputText)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13))

@@ -18,6 +18,13 @@ final class HookStatusModel: ObservableObject {
     struct AgentStatus: Equatable {
         var detected = false
         var installed = false
+        /// CLI hook-trust verdict (Codex `/hooks`). `nil` for agents with no
+        /// trust gate (Claude) — surfaces just skip the trust line. (GW-196)
+        var trust: CodexHookTrust.TrustStatus?
+
+        /// The agent's hooks are installed but the CLI no longer trusts them
+        /// (e.g. after the buddi -> ghostwire rename) — needs a `/hooks` re-trust.
+        var needsRetrust: Bool { installed && trust == .retrustRequired }
     }
 
     @Published private(set) var byAgent: [String: AgentStatus] = [:]
@@ -38,7 +45,8 @@ final class HookStatusModel: ObservableObject {
         for agent in AgentHookConfig.all {
             next[agent.id] = AgentStatus(
                 detected: agent.isDetected(),
-                installed: agent.isInstalled()
+                installed: agent.isInstalled(),
+                trust: agent.trustStatus()
             )
         }
         if next != byAgent {

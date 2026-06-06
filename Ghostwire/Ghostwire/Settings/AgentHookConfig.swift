@@ -24,6 +24,10 @@ struct AgentHookConfig: Identifiable {
     /// Agent hashes + trusts hooks CLI-side (Codex `/hooks`). Shows the
     /// trust row in settings — status detection lands with GW-196.
     let requiresCLITrust: Bool
+    /// Re-check whether the agent currently trusts our installed hooks.
+    /// `nil` for agents with no CLI trust gate (e.g. Claude) — one code path:
+    /// surfaces never fork on agent, they just skip the trust line when nil.
+    let trustStatus: () -> CodexHookTrust.TrustStatus?
 
     static let all: [AgentHookConfig] = [claude, codex]
 
@@ -35,7 +39,9 @@ struct AgentHookConfig: Identifiable {
         isInstalled: HookInstaller.isInstalled,
         install: HookInstaller.installIfNeeded,
         uninstall: HookInstaller.uninstall,
-        requiresCLITrust: false
+        requiresCLITrust: false,
+        // Claude has no hook-trust gate — hooks fire as soon as they're written.
+        trustStatus: { nil }
     )
 
     static let codex = AgentHookConfig(
@@ -46,7 +52,8 @@ struct AgentHookConfig: Identifiable {
         isInstalled: CodexHookInstaller.isInstalled,
         install: CodexHookInstaller.installIfNeeded,
         uninstall: CodexHookInstaller.uninstall,
-        requiresCLITrust: true
+        requiresCLITrust: true,
+        trustStatus: { CodexHookTrust.currentStatus() }
     )
 
     /// Install hooks at launch for every agent whose toggle is on.
@@ -55,6 +62,11 @@ struct AgentHookConfig: Identifiable {
         for agent in all where Defaults[agent.enabledKey] {
             agent.install()
         }
+        // Re-check install + trust state after the launch-time installs so the
+        // shared model (and the proactive re-trust prompt) reflect any hook
+        // change picked up this launch — e.g. the buddi -> ghostwire rename that
+        // leaves Codex distrusting the new command (GW-196). Cheap file I/O.
+        Task { @MainActor in HookStatusModel.shared.refresh() }
     }
 
     private static func configDirExists(_ name: String) -> Bool {

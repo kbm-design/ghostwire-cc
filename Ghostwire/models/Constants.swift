@@ -119,6 +119,10 @@ extension Defaults.Keys {
         default: SliderColorEnum.white
     )
     static let playerColorTinting = Key<Bool>("playerColorTinting", default: true)
+    // GW-195: the settings toggle for these was removed with the coming-soon
+    // Lottie section (it was already disabled, so no UI path ever set
+    // useMusicVisualizer false in this app). ContentView still reads it;
+    // when custom visualizers ship for real, the controls come back with them.
     static let useMusicVisualizer = Key<Bool>("useMusicVisualizer", default: true)
     static let customVisualizers = Key<[CustomVisualizer]>("customVisualizers", default: [])
     static let selectedVisualizer = Key<CustomVisualizer?>("selectedVisualizer", default: nil)

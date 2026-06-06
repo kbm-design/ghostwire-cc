@@ -42,7 +42,7 @@ struct GhostwireExtrasMenu : View {
     var github: some View {
         GhostwireLargeButtons(
             action: {
-                if let url = URL(string: "https://github.com/user/buddi") {
+                if let url = URL(string: "https://github.com/kbm-design/ghostwire-cc") {
                     NSWorkspace.shared.open(url)
                 }
             },

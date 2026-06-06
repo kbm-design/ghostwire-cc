@@ -530,6 +530,13 @@ struct ChatView: View {
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = false
         panel.prompt = "Attach"
+        // The notch is a non-activating borderless panel - without explicit
+        // app activation the open panel presents behind other apps (test-drive
+        // finding: "paperclip doesn't pull up my finder"). Activate first and
+        // float the panel above the notch's window level.
+        NSApp.activate(ignoringOtherApps: true)
+        panel.level = .modalPanel
+        panel.makeKeyAndOrderFront(nil)
         panel.begin { response in
             guard response == .OK, let url = panel.url else { return }
             Task {

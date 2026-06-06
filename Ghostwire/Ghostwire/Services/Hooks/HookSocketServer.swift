@@ -29,6 +29,12 @@ struct HookEvent: Codable, Sendable {
     let cmuxWorkspace: String?
     let cmuxSurface: String?
     let source: String?
+    /// Absolute path to the session's JSONL transcript, as reported by the agent hook.
+    /// Authoritative for locating the transcript: Claude keys the projects dir by the
+    /// session's launch cwd, so a session that enters a worktree mid-flight reports the
+    /// worktree as `cwd` while its transcript stays under the original project dir.
+    /// Both Claude and Codex send this; falls back to cwd-derivation when absent (GW-205).
+    let transcriptPath: String?
 
     enum CodingKeys: String, CodingKey {
         case sessionId = "session_id"
@@ -39,10 +45,11 @@ struct HookEvent: Codable, Sendable {
         case message
         case cmuxWorkspace = "cmux_workspace"
         case cmuxSurface = "cmux_surface"
+        case transcriptPath = "transcript_path"
     }
 
     /// Create a copy with updated toolUseId
-    init(sessionId: String, cwd: String, event: String, status: String, pid: Int?, tty: String?, tool: String?, toolInput: [String: AnyCodable]?, toolUseId: String?, notificationType: String?, message: String?, cmuxWorkspace: String? = nil, cmuxSurface: String? = nil, source: String? = nil) {
+    init(sessionId: String, cwd: String, event: String, status: String, pid: Int?, tty: String?, tool: String?, toolInput: [String: AnyCodable]?, toolUseId: String?, notificationType: String?, message: String?, cmuxWorkspace: String? = nil, cmuxSurface: String? = nil, source: String? = nil, transcriptPath: String? = nil) {
         self.sessionId = sessionId
         self.cwd = cwd
         self.event = event
@@ -57,6 +64,7 @@ struct HookEvent: Codable, Sendable {
         self.cmuxWorkspace = cmuxWorkspace
         self.cmuxSurface = cmuxSurface
         self.source = source
+        self.transcriptPath = transcriptPath
     }
 
     var sessionPhase: SessionPhase {
@@ -503,7 +511,8 @@ class HookSocketServer {
                 toolUseId: toolUseId,  // Use resolved toolUseId
                 notificationType: event.notificationType,
                 message: event.message,
-                source: event.source
+                source: event.source,
+                transcriptPath: event.transcriptPath
             )
 
             let pending = PendingPermission(

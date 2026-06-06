@@ -151,6 +151,10 @@ def main():
     session_id = data.get("session_id", "unknown")
     event = data.get("hook_event_name", "")
     cwd = data.get("cwd", "")
+    # Authoritative transcript location. cwd can lag behind for worktree sessions
+    # (Claude keys the projects dir by launch cwd), so forward the hook's own
+    # transcript_path and let Swift prefer it over cwd-derivation (GW-205).
+    transcript_path = data.get("transcript_path", "")
     tool_input = data.get("tool_input", {})
 
     # Get process info
@@ -168,6 +172,10 @@ def main():
         # Which agent installed this hook (set by the installer); defaults to claude
         "source": os.environ.get("GHOSTWIRE_AGENT", "claude"),
     }
+
+    # Forward the transcript path when the agent provides one (GW-205).
+    if transcript_path:
+        state["transcript_path"] = transcript_path
 
     # Include cmux surface info if running in cmux
     if cmux_workspace and cmux_surface:

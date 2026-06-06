@@ -23,7 +23,8 @@ class JSONLInterruptWatcher {
     private var source: DispatchSourceFileSystemObject?
     private var lastOffset: UInt64 = 0
     private let sessionId: String
-    private let filePath: String
+    /// Resolved transcript path being watched (internal for unit tests — GW-205).
+    let filePath: String
     private let queue = DispatchQueue(label: "com.ghostwire.notch.interruptwatcher", qos: .userInteractive)
 
     weak var delegate: JSONLInterruptWatcherDelegate?
@@ -37,11 +38,26 @@ class JSONLInterruptWatcher {
         "[Request interrupted by user"
     ]
 
-    init(sessionId: String, cwd: String) {
+    init(sessionId: String, cwd: String, transcriptPath: String? = nil) {
         self.sessionId = sessionId
+        // Prefer the transcript path the agent hook reports: Claude keys the projects
+        // dir by the session's launch cwd, so a session that entered a worktree mid-flight
+        // reports the worktree as `cwd` while its transcript stays under the original
+        // project dir. Deriving from `cwd` then points at a file that doesn't exist and
+        // interrupt detection silently dies. Fall back to cwd-derivation when absent (GW-205).
+        if let transcriptPath, !transcriptPath.isEmpty {
+            self.filePath = transcriptPath
+        } else {
+            self.filePath = Self.transcriptPath(cwd: cwd, sessionId: sessionId)
+        }
+    }
+
+    /// Derive the transcript path from the launch cwd (Claude's `~/.claude/projects/<dir>/<id>.jsonl`).
+    /// Used only when the hook payload carries no `transcript_path`.
+    static func transcriptPath(cwd: String, sessionId: String) -> String {
         let projectDir = cwd.replacingOccurrences(of: "/", with: "-")
                             .replacingOccurrences(of: ".", with: "-")
-        self.filePath = NSHomeDirectory() + "/.claude/projects/" + projectDir + "/" + sessionId + ".jsonl"
+        return NSHomeDirectory() + "/.claude/projects/" + projectDir + "/" + sessionId + ".jsonl"
     }
 
     /// Start watching the JSONL file for interrupts
@@ -185,10 +201,10 @@ class InterruptWatcherManager {
 
     private init() {}
 
-    func startWatching(sessionId: String, cwd: String) {
+    func startWatching(sessionId: String, cwd: String, transcriptPath: String? = nil) {
         guard watchers[sessionId] == nil else { return }
 
-        let watcher = JSONLInterruptWatcher(sessionId: sessionId, cwd: cwd)
+        let watcher = JSONLInterruptWatcher(sessionId: sessionId, cwd: cwd, transcriptPath: transcriptPath)
         watcher.delegate = delegate
         watcher.start()
         watchers[sessionId] = watcher

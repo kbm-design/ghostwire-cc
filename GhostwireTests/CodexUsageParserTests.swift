@@ -217,6 +217,34 @@ final class CodexUsageParserTests: XCTestCase {
         XCTAssertEqual(snapshot.lastContextUsed, 110)  // last_token_usage.total
     }
 
+    // MARK: - Activity signal (GW-203: yielded from the scan, no second walk)
+
+    func testLatestActivityIsNewestTokenCountTimestamp() throws {
+        try writeRollout(day: "2026-06-03", sessionId: "aaaaaaaa-0000-0000-0000-000000000001", lines: [
+            tokenCount(timestamp: "2026-06-03T10:00:00.000Z", input: 100, cached: 0, output: 10, reasoning: 0)
+        ])
+        try writeRollout(day: "2026-06-04", sessionId: "bbbbbbbb-0000-0000-0000-000000000002", lines: [
+            tokenCount(timestamp: "2026-06-04T11:30:00.000Z", input: 200, cached: 0, output: 20, reasoning: 0)
+        ])
+
+        let snapshot = makeParser().snapshot(now: now)
+
+        let expected = ISO8601DateFormatter.gw151.date(from: "2026-06-04T11:30:00.000Z")!
+        XCTAssertEqual(snapshot.latestActivity?.timeIntervalSince1970 ?? 0,
+                       expected.timeIntervalSince1970, accuracy: 1)
+    }
+
+    func testLatestActivityNilWhenNoTokenCountEvents() throws {
+        try writeRollout(day: "2026-06-04", sessionId: "ffffffff-0000-0000-0000-000000000006", lines: [
+            sessionMeta(timestamp: "2026-06-04T08:00:00.000Z"),
+            turnContext(timestamp: "2026-06-04T08:00:01.000Z", model: "gpt-5.5")
+        ])
+
+        let snapshot = makeParser().snapshot(now: now)
+
+        XCTAssertNil(snapshot.latestActivity)
+    }
+
     // MARK: - Window filtering & robustness
 
     func testSessionsOlderThanSevenDaysAreExcluded() throws {

@@ -50,13 +50,13 @@ struct AgentsTabView: View {
     private var homeContent: some View {
         VStack(alignment: .leading, spacing: 8) {
             if let agent = usageDetailAgent, let display = usageDisplay(for: agent) {
+                // GW-203: per-model weeklies + extra-usage spend ride the
+                // display enum's .quota case - no agent-name gate, no reach
+                // into UsageService.usage. The detail view reads them off
+                // `display` directly (same path for any agent / GW-200 Codex).
                 AgentUsageDetailView(
                     agent: agent,
-                    display: display,
-                    // GW-201: per-model weeklies + server extra-usage spend
-                    // exist only on the Claude OAuth endpoint
-                    perModelWeeklies: agent == "claude" ? claudePerModelWeeklies : [],
-                    extraUsage: agent == "claude" ? usageService.usage.extraUsage : nil
+                    display: display
                 ) {
                     withAnimation(.easeInOut(duration: 0.2)) { usageDetailAgent = nil }
                 }
@@ -105,22 +105,11 @@ struct AgentsTabView: View {
     private var codexMeterVisible: Bool {
         guard codexUsageService.display != nil else { return false }
         if sessions.contains(where: { $0.agent == "codex" }) { return true }
-        if let last = codexUsageService.lastActivityDate {
-            return Date().timeIntervalSince(last) < 5 * 3600
-        }
-        return false
+        return AgentActivity.isRecent(codexUsageService.lastActivityDate)
     }
 
     private func usageDisplay(for agent: String) -> AgentUsageDisplay? {
         agent == "codex" ? codexUsageService.display : usageService.display
-    }
-
-    /// GW-201: non-null per-model weekly sub-limits from the OAuth endpoint
-    private var claudePerModelWeeklies: [(label: String, period: QuotaPeriod)] {
-        var entries: [(String, QuotaPeriod)] = []
-        if let opus = usageService.usage.sevenDayOpus { entries.append(("Opus", opus)) }
-        if let sonnet = usageService.usage.sevenDaySonnet { entries.append(("Sonnet", sonnet)) }
-        return entries
     }
 
     /// First agent to come alive keeps slot 1; slots never reshuffle while
@@ -168,7 +157,7 @@ struct AgentsTabView: View {
     private func singleAgentRow(agent: String, display: AgentUsageDisplay) -> some View {
         let tint = AgentIdentity.tint(for: agent)
         switch display {
-        case .quota(let fiveHour, let sevenDay):
+        case .quota(let fiveHour, let sevenDay, _, _):
             HStack(spacing: 12) {
                 if let fh = fiveHour {
                     meterButton(agent: agent) {
@@ -203,7 +192,7 @@ struct AgentsTabView: View {
     @ViewBuilder
     private func agentSummaryBar(agent: String, display: AgentUsageDisplay) -> some View {
         switch display {
-        case .quota(let fiveHour, let sevenDay):
+        case .quota(let fiveHour, let sevenDay, _, _):
             // Session normally; switches to Weekly when 7D >=90% (the
             // binding constraint) - the label names the window on screen
             if let selection = UsageFormat.quotaBarSelection(fiveHour: fiveHour, sevenDay: sevenDay) {

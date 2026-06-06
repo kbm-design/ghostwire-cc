@@ -31,7 +31,7 @@ final class AgentUsageDisplayTests: XCTestCase {
     func testSubscriptionAuthWithRateLimitsYieldsQuota() {
         let display = CodexUsageService.makeDisplay(snapshot: tokenSnapshot(rateLimits: limits), authMode: "chatgpt")
 
-        guard case .quota(let fiveHour, let sevenDay) = display else {
+        guard case .quota(let fiveHour, let sevenDay, _, _) = display else {
             return XCTFail("expected quota mode, got \(String(describing: display))")
         }
         XCTAssertEqual(fiveHour?.utilization, 36.0)

@@ -13,12 +13,9 @@ import SwiftUI
 struct AgentUsageDetailView: View {
     /// "claude" | "codex"
     let agent: String
+    /// GW-203: per-model weeklies + extra-usage spend now ride the .quota
+    /// case - the view reads them off `display`, no agent-name side channel.
     let display: AgentUsageDisplay
-    /// GW-201: per-model weekly sub-limits (Claude OAuth only; non-null
-    /// fields from the usage endpoint, e.g. [("Sonnet", period)])
-    var perModelWeeklies: [(label: String, period: QuotaPeriod)] = []
-    /// GW-201: server-provided extra-usage spend - rendered only when enabled
-    var extraUsage: ExtraUsage? = nil
     let onBack: () -> Void
 
     private var tint: Color { AgentIdentity.tint(for: agent) }
@@ -28,8 +25,8 @@ struct AgentUsageDetailView: View {
             header
 
             switch display {
-            case .quota(let fiveHour, let sevenDay):
-                quotaDetail(fiveHour: fiveHour, sevenDay: sevenDay)
+            case .quota(let fiveHour, let sevenDay, let perModel, let extra):
+                quotaDetail(fiveHour: fiveHour, sevenDay: sevenDay, perModel: perModel, extra: extra)
             case .tokens(let tokens):
                 tokenDetail(tokens)
             }
@@ -59,7 +56,7 @@ struct AgentUsageDetailView: View {
 
     // MARK: - Quota mode
 
-    private func quotaDetail(fiveHour: QuotaPeriod?, sevenDay: QuotaPeriod?) -> some View {
+    private func quotaDetail(fiveHour: QuotaPeriod?, sevenDay: QuotaPeriod?, perModel: [PerModelQuota], extra: ExtraUsage?) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             if let fh = fiveHour {
                 quotaBar(label: "Session", period: fh, resetPrefix: "resets")
@@ -69,7 +66,7 @@ struct AgentUsageDetailView: View {
             }
 
             // GW-201: per-model weekly sub-limits (only non-null on the wire)
-            ForEach(perModelWeeklies, id: \.label) { entry in
+            ForEach(perModel, id: \.label) { entry in
                 UsageBar(
                     label: entry.label,
                     percent: entry.period.utilization / 100,
@@ -80,7 +77,7 @@ struct AgentUsageDetailView: View {
 
             // GW-201: server-truth spend toward the monthly extra-usage cap -
             // the one Spend bar whose fill means something (no tilde: exact)
-            if let extra = extraUsage, extra.isEnabled {
+            if let extra = extra, extra.isEnabled {
                 VStack(alignment: .leading, spacing: 2) {
                     UsageBar(
                         label: "Spend",

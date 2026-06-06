@@ -60,6 +60,53 @@ final class UsageServiceParseTests: XCTestCase {
         XCTAssertEqual(extra.monthlyLimitCents, 25000)
         XCTAssertEqual(extra.usedCredits, 2318.0)
         XCTAssertEqual(extra.utilization, 9.272, accuracy: 0.0001)
+        // GW-203: currency is carried, not dropped (cents→dollars only valid for USD)
+        XCTAssertEqual(extra.currency, "USD")
+    }
+
+    func testExtraUsageCurrencyDefaultsToUSDWhenAbsent() throws {
+        let usage = try parse("""
+        { "extra_usage": {"is_enabled": true, "monthly_limit": 25000, "used_credits": 100.0, "utilization": 0.4} }
+        """)
+        XCTAssertEqual(usage.extraUsage?.currency, "USD")
+    }
+
+    func testDecodesCachedExtraUsageWrittenBeforeCurrencyExisted() throws {
+        // Codex review P3: a pre-GW-203 usage-cache.json has no `currency`
+        // key; synthesized decoding would throw and blank the whole cache.
+        let legacyCache = Data("""
+        {"isEnabled": true, "monthlyLimitCents": 25000, "usedCredits": 2318.0, "utilization": 9.272}
+        """.utf8)
+        let extra = try JSONDecoder().decode(ExtraUsage.self, from: legacyCache)
+        XCTAssertTrue(extra.isEnabled)
+        XCTAssertEqual(extra.monthlyLimitCents, 25000)
+        XCTAssertEqual(extra.currency, "USD")
+    }
+
+    // MARK: - GW-203: per-model + extra ride the display enum's .quota case
+
+    func testQuotaDisplayCarriesPerModelAndExtra() throws {
+        let usage = try parse(fullFixture)
+        guard case .quota(let fiveHour, let sevenDay, let perModel, let extra) = usage.quotaDisplay else {
+            return XCTFail("expected .quota, got \(usage.quotaDisplay)")
+        }
+        XCTAssertEqual(fiveHour?.utilization, 29.0)
+        XCTAssertEqual(sevenDay?.utilization, 43.0)
+        // opus null → dropped; sonnet present → carried (only non-null weeklies)
+        XCTAssertEqual(perModel.map(\.label), ["Sonnet"])
+        XCTAssertEqual(perModel.first?.period.utilization, 2.0)
+        XCTAssertEqual(extra?.usedCredits, 2318.0)
+    }
+
+    func testQuotaDisplayDropsNullWeeklies() throws {
+        let usage = try parse("""
+        { "five_hour": {"utilization": 5.0}, "seven_day": {"utilization": 10.0} }
+        """)
+        guard case .quota(_, _, let perModel, let extra) = usage.quotaDisplay else {
+            return XCTFail("expected .quota")
+        }
+        XCTAssertTrue(perModel.isEmpty)
+        XCTAssertNil(extra)
     }
 
     func testIgnoresUnknownCodenameKeys() throws {

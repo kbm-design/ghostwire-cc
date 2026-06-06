@@ -100,6 +100,20 @@ final class UsageFormatTests: XCTestCase {
         XCTAssertEqual(UsageFormat.spendDetail(usedCents: 1299, limitCents: 5000), "$12.99 / $50")
     }
 
+    // MARK: - GW-203: one activity window owner
+
+    func testAgentActivityWindowIsFiveHours() {
+        XCTAssertEqual(AgentActivity.window, 5 * 3600)
+    }
+
+    func testAgentActivityRecencyBracketsTheWindow() {
+        let now = Date()
+        XCTAssertTrue(AgentActivity.isRecent(now.addingTimeInterval(-3600), now: now))
+        XCTAssertTrue(AgentActivity.isRecent(now.addingTimeInterval(-(5 * 3600 - 60)), now: now))
+        XCTAssertFalse(AgentActivity.isRecent(now.addingTimeInterval(-(5 * 3600 + 60)), now: now))
+        XCTAssertFalse(AgentActivity.isRecent(nil, now: now))
+    }
+
     func testTokenSummaryPrefersCostWhenAvailable() {
         // Summary detail text: spend figure when priced, token count fallback
         let tokens = AgentTokenDisplay(

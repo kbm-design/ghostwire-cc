@@ -66,10 +66,10 @@ class GhostwireViewCoordinator: ObservableObject {
         didSet {
             if !alwaysShowTabs {
                 openLastTabByDefault = false
-                if ShelfStateViewModel.shared.isEmpty || !Defaults[.openShelfByDefault] {
-                    currentView = .buddy
-                }
-                NotchTab.ensureCurrentViewVisible()
+                // GW-203: route through the single default-view policy instead
+                // of hard-setting .buddy - this path bypassed the shelf-default
+                // / agents-first (GW-199 idle) rule before.
+                applyDefaultViewOnOpen()
             }
         }
     }
@@ -308,7 +308,36 @@ class GhostwireViewCoordinator: ObservableObject {
         }
     }
     
+    /// GW-203: the single source of truth for which tab a fresh open lands on.
+    /// ALL open/close paths route through this - close() (preparing the next
+    /// open), showEmpty(), and the alwaysShowTabs toggle - so none of them can
+    /// bypass the shelf-by-default / agents-first (GW-199 idle) rule by
+    /// hard-setting .buddy.
+    ///
+    /// Rule: open the Shelf when it has content and is the user's default and
+    /// is a visible tab; otherwise the first visible tab, preferring Agents;
+    /// .buddy is the last-resort fallback when nothing else is visible.
+    /// "Remember last tab" (openLastTabByDefault) opts out - currentView is
+    /// left as-is so the previous tab persists.
+    func applyDefaultViewOnOpen() {
+        guard !openLastTabByDefault else { return }
+        currentView = defaultViewOnOpen()
+        NotchTab.ensureCurrentViewVisible()
+    }
+
+    /// Pure policy (no side effects) - which view a fresh open should show.
+    /// Exposed for the open/close paths and unit tests.
+    func defaultViewOnOpen() -> NotchViews {
+        let visible = NotchTab.currentlyVisible
+        if !ShelfStateViewModel.shared.isEmpty,
+           Defaults[.openShelfByDefault],
+           visible.contains(.shelf) {
+            return .shelf
+        }
+        return visible.first(where: { $0 == .agents })?.view ?? visible.first?.view ?? .buddy
+    }
+
     func showEmpty() {
-        currentView = .buddy
+        applyDefaultViewOnOpen()
     }
 }

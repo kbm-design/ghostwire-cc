@@ -10,6 +10,22 @@
 
 import Foundation
 
+/// GW-203: single owner of the agent-activity window. "Has this machine used
+/// the agent recently enough that its locally-derived meter is still live?"
+/// 5h aligns with the GW-199 idle threshold and the meter's 5H bucket. The
+/// constant lived in three places before (IdleStateRule/SessionDiscovery
+/// maxAge, the Codex meter visibility check's literal 5*3600, and the
+/// ClaudeTokenUsageParser 5H window) - this is the one definition.
+enum AgentActivity {
+    static let window: TimeInterval = 5 * 3600
+
+    /// Activity at `date` counts as recent if it falls within `window` of `now`.
+    static func isRecent(_ date: Date?, now: Date = Date()) -> Bool {
+        guard let date else { return false }
+        return now.timeIntervalSince(date) < window
+    }
+}
+
 /// Cumulative token totals (Codex: total_token_usage shape; Claude: usage{}).
 struct TokenUsageTotals: Equatable, Codable {
     var inputTokens: Int = 0
@@ -39,11 +55,28 @@ struct AgentRateLimits: Equatable, Codable {
     var sevenDay: QuotaPeriod?
 }
 
+/// A per-model weekly sub-limit (e.g. Opus/Sonnet on the Claude OAuth plan).
+/// GW-203: rides the display enum so the UI never reaches past it for the
+/// data (was a Claude-only side channel via UsageService.usage in GW-201).
+struct PerModelQuota: Equatable {
+    let label: String
+    let period: QuotaPeriod
+}
+
 /// What an agent's meter renders - the auth-branched display mode.
 /// Subscription/OAuth → .quota; API key → .tokens. One shape for every
 /// agent so AgentsTabView renders agent-agnostic (parity rule).
+///
+/// GW-203: .quota carries ALL its data (5H/7D + per-model weeklies + server
+/// extra-usage spend). The UI gates on the enum mode, never on agent name -
+/// when GW-200 gives Codex server quota it populates the same fields here.
 enum AgentUsageDisplay: Equatable {
-    case quota(fiveHour: QuotaPeriod?, sevenDay: QuotaPeriod?)
+    case quota(
+        fiveHour: QuotaPeriod?,
+        sevenDay: QuotaPeriod?,
+        perModel: [PerModelQuota] = [],
+        extra: ExtraUsage? = nil
+    )
     case tokens(AgentTokenDisplay)
 }
 
@@ -57,9 +90,10 @@ struct AgentTokenDisplay: Equatable {
     var contextUsed: Int?
     var contextWindow: Int?
 
-    /// Freshness rule (GW-151): locally-derived meters age out after 5h of
-    /// inactivity. Token activity in the 5H window proves this machine is
-    /// using the agent.
+    /// Freshness rule (GW-151): locally-derived meters age out after the
+    /// AgentActivity.window of inactivity. Token activity in that 5H bucket
+    /// (populated by the parser using AgentActivity.window) proves this
+    /// machine is using the agent.
     var hasRecentActivity: Bool {
         fiveHour != .zero
     }
@@ -79,6 +113,11 @@ struct CodexUsageSnapshot: Equatable, Codable {
     var lastContextUsed: Int?
     /// model_context_window of the latest event → context gauge denominator.
     var modelContextWindow: Int?
+    /// GW-203: timestamp of the newest token_count event across all sessions
+    /// in the window - the activity signal for meter freshness. Yielded from
+    /// the snapshot scan that already visits every event, so CodexUsageService
+    /// no longer needs a second mtime-walk of the rollout tree.
+    var latestActivity: Date?
 
     var hasData: Bool {
         rateLimits != nil || tokens != .zero

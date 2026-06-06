@@ -50,6 +50,13 @@ struct CodexUsageParser {
             }
         }
 
+        // GW-203: surface the activity signal from this scan (was a separate
+        // mtime-walk in CodexUsageService.newestRolloutDate). distantPast means
+        // no token_count events were seen → no activity.
+        if latestEventDate > .distantPast {
+            snapshot.latestActivity = latestEventDate
+        }
+
         return snapshot
     }
 

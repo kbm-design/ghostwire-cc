@@ -9648,7 +9648,7 @@
         }
       }
     },
-    "Forwards Claude Code events to Notch Command Center via Unix socket." : {
+    "Forwards Claude Code events to Ghostwire via Unix socket." : {
 
     },
     "Full screen behavior" : {
@@ -10150,6 +10150,9 @@
           }
         }
       }
+    },
+    "Ghostwire" : {
+
     },
     "GitHub" : {
       "localizations" : {
@@ -11257,7 +11260,7 @@
     "Hooks installed" : {
 
     },
-    "Hooks only send session events to Notch Command Center. No data leaves your machine." : {
+    "Hooks only send session events to Ghostwire. No data leaves your machine." : {
 
     },
     "Hover delay" : {
@@ -11869,7 +11872,7 @@
     "Install Hooks" : {
 
     },
-    "Install hooks to let Notch Command Center monitor your Claude Code sessions, show approval requests, and track usage." : {
+    "Install hooks to let Ghostwire monitor your Claude Code sessions, show approval requests, and track usage." : {
 
     },
     "Installed" : {
@@ -15313,9 +15316,6 @@
         }
       }
     },
-    "Notch Command Center" : {
-
-    },
     "Notch height on non-notch displays" : {
       "localizations" : {
         "ar" : {
@@ -18139,7 +18139,7 @@
         }
       }
     },
-    "Restart Notch Command Center" : {
+    "Restart Ghostwire" : {
 
     },
     "Retry" : {
@@ -21581,7 +21581,7 @@
         }
       }
     },
-    "To send messages from Notch Command Center to cmux sessions, set Socket Control Mode to \"Automation mode\" in cmux Settings > Automation." : {
+    "To send messages from Ghostwire to cmux sessions, set Socket Control Mode to \"Automation mode\" in cmux Settings > Automation." : {
 
     },
     "Toggle Notch Open:" : {

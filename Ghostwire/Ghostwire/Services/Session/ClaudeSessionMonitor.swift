@@ -99,17 +99,22 @@ class ClaudeSessionMonitor: ObservableObject {
                 return
             }
 
+            let toolUseId = permission.toolUseId
             HookSocketServer.shared.respondToPermission(
-                toolUseId: permission.toolUseId,
+                toolUseId: toolUseId,
                 decision: "allow"
-            )
-
-            // GW-207: stamp the history alert for this exact tool_use_id.
-            AlertHistoryStore.shared.markPermissionOutcome(
-                sessionId: sessionId,
-                toolUseId: permission.toolUseId,
-                outcome: "allowed"
-            )
+            ) { wasDelivered in
+                // GW-207 (review P2): stamp history per the actual write
+                // result - a stale socket means the agent never got the
+                // verdict, so that's a timeout, not an approval.
+                Task { @MainActor in
+                    AlertHistoryStore.shared.markPermissionOutcome(
+                        sessionId: sessionId,
+                        toolUseId: toolUseId,
+                        outcome: wasDelivered ? "allowed" : "timedOut"
+                    )
+                }
+            }
 
             await SessionStore.shared.process(
                 .permissionApproved(sessionId: sessionId, toolUseId: permission.toolUseId)
@@ -124,18 +129,22 @@ class ClaudeSessionMonitor: ObservableObject {
                 return
             }
 
+            let toolUseId = permission.toolUseId
             HookSocketServer.shared.respondToPermission(
-                toolUseId: permission.toolUseId,
+                toolUseId: toolUseId,
                 decision: "deny",
                 reason: reason
-            )
-
-            // GW-207: stamp the history alert for this exact tool_use_id.
-            AlertHistoryStore.shared.markPermissionOutcome(
-                sessionId: sessionId,
-                toolUseId: permission.toolUseId,
-                outcome: "denied"
-            )
+            ) { wasDelivered in
+                // GW-207 (review P2): see approvePermission - write result
+                // decides the recorded outcome.
+                Task { @MainActor in
+                    AlertHistoryStore.shared.markPermissionOutcome(
+                        sessionId: sessionId,
+                        toolUseId: toolUseId,
+                        outcome: wasDelivered ? "denied" : "timedOut"
+                    )
+                }
+            }
 
             await SessionStore.shared.process(
                 .permissionDenied(sessionId: sessionId, toolUseId: permission.toolUseId, reason: reason)

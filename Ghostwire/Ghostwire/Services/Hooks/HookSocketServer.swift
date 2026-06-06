@@ -229,10 +229,14 @@ class HookSocketServer {
         permissionsLock.unlock()
     }
 
-    /// Respond to a pending permission request by toolUseId
-    func respondToPermission(toolUseId: String, decision: String, reason: String? = nil) {
+    /// Respond to a pending permission request by toolUseId.
+    /// GW-207: `delivered` reports whether the verdict actually reached the
+    /// held hook socket - a stale/dead socket means the agent never got it.
+    func respondToPermission(toolUseId: String, decision: String, reason: String? = nil,
+                             delivered: (@Sendable (Bool) -> Void)? = nil) {
         queue.async { [weak self] in
-            self?.sendPermissionResponse(toolUseId: toolUseId, decision: decision, reason: reason)
+            let ok = self?.sendPermissionResponse(toolUseId: toolUseId, decision: decision, reason: reason) ?? false
+            delivered?(ok)
         }
     }
 
@@ -539,19 +543,21 @@ class HookSocketServer {
         eventHandler?(event)
     }
 
-    private func sendPermissionResponse(toolUseId: String, decision: String, reason: String?) {
+    /// Returns whether the verdict was actually written to the held socket (GW-207).
+    @discardableResult
+    private func sendPermissionResponse(toolUseId: String, decision: String, reason: String?) -> Bool {
         permissionsLock.lock()
         guard let pending = pendingPermissions.removeValue(forKey: toolUseId) else {
             permissionsLock.unlock()
             logger.debug("No pending permission for toolUseId: \(toolUseId.prefix(12), privacy: .public)")
-            return
+            return false
         }
         permissionsLock.unlock()
 
         let response = HookResponse(decision: decision, reason: reason)
         guard let data = try? JSONEncoder().encode(response) else {
             closeClientSocket(pending.clientSocket, cleanupPending: true)
-            return
+            return false
         }
 
         let age = Date().timeIntervalSince(pending.receivedAt)
@@ -580,6 +586,7 @@ class HookSocketServer {
         } else {
             closeClientSocket(pending.clientSocket, cleanupPending: true)
         }
+        return writeSucceeded
     }
 
     private func sendPermissionResponseBySession(sessionId: String, decision: String, reason: String?) {

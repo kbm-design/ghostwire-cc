@@ -116,16 +116,30 @@ private struct AlertHistoryRow: View {
                         .foregroundStyle(.tertiary)
                         .lineLimit(1)
                         .truncationMode(.middle)
+                } else {
+                    // Pre-v2 rows carried only the tool name in `detail`;
+                    // without this they'd render as a bare dot + timestamp.
+                    Text(alert.detail ?? "Approval")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
                 }
                 if let glyph = outcomeGlyph {
                     Image(systemName: glyph.symbol)
                         .font(.system(size: 9, weight: .semibold))
                         .foregroundStyle(glyph.color)
                 }
-            } else if alert.kind == "ready", alert.outcome == "responded" {
-                Text("user responded")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
+            } else if alert.kind == "ready" {
+                if alert.outcome == "responded" {
+                    Text("user responded")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                } else if alert.folder == nil {
+                    // Pre-v2 ready rows have no folder either - keep a label.
+                    Text("Ready")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
             }
 
             Spacer(minLength: 4)

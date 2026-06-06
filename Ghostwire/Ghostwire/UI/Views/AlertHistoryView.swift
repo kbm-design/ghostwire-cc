@@ -2,10 +2,12 @@
 //  AlertHistoryView.swift
 //  Ghostwire
 //
-//  GW-207: the "recent alerts" history, rendered as a TRAILING SECTION at the
-//  bottom of the active-chats list (ClaudeInstancesView). One feed: live
-//  session rows first, history below the fold — reachable only by scrolling
-//  past the present into the past. The quick view spends zero pixels on it.
+//  GW-208: the "recent alerts" history, reached via a single compact access
+//  row at the END of the active-chats list (ClaudeInstancesView) — clock glyph
+//  + count + chevron, quiet styling. Tapping it swaps the full history view
+//  into AgentsTabView's homeContent (the AgentUsageDetailView idiom: a
+//  back-chevron header, no new window). The quick view spends zero pixels on
+//  the list itself.
 //
 //  Renders AlertHistoryStore (GW-144) — the governed, capped store of the
 //  permission/ready alerts the app actually raised. Read-only viewer with a
@@ -17,12 +19,12 @@
 
 import SwiftUI
 
-/// Trailing history section: a quiet "Recent alerts" caption divider + the
-/// newest-first one-line rows + a small Clear. Embedded inside the instances
-/// scroll, so it only appears once you scroll past the live rows. Renders
-/// nothing when there are no alerts (the home stays quiet).
-struct AlertHistorySection: View {
+/// Full "Recent alerts" view, swapped into homeContent when the access row is
+/// tapped (AgentUsageDetailView-style detail toggle): back-chevron header +
+/// Clear, then the newest-first rich one-line rows.
+struct AlertHistoryView: View {
     @ObservedObject private var store = AlertHistoryStore.shared
+    let onBack: () -> Void
 
     /// Newest first — the store keeps oldest-first for pruning.
     private var alerts: [AgentAlert] {
@@ -30,28 +32,40 @@ struct AlertHistorySection: View {
     }
 
     var body: some View {
-        if !alerts.isEmpty {
-            VStack(alignment: .leading, spacing: 2) {
-                sectionHeader
-                ForEach(alerts) { alert in
-                    AlertHistoryRow(alert: alert)
+        VStack(alignment: .leading, spacing: 6) {
+            header
+
+            ScrollView(.vertical, showsIndicators: false) {
+                LazyVStack(alignment: .leading, spacing: 2) {
+                    ForEach(alerts) { alert in
+                        AlertHistoryRow(alert: alert)
+                    }
                 }
             }
-            .padding(.top, 6)
+            .scrollBounceBehavior(.basedOnSize)
+
+            Spacer(minLength: 0)
         }
+        .padding(.horizontal, 8)
     }
 
-    /// Quiet divider: a "Recent alerts" caption with the small Clear trailing.
-    private var sectionHeader: some View {
+    /// Back chevron + "Recent alerts" + a small Clear (matches the
+    /// AgentUsageDetailView header idiom; Clear trails as the lone action).
+    private var header: some View {
         HStack(spacing: 6) {
-            Text("Recent alerts")
-                .font(.caption2.weight(.medium))
-                .foregroundStyle(.tertiary)
-                .textCase(.uppercase)
+            Button(action: onBack) {
+                HStack(spacing: 6) {
+                    Image(systemName: "chevron.left")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    Text("Recent alerts")
+                        .font(.subheadline.weight(.medium))
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
 
-            Rectangle()
-                .fill(Color.white.opacity(0.08))
-                .frame(height: 1)
+            Spacer()
 
             Button(action: { store.clear() }) {
                 Text("Clear")
@@ -61,9 +75,53 @@ struct AlertHistorySection: View {
             .buttonStyle(.plain)
             .help("Remove all recorded alerts")
         }
-        .padding(.horizontal, 8)
-        .padding(.top, 2)
-        .padding(.bottom, 4)
+    }
+}
+
+/// Compact end-of-list access row: clock glyph + "Recent alerts" + count +
+/// chevron, quiet styling. Lives at the bottom of the instances list; tapping
+/// it opens the full AlertHistoryView. Renders nothing when there are no
+/// alerts (the home stays quiet).
+struct AlertHistoryAccessRow: View {
+    @ObservedObject private var store = AlertHistoryStore.shared
+    let onOpen: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        if !store.alerts.isEmpty {
+            Button(action: onOpen) {
+                HStack(spacing: 8) {
+                    Image(systemName: "clock.arrow.circlepath")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.tertiary)
+
+                    Text("Recent alerts")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.secondary)
+
+                    Text("\(store.alerts.count)")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+
+                    Spacer(minLength: 4)
+
+                    Image(systemName: "chevron.right")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.tertiary)
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 8)
+                .contentShape(Rectangle())
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(isHovered ? Color.white.opacity(0.05) : Color.clear)
+                )
+            }
+            .buttonStyle(.plain)
+            .onHover { isHovered = $0 }
+            .padding(.top, 6)
+        }
     }
 }
 

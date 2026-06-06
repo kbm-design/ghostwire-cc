@@ -11,9 +11,12 @@ import SwiftUI
 struct ClaudeInstancesView: View {
     @ObservedObject var sessionMonitor: ClaudeSessionMonitor
     @ObservedObject var viewModel: AgentPanelViewModel
-    /// GW-207: the alert history rides as a trailing section in this same
-    /// scroll — below the live rows, reachable only by scrolling past them.
+    /// GW-208: a compact access row at the END of this list opens the separate
+    /// alert-history view (swapped into homeContent by AgentsTabView). The list
+    /// itself no longer renders under the live rows.
     @ObservedObject private var alertHistory = AlertHistoryStore.shared
+    /// Tap on the access row → AgentsTabView swaps in AlertHistoryView.
+    let onOpenAlerts: () -> Void
 
     var body: some View {
         if sessionMonitor.instances.isEmpty && alertHistory.alerts.isEmpty {
@@ -83,8 +86,9 @@ struct ClaudeInstancesView: View {
                     .id(session.stableId)
                 }
 
-                // GW-207: history below the live rows — one feed, present → past.
-                AlertHistorySection()
+                // GW-208: compact access row at the end of the list — opens
+                // the separate history view. Renders nothing when no alerts.
+                AlertHistoryAccessRow(onOpen: onOpenAlerts)
             }
             .padding(.vertical, 4)
         }

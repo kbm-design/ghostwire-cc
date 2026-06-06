@@ -594,6 +594,7 @@ final class ShelfItemViewModel: ObservableObject {
         private func sendSelectedToAgent() {
             let selected = ShelfSelectionModel.shared.selectedItems(in: ShelfStateViewModel.shared.items)
             Task {
+                var deliveredAny = false
                 for item in selected {
                     let payload: SendToAgentCoordinator.Payload?
                     switch item.kind {
@@ -610,11 +611,20 @@ final class ShelfItemViewModel: ObservableObject {
                         payload = .text(url.absoluteString)
                     }
                     guard let payload else { continue }
+                    // Separate consecutive payloads in the agent input — without
+                    // this, tokens concatenate (`@a@b`) and can't be parsed
+                    // (Codex review P2). The separator rides the same resolved
+                    // target; bail if it can't deliver.
+                    if deliveredAny {
+                        let sep = await SendToAgentCoordinator.shared.send(.text(" "))
+                        if sep != .delivered { break }
+                    }
                     let result = await SendToAgentCoordinator.shared.send(payload)
                     // If a disambiguation picker came up, stop before the next
                     // item clobbers the pending payload — the user resolves the
                     // raised one; re-invoke Send to Agent for the rest.
                     if result == .awaitingPick { break }
+                    if result == .delivered { deliveredAny = true }
                 }
             }
         }

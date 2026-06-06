@@ -452,6 +452,10 @@ struct ChatView: View {
         ChatApprovalBar(
             tool: tool,
             toolInput: session.pendingToolInput,
+            // GW-139: the verbatim string the human is approving. Full-raw
+            // mode renders this untruncated; the lossy `toolInput` is only
+            // the compact inline fallback.
+            toolRawInput: session.pendingToolRawInput,
             onApprove: { approvePermission() },
             onDeny: { denyPermission() }
         )
@@ -1159,7 +1163,10 @@ struct ChatInteractivePromptBar: View {
 /// Approval bar for the chat view with animated buttons
 struct ChatApprovalBar: View {
     let tool: String
+    /// Lossy, single-line summary — used only for the compact `.inline` mode.
     let toolInput: String?
+    /// Verbatim, untruncated command (GW-139). Rendered in `.fullRaw` mode.
+    let toolRawInput: String?
     let onApprove: () -> Void
     let onDeny: () -> Void
 
@@ -1171,6 +1178,11 @@ struct ChatApprovalBar: View {
     // verbatim and untruncated — what you approve is what runs.
     @Default(.messageDisplayMode) private var displayMode
 
+    /// Cap the verbatim block's height so a huge payload can't push the
+    /// buttons off-screen — but it stays fully scrollable + selectable, so
+    /// nothing is hidden from the human (GW-139: no truncation, ever).
+    private let rawMaxHeight: CGFloat = 160
+
     var body: some View {
         HStack(spacing: 12) {
             // Tool info
@@ -1178,19 +1190,27 @@ struct ChatApprovalBar: View {
                 Text(MCPToolFormatter.formatToolName(tool))
                     .font(.system(size: 12, weight: .medium, design: .monospaced))
                     .foregroundColor(TerminalColors.amber)
-                if let input = toolInput {
-                    if displayMode == .fullRaw {
-                        Text(verbatim: input)
-                            .font(.system(size: 11, design: .monospaced))
-                            .foregroundColor(.white.opacity(0.7))
-                            .textSelection(.enabled)
-                            .fixedSize(horizontal: false, vertical: true)
-                    } else {
-                        Text(input)
-                            .font(.system(size: 11))
-                            .foregroundColor(.white.opacity(0.5))
-                            .lineLimit(1)
+                if displayMode == .fullRaw {
+                    // Verbatim path: the exact string being approved. Never
+                    // the lossy `toolInput` — that clips at 100 chars and would
+                    // hide injected tails (GW-139 injection-attack visibility).
+                    if let raw = toolRawInput, !raw.isEmpty {
+                        ScrollView(.vertical, showsIndicators: true) {
+                            Text(verbatim: raw)
+                                .font(.system(size: 11, design: .monospaced))
+                                .foregroundColor(.white.opacity(0.8))
+                                .textSelection(.enabled)
+                                .multilineTextAlignment(.leading)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .frame(maxHeight: rawMaxHeight)
                     }
+                } else if let input = toolInput {
+                    Text(input)
+                        .font(.system(size: 11))
+                        .foregroundColor(.white.opacity(0.5))
+                        .lineLimit(1)
                 }
             }
             .opacity(showContent ? 1 : 0)
@@ -1214,7 +1234,11 @@ struct ChatApprovalBar: View {
             .opacity(showDenyButton ? 1 : 0)
             .scaleEffect(showDenyButton ? 1 : 0.8)
 
-            // Allow button
+            // Allow button.
+            // FOCUS SAFETY (GW-139): deliberate activation only — explicit
+            // ⌘⇧↩ shortcut, NOT `.defaultAction`/`.keyboardShortcut(.return)`,
+            // so a stray Enter/Space while typing can never approve. `.plain`
+            // style also keeps it from inheriting default-button key behavior.
             Button {
                 onApprove()
             } label: {
@@ -1227,6 +1251,8 @@ struct ChatApprovalBar: View {
                     .clipShape(Capsule())
             }
             .buttonStyle(.plain)
+            .keyboardShortcut(.return, modifiers: [.command, .shift])
+            .help("Allow (⌘⇧↩)")
             .opacity(showAllowButton ? 1 : 0)
             .scaleEffect(showAllowButton ? 1 : 0.8)
         }

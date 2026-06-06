@@ -167,9 +167,16 @@ struct SessionState: Equatable, Identifiable, Sendable {
         activePermission?.toolUseId
     }
 
-    /// Formatted pending tool input for display
+    /// Formatted pending tool input for display (lossy — clipped for compact
+    /// rows). Do not use in the verbatim approval path; see `pendingToolRawInput`.
     var pendingToolInput: String? {
         activePermission?.formattedInput
+    }
+
+    /// Verbatim pending tool input — every key/value untruncated, for the
+    /// approval surface's full-raw rendering (GW-139 security rule).
+    var pendingToolRawInput: String? {
+        activePermission?.rawInput
     }
 
     /// Last message content

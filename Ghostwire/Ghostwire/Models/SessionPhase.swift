@@ -15,7 +15,13 @@ struct PermissionContext: Sendable {
     let toolInput: [String: AnyCodable]?
     let receivedAt: Date
 
-    /// Format tool input for display
+    /// Format tool input for display.
+    ///
+    /// LOSSY ON PURPOSE — string values are clipped to 100 chars for the
+    /// compact (`.inline`) one-line approval row and the dense session list.
+    /// The approval surface MUST NOT use this in `.fullRaw` mode: the human
+    /// has to see exactly what they're approving (GW-139 security rule).
+    /// Use `rawInput` for the verbatim approval path.
     var formattedInput: String? {
         guard let input = toolInput else { return nil }
         var parts: [String] = []
@@ -39,6 +45,39 @@ struct PermissionContext: Sendable {
             parts.append("\(key): \(valueStr)")
         }
         return parts.joined(separator: "\n")
+    }
+
+    /// Verbatim tool input for the approval surface (GW-139): every key,
+    /// every value, in stable key order, NEVER truncated. This is the exact
+    /// string the human is approving — no clipping, no ellipsis, no markdown.
+    /// `cmd` is normalized to `command` for cross-agent parity (GW-197), but
+    /// values pass through untouched. Pure + nonisolated for unit testing.
+    var rawInput: String? {
+        guard let input = toolInput else { return nil }
+        return Self.rawInput(input)
+    }
+
+    /// Pure renderer behind `rawInput` — exposed for tests. Mirrors
+    /// `ToolCallView.rawInput` (the transcript path) so the approval surface
+    /// and the history transcript can never disagree about what ran.
+    nonisolated static func rawInput(_ input: [String: AnyCodable]) -> String {
+        input
+            .map { (rawKey, value) -> (String, String) in
+                let key = rawKey == "cmd" ? "command" : rawKey
+                let valueStr: String
+                switch value.value {
+                case let str as String: valueStr = str
+                case let num as Int: valueStr = String(num)
+                case let num as Double: valueStr = String(num)
+                case let bool as Bool: valueStr = bool ? "true" : "false"
+                case is NSNull: valueStr = "null"
+                default: valueStr = String(describing: value.value)
+                }
+                return (key, valueStr)
+            }
+            .sorted { $0.0 < $1.0 }
+            .map { "\($0.0): \($0.1)" }
+            .joined(separator: "\n")
     }
 }
 

@@ -2,22 +2,27 @@
 //  AlertHistoryView.swift
 //  Ghostwire
 //
-//  GW-139: the "recent terminal alerts" history list for the Agents tab.
-//  Renders AlertHistoryStore (GW-144) — the governed, capped store of the
-//  permission/ready alerts the app actually raised. Read-only viewer:
-//  identity tint encodes WHICH agent, a glyph encodes the alert kind, and
-//  the relative time encodes WHEN. One code path for Claude / Codex / any
-//  future agent — gated on the AgentIdentity tint, never agent-name strings.
+//  GW-207: the "recent alerts" history, rendered as a TRAILING SECTION at the
+//  bottom of the active-chats list (ClaudeInstancesView). One feed: live
+//  session rows first, history below the fold — reachable only by scrolling
+//  past the present into the past. The quick view spends zero pixels on it.
 //
-//  Swapped into AgentsTabView's homeContent like AgentUsageDetailView
-//  (AgentPeek-style detail toggle, no new window).
+//  Renders AlertHistoryStore (GW-144) — the governed, capped store of the
+//  permission/ready alerts the app actually raised. Read-only viewer with a
+//  small/quiet Clear. House style: identity tint encodes WHICH agent, an
+//  outcome glyph encodes how it resolved, no name pills, no title+badge stacks.
+//  One code path for Claude / Codex / any future agent — gated on the
+//  AgentIdentity tint, never agent-name strings.
 //
 
 import SwiftUI
 
-struct AlertHistoryView: View {
+/// Trailing history section: a quiet "Recent alerts" caption divider + the
+/// newest-first one-line rows + a small Clear. Embedded inside the instances
+/// scroll, so it only appears once you scroll past the live rows. Renders
+/// nothing when there are no alerts (the home stays quiet).
+struct AlertHistorySection: View {
     @ObservedObject private var store = AlertHistoryStore.shared
-    let onBack: () -> Void
 
     /// Newest first — the store keeps oldest-first for pruning.
     private var alerts: [AgentAlert] {
@@ -25,78 +30,48 @@ struct AlertHistoryView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            header
-
-            if alerts.isEmpty {
-                emptyState
-            } else {
-                ScrollView(.vertical, showsIndicators: false) {
-                    LazyVStack(spacing: 2) {
-                        ForEach(alerts) { alert in
-                            AlertHistoryRow(alert: alert)
-                        }
-                    }
-                    .padding(.vertical, 2)
+        if !alerts.isEmpty {
+            VStack(alignment: .leading, spacing: 2) {
+                sectionHeader
+                ForEach(alerts) { alert in
+                    AlertHistoryRow(alert: alert)
                 }
-                .scrollBounceBehavior(.basedOnSize)
             }
-
-            Spacer(minLength: 0)
+            .padding(.top, 6)
         }
-        .padding(.horizontal, 8)
     }
 
-    private var header: some View {
+    /// Quiet divider: a "Recent alerts" caption with the small Clear trailing.
+    private var sectionHeader: some View {
         HStack(spacing: 6) {
-            Button(action: onBack) {
-                HStack(spacing: 6) {
-                    Image(systemName: "chevron.left")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                    Text("Recent alerts")
-                        .font(.subheadline.weight(.medium))
-                }
-                .contentShape(Rectangle())
+            Text("Recent alerts")
+                .font(.caption2.weight(.medium))
+                .foregroundStyle(.tertiary)
+                .textCase(.uppercase)
+
+            Rectangle()
+                .fill(Color.white.opacity(0.08))
+                .frame(height: 1)
+
+            Button(action: { store.clear() }) {
+                Text("Clear")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
             }
             .buttonStyle(.plain)
-
-            Spacer()
-
-            if !alerts.isEmpty {
-                Button(action: { store.clear() }) {
-                    Text("Clear")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                .buttonStyle(.plain)
-                .help("Remove all recorded alerts")
-            }
+            .help("Remove all recorded alerts")
         }
-    }
-
-    private var emptyState: some View {
-        VStack(spacing: 8) {
-            Image(systemName: "bell.slash")
-                .font(.system(size: 22))
-                .foregroundColor(.white.opacity(0.2))
-            Text("No alerts yet")
-                .font(.caption.weight(.medium))
-                .foregroundStyle(.secondary)
-            Text("Permission and ready-for-input alerts appear here.")
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
-                .multilineTextAlignment(.center)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(.horizontal, 8)
+        .padding(.top, 2)
+        .padding(.bottom, 4)
     }
 }
 
 // MARK: - Row
 
-/// One recorded alert: identity tint (which agent) + kind glyph (what) +
-/// optional detail (the pending tool) + relative time (when). No agent-name
-/// label — the tint carries identity, matching the session-row badge (GW-138).
+/// One recorded alert, one line (GW-207): identity tint dot (which agent) +
+/// folder + permission command/outcome glyph OR ready "user responded" +
+/// relative time. No agent-name pill, no title+badge stack.
 private struct AlertHistoryRow: View {
     let alert: AgentAlert
 
@@ -106,76 +81,80 @@ private struct AlertHistoryRow: View {
         AgentIdentity.tint(for: alert.agent)
     }
 
-    /// "permission" → amber gate glyph; "ready" → green ready glyph; else dot.
-    private var kindGlyph: String {
-        switch alert.kind {
-        case "permission": return "hand.raised"
-        case "ready": return "bell"
-        default: return "circle.fill"
-        }
-    }
-
-    private var kindColor: Color {
-        switch alert.kind {
-        case "permission": return TerminalColors.amber
-        case "ready": return TerminalColors.green
-        default: return .white.opacity(0.5)
-        }
-    }
-
-    /// Short human description of the alert kind (forward-compat: unknown
-    /// kinds render their raw string rather than vanishing).
-    private var kindLabel: String {
-        switch alert.kind {
-        case "permission": return "Approval"
-        case "ready": return "Ready"
-        default: return alert.kind.capitalized
+    /// Outcome glyph + color for permission alerts. nil outcome → nothing
+    /// (unanswered is the absence state, not a glyph).
+    private var outcomeGlyph: (symbol: String, color: Color)? {
+        switch alert.outcome {
+        case "allowed": return ("checkmark", TerminalColors.green)
+        case "denied": return ("xmark", TerminalColors.red)
+        case "timedOut": return ("timer", .white.opacity(0.4))
+        default: return nil
         }
     }
 
     var body: some View {
-        HStack(alignment: .center, spacing: 10) {
-            // Identity dot (which agent) layered behind the kind glyph (what).
-            ZStack {
-                Circle()
-                    .fill(tint.opacity(0.18))
-                    .frame(width: 22, height: 22)
-                Image(systemName: kindGlyph)
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(kindColor)
-            }
-
-            VStack(alignment: .leading, spacing: 1) {
-                HStack(spacing: 6) {
-                    Text(kindLabel)
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(.primary)
-                    if let detail = alert.detail, !detail.isEmpty {
-                        Text(MCPToolFormatter.formatToolName(detail))
-                            .font(.system(size: 11, weight: .medium, design: .monospaced))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
-                }
-                Text(Self.relativeFormatter.localizedString(for: alert.date, relativeTo: Date()))
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-            }
-
-            Spacer(minLength: 0)
-
-            // Identity tick on the trailing edge — same tint cue as the
-            // session-row badge, so the agent reads at a glance.
+        HStack(alignment: .center, spacing: 8) {
+            // Identity dot (which agent) — tint over a name pill (house style).
             Circle()
                 .fill(tint)
-                .frame(width: 5, height: 5)
-                .opacity(0.8)
+                .frame(width: 6, height: 6)
+
+            // folder
+            if let folder = alert.folder, !folder.isEmpty {
+                Text(folder)
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+
+            // permission: the command (truncated inline is fine — history, not
+            // the approval surface). ready: "user responded" or nothing.
+            if alert.kind == "permission" {
+                if let command = alert.command, !command.isEmpty {
+                    Text(command)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                } else {
+                    // Pre-v2 rows carried only the tool name in `detail`;
+                    // without this they'd render as a bare dot + timestamp.
+                    Text(alert.detail ?? "Approval")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                }
+                if let glyph = outcomeGlyph {
+                    Image(systemName: glyph.symbol)
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(glyph.color)
+                }
+            } else if alert.kind == "ready" {
+                if alert.outcome == "responded" {
+                    Text("user responded")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                } else if alert.folder == nil {
+                    // Pre-v2 ready rows have no folder either - keep a label.
+                    Text("Ready")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+
+            Spacer(minLength: 4)
+
+            // relative time of the alert itself
+            Text(Self.relativeFormatter.localizedString(for: alert.date, relativeTo: Date()))
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+                .layoutPriority(1)
         }
         .padding(.horizontal, 8)
-        .padding(.vertical, 7)
+        .padding(.vertical, 5)
         .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(isHovered ? Color.white.opacity(0.06) : Color.clear)
+            RoundedRectangle(cornerRadius: 8)
+                .fill(isHovered ? Color.white.opacity(0.05) : Color.clear)
         )
         .onHover { isHovered = $0 }
     }

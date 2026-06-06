@@ -65,6 +65,18 @@ class ClaudeSessionMonitor: ObservableObject {
                 }
             },
             onPermissionFailure: { sessionId, toolUseId in
+                // GW-207: a held permission socket that can no longer be written
+                // (hook process gone / its wait elapsed) is the provable
+                // "timed out" signal. Stamp the matching history alert. Pending
+                // permissions cleared by a plain Stop with no verdict carry no
+                // such signal — they stay unanswered (the absence state).
+                Task { @MainActor in
+                    AlertHistoryStore.shared.markPermissionOutcome(
+                        sessionId: sessionId,
+                        toolUseId: toolUseId,
+                        outcome: "timedOut"
+                    )
+                }
                 Task {
                     await SessionStore.shared.process(
                         .permissionSocketFailed(sessionId: sessionId, toolUseId: toolUseId)
@@ -87,10 +99,22 @@ class ClaudeSessionMonitor: ObservableObject {
                 return
             }
 
+            let toolUseId = permission.toolUseId
             HookSocketServer.shared.respondToPermission(
-                toolUseId: permission.toolUseId,
+                toolUseId: toolUseId,
                 decision: "allow"
-            )
+            ) { wasDelivered in
+                // GW-207 (review P2): stamp history per the actual write
+                // result - a stale socket means the agent never got the
+                // verdict, so that's a timeout, not an approval.
+                Task { @MainActor in
+                    AlertHistoryStore.shared.markPermissionOutcome(
+                        sessionId: sessionId,
+                        toolUseId: toolUseId,
+                        outcome: wasDelivered ? "allowed" : "timedOut"
+                    )
+                }
+            }
 
             await SessionStore.shared.process(
                 .permissionApproved(sessionId: sessionId, toolUseId: permission.toolUseId)
@@ -105,11 +129,22 @@ class ClaudeSessionMonitor: ObservableObject {
                 return
             }
 
+            let toolUseId = permission.toolUseId
             HookSocketServer.shared.respondToPermission(
-                toolUseId: permission.toolUseId,
+                toolUseId: toolUseId,
                 decision: "deny",
                 reason: reason
-            )
+            ) { wasDelivered in
+                // GW-207 (review P2): see approvePermission - write result
+                // decides the recorded outcome.
+                Task { @MainActor in
+                    AlertHistoryStore.shared.markPermissionOutcome(
+                        sessionId: sessionId,
+                        toolUseId: toolUseId,
+                        outcome: wasDelivered ? "denied" : "timedOut"
+                    )
+                }
+            }
 
             await SessionStore.shared.process(
                 .permissionDenied(sessionId: sessionId, toolUseId: permission.toolUseId, reason: reason)

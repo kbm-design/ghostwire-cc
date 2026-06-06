@@ -47,6 +47,22 @@ struct PermissionContext: Sendable {
         return parts.joined(separator: "\n")
     }
 
+    /// GW-207 alert-history command summary: a single line for the history
+    /// row (truncation happens in the view via `lineLimit`). Prefers the
+    /// `command`/`cmd` value (Bash / Codex exec) so the row reads as the shell
+    /// line; otherwise falls back to the lossy `formattedInput`, newlines
+    /// collapsed to spaces. NOT the approval surface — see `rawInput` for that.
+    var commandSummary: String? {
+        if let input = toolInput {
+            for (rawKey, value) in input where rawKey == "command" || rawKey == "cmd" {
+                if let str = value.value as? String {
+                    return str.replacingOccurrences(of: "\n", with: " ")
+                }
+            }
+        }
+        return formattedInput?.replacingOccurrences(of: "\n", with: " ")
+    }
+
     /// Verbatim tool input for the approval surface (GW-139): every key,
     /// every value, in stable key order, NEVER truncated. This is the exact
     /// string the human is approving — no clipping, no ellipsis, no markdown.

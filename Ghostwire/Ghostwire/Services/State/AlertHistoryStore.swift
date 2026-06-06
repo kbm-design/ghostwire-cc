@@ -27,6 +27,54 @@ struct AgentAlert: Codable, Identifiable, Equatable {
     let kind: String
     /// Optional short context, e.g. the pending tool name.
     let detail: String?
+
+    // MARK: - GW-207 v2 fields
+    // All optional + Codable: synthesized `init(from:)` uses
+    // decodeIfPresent for optionals, so v1 JSON (which lacks these keys)
+    // decodes cleanly with nil — verified by AlertHistoryStoreTests.
+
+    /// Project dir last path component, captured at record time.
+    let folder: String?
+    /// Permission alerts: the command/tool input, single-line. nil for ready.
+    let command: String?
+    /// Resolved outcome: "allowed" | "denied" | "timedOut" | "responded".
+    /// nil = unanswered (permission) or no user reply yet (ready).
+    let outcome: String?
+    /// tool_use_id of the pending permission, for outcome matching. nil for ready.
+    let toolUseId: String?
+
+    nonisolated init(
+        id: UUID,
+        date: Date,
+        agent: String?,
+        sessionId: String?,
+        kind: String,
+        detail: String?,
+        folder: String? = nil,
+        command: String? = nil,
+        outcome: String? = nil,
+        toolUseId: String? = nil
+    ) {
+        self.id = id
+        self.date = date
+        self.agent = agent
+        self.sessionId = sessionId
+        self.kind = kind
+        self.detail = detail
+        self.folder = folder
+        self.command = command
+        self.outcome = outcome
+        self.toolUseId = toolUseId
+    }
+
+    /// Copy with a resolved outcome — alerts are immutable `let` structs.
+    nonisolated func withOutcome(_ outcome: String) -> AgentAlert {
+        AgentAlert(
+            id: id, date: date, agent: agent, sessionId: sessionId,
+            kind: kind, detail: detail, folder: folder, command: command,
+            outcome: outcome, toolUseId: toolUseId
+        )
+    }
 }
 
 @MainActor
@@ -61,22 +109,94 @@ final class AlertHistoryStore: ObservableObject {
     /// the load() disk read on the animation path (review F9).
     func warm() {}
 
-    func record(agent: String?, sessionId: String?, kind: String, detail: String? = nil) {
+    func record(
+        agent: String?,
+        sessionId: String?,
+        kind: String,
+        detail: String? = nil,
+        folder: String? = nil,
+        command: String? = nil,
+        toolUseId: String? = nil
+    ) {
         alerts.append(AgentAlert(
             id: UUID(),
             date: Date(),
             agent: agent,
             sessionId: sessionId,
             kind: kind,
-            detail: detail
+            detail: detail,
+            folder: folder,
+            command: command,
+            toolUseId: toolUseId
         ))
         prune()
+        save()
+    }
+
+    /// GW-207: stamp the outcome ("allowed"|"denied"|"timedOut") on the
+    /// permission alert matching this verdict. Persists only on a change.
+    func markPermissionOutcome(sessionId: String?, toolUseId: String?, outcome: String) {
+        guard let updated = Self.applyingPermissionOutcome(
+            to: alerts, sessionId: sessionId, toolUseId: toolUseId, outcome: outcome
+        ) else { return }
+        alerts = updated
+        save()
+    }
+
+    /// GW-207: mark the most recent ready alert that predates `userMessageDate`
+    /// as "responded" (a user message followed the ping). Persists on change.
+    func markReadyResponded(sessionId: String?, userMessageDate: Date) {
+        guard let updated = Self.applyingReadyResponded(
+            to: alerts, sessionId: sessionId, before: userMessageDate
+        ) else { return }
+        alerts = updated
         save()
     }
 
     func clear() {
         alerts = []
         save()
+    }
+
+    // MARK: - Outcome matching (pure, unit-tested)
+
+    /// Stamp `outcome` on the newest still-unresolved permission alert for this
+    /// session + tool_use_id. Returns nil when nothing matches (no write). Only
+    /// the single most-recent match is updated, never the whole history.
+    nonisolated static func applyingPermissionOutcome(
+        to alerts: [AgentAlert],
+        sessionId: String?,
+        toolUseId: String?,
+        outcome: String
+    ) -> [AgentAlert]? {
+        guard let idx = alerts.lastIndex(where: {
+            $0.kind == "permission"
+                && $0.outcome == nil
+                && $0.sessionId == sessionId
+                && $0.toolUseId == toolUseId
+        }) else { return nil }
+        var copy = alerts
+        copy[idx] = copy[idx].withOutcome(outcome)
+        return copy
+    }
+
+    /// Mark the newest still-unanswered ready alert that was raised BEFORE the
+    /// user message as "responded". A ready alert raised after the message
+    /// stays unanswered (the user hasn't replied to *that* ping yet). nil = no write.
+    nonisolated static func applyingReadyResponded(
+        to alerts: [AgentAlert],
+        sessionId: String?,
+        before userMessageDate: Date
+    ) -> [AgentAlert]? {
+        guard let idx = alerts.lastIndex(where: {
+            $0.kind == "ready"
+                && $0.outcome == nil
+                && $0.sessionId == sessionId
+                && $0.date <= userMessageDate
+        }) else { return nil }
+        var copy = alerts
+        copy[idx] = copy[idx].withOutcome("responded")
+        return copy
     }
 
     /// Re-apply the configured caps; persists only when something fell out.

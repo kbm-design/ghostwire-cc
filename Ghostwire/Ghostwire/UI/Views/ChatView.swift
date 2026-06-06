@@ -415,21 +415,11 @@ struct ChatView: View {
 
     private var inputRow: some View {
         HStack(spacing: 10) {
-            // GW-163: attach a file as an `@path` reference into THIS session's
-            // input (the agent reads the file itself — no bytes sent). Lands
-            // unsubmitted, like the send-to-agent path.
-            Button {
-                attachFile()
-            } label: {
-                Image(systemName: "paperclip")
-                    .font(.system(size: 16, weight: .medium))
-                    .foregroundColor(canSendMessages ? .white.opacity(0.6) : .white.opacity(0.2))
-                    .frame(width: 28, height: 28)
-            }
-            .buttonStyle(.plain)
-            .disabled(!canSendMessages)
-            .help("Attach a file as @path")
-
+            // GW-163 note: a paperclip/NSOpenPanel attach was tried and removed -
+            // the notch's window level sits above every system panel, so the
+            // picker rendered underneath it (test-drive finding). File attach
+            // flows are Finder-copy -> clipboard -> send, or drag -> Shelf ->
+            // Send to Agent; both land @path without fighting the windowing.
             TextField(inputPlaceholder, text: $inputText)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13))
@@ -519,43 +509,6 @@ struct ChatView: View {
 
     private func denyPermission() {
         sessionMonitor.denyPermission(sessionId: sessionId, reason: nil)
-    }
-
-    /// GW-163: pick a file and inject it as an `@path` reference into this
-    /// session's input (unsubmitted). Failures surface through the same hint
-    /// the chat send path uses.
-    private func attachFile() {
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = true
-        panel.canChooseDirectories = true
-        panel.allowsMultipleSelection = false
-        panel.prompt = "Attach"
-        // The notch is a non-activating borderless panel - without explicit
-        // app activation the open panel presents behind other apps (test-drive
-        // finding: "paperclip doesn't pull up my finder"). Activate first.
-        // Hold the notch open for the panel's lifetime (it steals focus and
-        // the hover-out auto-close fired mid-pick - second test-drive finding);
-        // SharingStateManager is the existing hold-open used by the share
-        // sheet. Center the panel so it doesn't sit under the notch strip.
-        NSApp.activate(ignoringOtherApps: true)
-        SharingStateManager.shared.beginInteraction()
-        panel.level = .modalPanel
-        panel.center()
-        panel.makeKeyAndOrderFront(nil)
-        panel.begin { response in
-            defer { SharingStateManager.shared.endInteraction() }
-            guard response == .OK, let url = panel.url else { return }
-            Task {
-                let result = await AgentInjectionService.shared.inject(file: url, into: session)
-                await MainActor.run {
-                    if case .failure = result {
-                        sendFailureHint = "Couldn't reach the agent's terminal"
-                    } else {
-                        sendFailureHint = nil
-                    }
-                }
-            }
-        }
     }
 
     private func sendMessage() {

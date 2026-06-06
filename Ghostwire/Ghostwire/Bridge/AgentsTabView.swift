@@ -10,6 +10,9 @@ struct AgentsTabView: View {
     @State private var isSuppressing = false
     /// GW-151: which agent's usage detail replaces the sessions list (nil = list)
     @State private var usageDetailAgent: String?
+    /// GW-208: when true, the alert-history view replaces the sessions list
+    /// (same swap idiom as usageDetailAgent — back chevron, no new window)
+    @State private var showingAlertHistory = false
     /// GW-151: meter slot order - first agent to come alive keeps slot 1
     @State private var agentOrder: [String] = []
 
@@ -61,16 +64,25 @@ struct AgentsTabView: View {
                     withAnimation(.easeInOut(duration: 0.2)) { usageDetailAgent = nil }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            } else if showingAlertHistory {
+                // GW-208: separate alert-history view swapped into homeContent
+                // (same idiom as the usage detail) — back chevron returns here.
+                AlertHistoryView {
+                    withAnimation(.easeInOut(duration: 0.2)) { showingAlertHistory = false }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             } else {
                 usageSummaryRow
 
-                // GW-207: the alert history rides BELOW the live session rows,
-                // inside ClaudeInstancesView's own scroll — reachable only by
-                // scrolling past the present into the past. The quick view
-                // spends zero pixels on alerts (no footer, no overlay).
+                // GW-208: a compact "Recent alerts" access row sits at the end
+                // of the session list; tapping it swaps in AlertHistoryView.
+                // The quick view spends zero pixels on the list itself.
                 ClaudeInstancesView(
                     sessionMonitor: bridge.sessionMonitor,
-                    viewModel: panelVM
+                    viewModel: panelVM,
+                    onOpenAlerts: {
+                        withAnimation(.easeInOut(duration: 0.2)) { showingAlertHistory = true }
+                    }
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }

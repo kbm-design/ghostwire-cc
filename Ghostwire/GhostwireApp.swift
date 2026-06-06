@@ -449,6 +449,40 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
+        // GW-210: open the notch on the Shelf tab and land on clipboard history.
+        // Mirrors .toggleNotchOpen's per-display view-model resolution, then
+        // routes to the Shelf tab + asks ShelfView to show the clipboard view.
+        KeyboardShortcuts.onKeyDown(for: .openClipboardHistory) { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self = self else { return }
+
+                let mouseLocation = NSEvent.mouseLocation
+                var viewModel = self.vm
+                if Defaults[.showOnAllDisplays] {
+                    for screen in NSScreen.screens where screen.frame.contains(mouseLocation) {
+                        if let uuid = screen.displayUUID, let screenViewModel = self.viewModels[uuid] {
+                            viewModel = screenViewModel
+                            break
+                        }
+                    }
+                }
+
+                self.closeNotchTask?.cancel()
+                self.closeNotchTask = nil
+
+                viewModel.open()
+                // The Shelf tab is the clipboard host; make sure it's reachable
+                // (unhide if the user hid it) before landing on it. The Shelf
+                // module master toggle (Defaults[.shelf]) still wins — if the
+                // whole Shelf is off, ensureCurrentViewVisible falls back and
+                // requestClipboardHistory is harmlessly ignored.
+                NotchTab.setHidden(.shelf, false)
+                self.coordinator.currentView = .shelf
+                NotchTab.ensureCurrentViewVisible()
+                self.coordinator.requestClipboardHistory = true
+            }
+        }
+
         if !Defaults[.showOnAllDisplays] {
             let viewModel = self.vm
             GhostwireSessionBridge.shared.ghostwireViewModel = viewModel
@@ -478,6 +512,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         previousScreens = NSScreen.screens
         AgentHookConfig.installEnabledAgents()
         AlertHistoryStore.shared.warm()
+        ClipboardHistoryService.shared.start()  // GW-210: follows the master toggle (default off)
         GhostwireSessionBridge.shared.startMonitoring()
         UsageService.shared.startPolling()
         CodexUsageService.shared.startPolling()

@@ -945,7 +945,24 @@ struct Shelf: View {
                     Text("General")
                 }
             }
-            
+
+            // GW-210: clipboard history. Default OFF (privacy — opt-in on first
+            // ship). Captured locally; password-manager (concealed) and
+            // transient copies are skipped, and the app's own re-copies aren't
+            // recorded.
+            Section {
+                Defaults.Toggle(key: .clipboardHistoryEnabled) {
+                    Text("Capture clipboard history")
+                }
+            } header: {
+                Text("Clipboard")
+            } footer: {
+                Text("Stored locally on this Mac. Password-manager and transient copies are skipped. Open with the Clipboard row in the Shelf, or the shortcut below.")
+                    .multilineTextAlignment(.trailing)
+                    .foregroundStyle(.secondary)
+                    .font(.caption)
+            }
+
             Section {
                 Picker("Quick Share Service", selection: $quickShareProvider) {
                     ForEach(quickShareService.availableProviders, id: \.id) { provider in
@@ -1367,6 +1384,9 @@ struct Shortcuts: View {
             }
             Section {
                 KeyboardShortcuts.Recorder("Toggle Notch Open:", name: .toggleNotchOpen)
+                // GW-210: unbound by default — opens the notch on the Shelf tab
+                // and lands on clipboard history.
+                KeyboardShortcuts.Recorder("Open Clipboard History:", name: .openClipboardHistory)
             }
         }
         .accentColor(.effectiveAccent)

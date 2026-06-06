@@ -47,7 +47,7 @@ enum SettingsSearchIndex {
         ),
         SettingsSearchEntry(
             id: "Shortcuts", label: "Shortcuts", icon: "keyboard",
-            keywords: ["keyboard", "hotkey", "sneak peek"]
+            keywords: ["keyboard", "hotkey", "sneak peek", "clipboard"]
         ),
         SettingsSearchEntry(
             id: "Advanced", label: "Advanced", icon: "gearshape.2",
@@ -81,7 +81,7 @@ enum SettingsSearchIndex {
         "Calendar": ["events", "reminders", "all-day"],
         "HUD": ["volume", "brightness", "backlight", "replacement", "percentage"],
         "Battery": ["charge", "power", "percentage", "low power"],
-        "Shelf": ["files", "drag", "drop", "quick share", "airdrop", "tray"],
+        "Shelf": ["files", "drag", "drop", "quick share", "airdrop", "tray", "clipboard", "history", "copy", "paste"],
         "Mirror": ["camera", "webcam", "face", "shape"],
     ]
 

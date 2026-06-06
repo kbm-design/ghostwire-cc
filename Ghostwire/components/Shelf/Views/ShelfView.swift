@@ -9,20 +9,53 @@ import AppKit
 
 struct ShelfView: View {
     @EnvironmentObject var vm: GhostwireViewModel
+    @ObservedObject private var coordinator = GhostwireViewCoordinator.shared
     @StateObject var tvm = ShelfStateViewModel.shared
     @StateObject var selection = ShelfSelectionModel.shared
     @StateObject private var quickLookService = QuickLookService()
     private let spacing: CGFloat = 8
 
+    // GW-210: swap the drag-tile strip out for the clipboard-history list when
+    // the access row (or the openClipboardHistory hotkey) asks for it.
+    @State private var showingClipboard = false
+
     var body: some View {
-        HStack(spacing: 12) {
-            FileShareView()
-                .aspectRatio(1, contentMode: .fit)
-                .environmentObject(vm)
-            panel
-                .onDrop(of: [.fileURL, .url, .utf8PlainText, .plainText, .data], isTargeted: $vm.dragDetectorTargeting) { providers in
-                    handleDrop(providers: providers)
+        Group {
+            if showingClipboard {
+                ClipboardHistoryView {
+                    withAnimation(.easeInOut(duration: 0.2)) { showingClipboard = false }
                 }
+            } else {
+                shelfContent
+            }
+        }
+        // The openClipboardHistory hotkey routes here via the coordinator: it
+        // already navigated to the Shelf tab, this lands on the clipboard view.
+        .onAppear { consumeClipboardRequest() }
+        .onChange(of: coordinator.requestClipboardHistory) { consumeClipboardRequest() }
+    }
+
+    private func consumeClipboardRequest() {
+        guard coordinator.requestClipboardHistory else { return }
+        coordinator.requestClipboardHistory = false
+        withAnimation(.easeInOut(duration: 0.2)) { showingClipboard = true }
+    }
+
+    private var shelfContent: some View {
+        VStack(spacing: 8) {
+            HStack(spacing: 12) {
+                FileShareView()
+                    .aspectRatio(1, contentMode: .fit)
+                    .environmentObject(vm)
+                panel
+                    .onDrop(of: [.fileURL, .url, .utf8PlainText, .plainText, .data], isTargeted: $vm.dragDetectorTargeting) { providers in
+                        handleDrop(providers: providers)
+                    }
+            }
+
+            ClipboardHistoryAccessRow {
+                withAnimation(.easeInOut(duration: 0.2)) { showingClipboard = true }
+            }
         }
         // Bind Quick Look to shelf selection
         .onChange(of: selection.selectedIDs) {

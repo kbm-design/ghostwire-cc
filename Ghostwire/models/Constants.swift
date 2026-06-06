@@ -241,6 +241,16 @@ extension Defaults.Keys {
     static let alertHistoryMaxEntries = Key<Int>("alertHistoryMaxEntries", default: 100)
     static let alertHistoryMaxAgeDays = Key<Int>("alertHistoryMaxAgeDays", default: 7)
 
+    // MARK: Clipboard history (GW-210)
+    // Master switch. Default OFF: clipboard capture is privacy-sensitive, so
+    // the first ship is opt-in — the user enables it from the Shelf section
+    // header or the Settings row. (Capture honors concealed/transient markers
+    // and skips our own writes; see ClipboardHistoryService.)
+    static let clipboardHistoryEnabled = Key<Bool>("clipboardHistoryEnabled", default: false)
+    // Cap mirrors the alert-history pattern: 100 entries / 7 days, configurable.
+    static let clipboardHistoryMaxEntries = Key<Int>("clipboardHistoryMaxEntries", default: 100)
+    static let clipboardHistoryMaxAgeDays = Key<Int>("clipboardHistoryMaxAgeDays", default: 7)
+
     // MARK: Modules + notch tabs (GW-144)
     // Media's toggle only hides its settings pane (the player is core);
     // the other modules reuse their feature master keys (see SettingsModule).

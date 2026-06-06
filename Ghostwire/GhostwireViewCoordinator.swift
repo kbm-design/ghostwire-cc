@@ -51,6 +51,10 @@ class GhostwireViewCoordinator: ObservableObject {
     static let shared = GhostwireViewCoordinator()
 
     @Published var currentView: NotchViews = .buddy
+    /// GW-210: set by the `openClipboardHistory` hotkey to ask the Shelf tab to
+    /// land directly on the clipboard-history swap-view. ShelfView consumes
+    /// (and resets) it on appear/change so a later plain Shelf open is unaffected.
+    @Published var requestClipboardHistory: Bool = false
     @Published var helloAnimationRunning: Bool = false
     @Published var buddyPanelHeight: CGFloat = 350
     private var sneakPeekDispatch: DispatchWorkItem?

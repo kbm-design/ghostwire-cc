@@ -203,6 +203,14 @@ final class GhostwireSessionBridge: ObservableObject {
 
         guard decision.alert || decision.open else { return }
 
+        // Codex review P2: the pane probe is async — the user (or a timeout)
+        // can resolve the approval before we resume. Re-check the permission
+        // is still pending before raising any effect for a stale ping.
+        guard let toolUseId = triggering.pendingToolId,
+              sessionMonitor.instances.first(where: { $0.sessionId == triggering.sessionId })?
+                  .pendingToolId == toolUseId
+        else { return }
+
         if decision.alert {
             // Tint the glow to the agent that raised the new pending permission (GW-138).
             passiveAlertTint = AgentIdentity.tint(for: triggering.agent)
@@ -224,7 +232,13 @@ final class GhostwireSessionBridge: ObservableObject {
         }
 
         if decision.open {
-            GhostwireViewCoordinator.shared.toggleExpandingView(status: true, type: .buddy)
+            // A real open (same call as the Toggle Notch Open hotkey), not the
+            // pill/sneak-peek expansion the old code used - the point is the
+            // Allow/Deny buttons in front of you. No auto-close timer: a
+            // pending approval holds the notch open until acted on.
+            // (The ambient live-activity pill subscriber is separate,
+            // pre-existing behavior and intentionally not gated by this rule.)
+            ghostwireViewModel?.open()
         }
     }
 

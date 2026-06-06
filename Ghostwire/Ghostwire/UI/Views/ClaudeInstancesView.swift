@@ -88,14 +88,10 @@ struct ClaudeInstancesView: View {
     // MARK: - Actions
 
     private func focusSession(_ session: SessionState) {
-        guard session.isInMultiplexer else { return }
-
+        // GW-162: tiered focus (cmux CLI / tmux + app activation); yabai
+        // is an enhancement, not a gate
         Task {
-            if let pid = session.pid {
-                _ = await YabaiController.shared.focusWindow(forClaudePid: pid)
-            } else {
-                _ = await YabaiController.shared.focusWindow(forWorkingDirectory: session.cwd)
-            }
+            await SessionFocusController.shared.focus(session: session)
         }
     }
 
@@ -128,7 +124,6 @@ struct InstanceRow: View {
 
     @State private var isHovered = false
     @State private var spinnerPhase = 0
-    @State private var isYabaiAvailable = false
 
     private let spinnerSymbols = ["·", "✢", "✳", "∗", "✻", "✽"]
     private let spinnerTimer = Timer.publish(every: 0.15, on: .main, in: .common).autoconnect()
@@ -249,13 +244,12 @@ struct InstanceRow: View {
                         onChat()
                     }
 
-                    // Go to Terminal button (only if yabai available)
-                    if isYabaiAvailable {
-                        TerminalButton(
-                            isEnabled: session.isInMultiplexer,
-                            onTap: { onFocus() }
-                        )
-                    }
+                    // Go to Terminal button (GW-162: shown whenever the
+                    // session's pane is addressable - yabai no longer gates)
+                    TerminalButton(
+                        isEnabled: MultiplexerTargetResolver.resolve(session: session).isResolvable,
+                        onTap: { onFocus() }
+                    )
                 }
                 .transition(.opacity.combined(with: .scale(scale: 0.9)))
             } else if isWaitingForApproval {
@@ -267,7 +261,8 @@ struct InstanceRow: View {
                 .transition(.opacity.combined(with: .scale(scale: 0.9)))
             } else {
                 HStack(spacing: 8) {
-                    if session.isInMultiplexer && isYabaiAvailable {
+                    // GW-162: addressable pane -> focusable, no yabai gate
+                    if MultiplexerTargetResolver.resolve(session: session).isResolvable {
                         IconButton(icon: "eye") {
                             onFocus()
                         }
@@ -296,9 +291,6 @@ struct InstanceRow: View {
                 .fill(isHovered ? Color.gray.opacity(0.15) : Color.clear)
         )
         .onHover { isHovered = $0 }
-        .task {
-            isYabaiAvailable = await WindowFinder.shared.isYabaiAvailable()
-        }
     }
 
     @ViewBuilder

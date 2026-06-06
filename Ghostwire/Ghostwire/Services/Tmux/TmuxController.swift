@@ -66,6 +66,21 @@ actor TmuxController {
         }
     }
 
+    /// GW-162: the focus command sequence for a cmux surface. `tab-action
+    /// --action select` (the old verb) does not exist in the cmux contract -
+    /// `focus-panel` is "surface focus" and accepts surface refs directly.
+    /// When cmux runs with `socketControlMode: "password"`, every command
+    /// needs the `--password` global flag - same contract as the send path
+    /// in `ToolApprovalHandler`.
+    nonisolated static func cmuxFocusCommands(workspace: String, surface: String, password: String? = nil) -> [[String]] {
+        let commands: [[String]] = [
+            ["select-workspace", "--workspace", workspace],
+            ["focus-panel", "--panel", surface, "--workspace", workspace],
+        ]
+        guard let password else { return commands }
+        return commands.map { ["--password", password] + $0 }
+    }
+
     private func switchToCmuxSurface(target: TmuxTarget) async -> Bool {
         guard let cmuxPath = await TmuxPathFinder.shared.getCmuxPath() else {
             return false
@@ -76,17 +91,12 @@ actor TmuxController {
             return false
         }
 
+        let password = CmuxAccessProbe.readConfig().socketPassword
+
         do {
-            // Select the workspace first, then focus the pane
-            _ = try await ProcessExecutor.shared.run(cmuxPath, arguments: [
-                "select-workspace", "--workspace", workspace
-            ])
-
-            // Move the surface into focus (cmux uses surface ref for tab focus)
-            _ = try await ProcessExecutor.shared.run(cmuxPath, arguments: [
-                "tab-action", "--action", "select", "--surface", surface, "--workspace", workspace
-            ])
-
+            for arguments in Self.cmuxFocusCommands(workspace: workspace, surface: surface, password: password) {
+                _ = try await ProcessExecutor.shared.run(cmuxPath, arguments: arguments)
+            }
             return true
         } catch {
             return false

@@ -18,6 +18,11 @@ struct SendToAgentPicker: View {
     let onPick: (SessionState) -> Void
     let onDismiss: () -> Void
 
+    // GW-213: the picker is keyboard-drivable too — arrows move, ↩ picks, esc
+    // dismisses — so the send-to-agent flow never needs the mouse.
+    @FocusState private var focused: Bool
+    @State private var selectedIndex: Int = 0
+
     var body: some View {
         ZStack {
             // Tap-outside scrim — dismisses without choosing.
@@ -40,8 +45,10 @@ struct SendToAgentPicker: View {
 
                 ScrollView(.vertical, showsIndicators: false) {
                     LazyVStack(spacing: 2) {
-                        ForEach(candidates) { session in
-                            PickerRow(session: session) { onPick(session) }
+                        ForEach(Array(candidates.enumerated()), id: \.element.id) { index, session in
+                            PickerRow(session: session, isSelected: index == selectedIndex) {
+                                onPick(session)
+                            }
                         }
                     }
                 }
@@ -59,8 +66,28 @@ struct SendToAgentPicker: View {
             )
             .frame(maxWidth: 260)
             .shadow(color: .black.opacity(0.5), radius: 12)
+            .focusable()
+            .focused($focused)
+            .onKeyPress(phases: .down) { handleKey($0) }
         }
         .transition(.opacity)
+        .onAppear { focused = true }
+    }
+
+    private func handleKey(_ press: KeyPress) -> KeyPress.Result {
+        switch press.key {
+        case .upArrow:
+            selectedIndex = max(0, selectedIndex - 1); return .handled
+        case .downArrow:
+            selectedIndex = min(candidates.count - 1, selectedIndex + 1); return .handled
+        case .return:
+            guard candidates.indices.contains(selectedIndex) else { return .ignored }
+            onPick(candidates[selectedIndex]); return .handled
+        case .escape:
+            onDismiss(); return .handled
+        default:
+            return .ignored
+        }
     }
 }
 
@@ -68,6 +95,7 @@ struct SendToAgentPicker: View {
 
 private struct PickerRow: View {
     let session: SessionState
+    var isSelected: Bool = false
     let onTap: () -> Void
 
     @State private var isHovered = false
@@ -98,7 +126,7 @@ private struct PickerRow: View {
             .contentShape(Rectangle())
             .background(
                 RoundedRectangle(cornerRadius: 8)
-                    .fill(isHovered ? Color.white.opacity(0.08) : Color.clear)
+                    .fill(isSelected ? Color.white.opacity(0.12) : (isHovered ? Color.white.opacity(0.08) : Color.clear))
             )
         }
         .buttonStyle(.plain)

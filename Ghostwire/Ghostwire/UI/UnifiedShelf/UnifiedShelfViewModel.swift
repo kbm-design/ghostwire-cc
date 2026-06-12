@@ -27,6 +27,12 @@ final class UnifiedShelfViewModel: ObservableObject {
 
     @Published private(set) var cards: [UnifiedCard] = []
 
+    // MARK: - GW-213 keyboard-nav state
+    /// Substring filter (type-to-filter over preview / raw text / file path).
+    @Published var filterText: String = ""
+    /// Selected card id — stable across recompute, unlike an index.
+    @Published var selectedID: String?
+
     private let shelf = ShelfStateViewModel.shared
     private let clipboard = ClipboardHistoryStore.shared
     private var cancellables: Set<AnyCancellable> = []
@@ -50,6 +56,39 @@ final class UnifiedShelfViewModel: ObservableObject {
     }
 
     var isEmpty: Bool { cards.isEmpty }
+
+    // MARK: - GW-213 filtering + selection
+
+    /// Cards after the type-to-filter query (substring over preview/raw/path).
+    var filteredCards: [UnifiedCard] {
+        let q = filterText.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !q.isEmpty else { return cards }
+        return cards.filter { card in
+            if card.previewText.lowercased().contains(q) { return true }
+            if card.rawText.lowercased().contains(q) { return true }
+            if let path = card.fileURL?.path.lowercased(), path.contains(q) { return true }
+            return false
+        }
+    }
+
+    var selectedCard: UnifiedCard? {
+        filteredCards.first { $0.id == selectedID }
+    }
+
+    /// Move selection by `delta` within the filtered list (clamped). Seeds the
+    /// first card when nothing is selected yet.
+    func moveSelection(_ delta: Int) {
+        let list = filteredCards
+        guard !list.isEmpty else { selectedID = nil; return }
+        let current = list.firstIndex { $0.id == selectedID } ?? (delta > 0 ? -1 : 0)
+        let next = max(0, min(list.count - 1, current + delta))
+        selectedID = list[next].id
+    }
+
+    /// Select the first card if the selection is empty or no longer visible.
+    func selectFirstIfNeeded() {
+        if selectedCard == nil { selectedID = filteredCards.first?.id }
+    }
 
     // MARK: - Merge
 

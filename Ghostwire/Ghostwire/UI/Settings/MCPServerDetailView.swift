@@ -186,8 +186,10 @@ struct MCPServerDetailView: View {
         runningTool = tool
         defer { runningTool = nil }
         do {
+            // Empty object, not nil: strict servers (zod-validated) reject a
+            // missing arguments field with "expected object, received undefined".
             let output = try await service.callAllowedTool(
-                serverID: serverID, name: tool, arguments: nil)
+                serverID: serverID, name: tool, arguments: [:])
             var sections: [String] = []
             if let structured = output.structuredContent {
                 sections.append("structuredContent:\n\(structured)")

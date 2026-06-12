@@ -114,6 +114,8 @@ struct SettingsView: View {
                     ModuleGate(.mirror) { MirrorSettings() }
                 case "Shortcuts":
                     Shortcuts()
+                case "MCP":
+                    MCPSettingsView()
                 case "Advanced":
                     Advanced()
                 case "About":

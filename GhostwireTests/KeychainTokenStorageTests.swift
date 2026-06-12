@@ -1,3 +1,4 @@
+import MCP
 import XCTest
 
 @testable import Ghostwire
@@ -33,5 +34,20 @@ final class KeychainTokenStorageTests: XCTestCase {
         XCTAssertNil(store.string(account: MCPSecretAccount.env(serverID: id, key: "A")))
         XCTAssertNil(store.string(account: MCPSecretAccount.env(serverID: id, key: "B")))
         XCTAssertNil(store.string(account: MCPSecretAccount.oauthToken(serverID: id)))
+    }
+
+    func testKeychainTokenStorageRoundTripsOAuthToken() throws {
+        let secretStore = InMemoryMCPSecretStore()
+        let serverID = UUID()
+        let storage = KeychainTokenStorage(serverID: serverID, secretStore: secretStore)
+        let token = OAuthAccessToken(
+            value: "abc", tokenType: "Bearer", expiresAt: nil,
+            scopes: [], authorizationServer: nil, refreshToken: nil
+        )
+        storage.save(token)
+        XCTAssertEqual(storage.load()?.value, "abc")
+        storage.clear()
+        XCTAssertNil(storage.load())
+        XCTAssertNil(secretStore.data(account: MCPSecretAccount.oauthToken(serverID: serverID)))
     }
 }

@@ -50,6 +50,13 @@ enum SettingsSearchIndex {
             keywords: ["keyboard", "hotkey", "sneak peek", "clipboard"]
         ),
         SettingsSearchEntry(
+            id: "MCP", label: "MCP Servers", icon: "server.rack",
+            keywords: [
+                "mcp", "model context protocol", "data", "tools", "server",
+                "connect", "allowlist", "stdio", "oauth",
+            ]
+        ),
+        SettingsSearchEntry(
             id: "Advanced", label: "Advanced", icon: "gearshape.2",
             keywords: [
                 "accent", "custom color", "title bar", "hover area",

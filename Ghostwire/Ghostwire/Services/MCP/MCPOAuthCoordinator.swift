@@ -1,0 +1,286 @@
+//
+//  MCPOAuthCoordinator.swift
+//  Ghostwire
+//
+//  GW-219: Ghostwire's OWN OAuth. The SDK auto-handles RFC 9728/8414
+//  discovery, dynamic client registration, and PKCE; our part is the
+//  browser redirect (loopback HTTP listener per MCP spec) and Keychain
+//  persistence.
+//
+//  Redirect pattern: per-server deterministic localhost port
+//  (http://127.0.0.1:<port>/callback). The port is derived from the
+//  server's UUID so it is stable across launches — DCR registers the
+//  exact URI, which must not change.
+//
+//  Non-interactive contexts (launch/wake reconnects) must never pop a
+//  browser: presentAuthorizationURL throws unless the user pressed
+//  Authorize/Connect, and the server then shows status "Needs auth".
+//
+
+import AppKit
+import Foundation
+import MCP
+import Network
+
+struct MCPAuthInteractionRequired: LocalizedError {
+    var errorDescription: String? {
+        "Authorization required — open the server in Settings and press Authorize."
+    }
+}
+
+/// SDK TokenStorage backed by our Keychain secret store, one account per server.
+final class KeychainTokenStorage: TokenStorage, @unchecked Sendable {
+    private let account: String
+    private let secretStore: MCPSecretStore
+
+    init(serverID: UUID, secretStore: MCPSecretStore = KeychainMCPSecretStore.shared) {
+        self.account = MCPSecretAccount.oauthToken(serverID: serverID)
+        self.secretStore = secretStore
+    }
+
+    func save(_ token: OAuthAccessToken) {
+        if let data = try? JSONEncoder().encode(token) {
+            secretStore.setData(data, account: account)
+        }
+    }
+
+    func load() -> OAuthAccessToken? {
+        secretStore.data(account: account).flatMap {
+            try? JSONDecoder().decode(OAuthAccessToken.self, from: $0)
+        }
+    }
+
+    func clear() {
+        secretStore.delete(account: account)
+    }
+}
+
+final class MCPOAuthCoordinator: NSObject, @unchecked Sendable {
+    static let shared = MCPOAuthCoordinator()
+
+    /// Only true while the user is explicitly connecting/authorizing from
+    /// Settings. Guards against browser pop-ups from background reconnects.
+    private var interactiveGrantInFlight = false
+
+    func beginInteractiveGrant() { interactiveGrantInFlight = true }
+    func endInteractiveGrant() { interactiveGrantInFlight = false }
+
+    /// Deterministic loopback port per server (mcp-remote's pattern): the DCR
+    /// registration pins the exact redirect URI, so the port must be stable
+    /// across launches. Range 49152±... avoid privileged/common ports.
+    static func loopbackPort(for serverID: UUID) -> UInt16 {
+        var hash: UInt64 = 5381
+        for byte in serverID.uuidString.utf8 { hash = hash &* 33 &+ UInt64(byte) }
+        return UInt16(10000 + (hash % 45000))
+    }
+
+    static func redirectURI(for serverID: UUID) -> URL {
+        URL(string: "http://127.0.0.1:\(loopbackPort(for: serverID))/callback")!
+    }
+
+    /// One authorizer per server config; per-server Keychain token storage.
+    func authorizer(for config: MCPServerConfig) -> OAuthAuthorizer {
+        OAuthAuthorizer(
+            configuration: OAuthConfiguration(
+                grantType: .authorizationCode,
+                // DCR replaces this when the AS supports RFC 7591.
+                authentication: .none(clientID: "ghostwire"),
+                authorizationRedirectURI: Self.redirectURI(for: config.id),
+                clientName: "Ghostwire",
+                authorizationDelegate: self
+            ),
+            tokenStorage: KeychainTokenStorage(serverID: config.id)
+        )
+    }
+}
+
+extension MCPOAuthCoordinator: OAuthAuthorizationDelegate {
+    func presentAuthorizationURL(_ url: URL) async throws -> URL {
+        guard interactiveGrantInFlight else { throw MCPAuthInteractionRequired() }
+        // The redirect_uri we registered is embedded in the authorize URL.
+        guard let redirect = Self.redirectURI(fromAuthorizeURL: url),
+              let port = redirect.port.map(UInt16.init) else {
+            throw MCPAuthInteractionRequired()
+        }
+        let listener = try OAuthLoopbackListener(port: port, expectedPath: redirect.path)
+        defer { listener.stop() }
+        await MainActor.run { NSWorkspace.shared.open(url) }
+        return try await listener.waitForCallback(timeout: 180)
+    }
+
+    /// Extract the redirect_uri query parameter from the authorize URL.
+    static func redirectURI(fromAuthorizeURL url: URL) -> URL? {
+        URLComponents(url: url, resolvingAgainstBaseURL: false)?
+            .queryItems?.first { $0.name == "redirect_uri" }?.value.flatMap(URL.init(string:))
+    }
+}
+
+// MARK: - OAuthLoopbackListener
+
+/// Minimal HTTP listener on 127.0.0.1 that captures the OAuth callback redirect.
+///
+/// NWListener accepts the first connection whose request path matches
+/// `expectedPath`, writes a minimal 200 response, and returns the full
+/// callback URL. Non-matching paths (e.g. /favicon.ico) receive a 404 and
+/// the listener keeps waiting within the overall timeout.
+final class OAuthLoopbackListener: @unchecked Sendable {
+    private let port: UInt16
+    private let expectedPath: String
+    private var listener: NWListener?
+    private var activeConnections: [NWConnection] = []
+    private let queue = DispatchQueue(label: "com.ghostwire.oauth-loopback")
+
+    init(port: UInt16, expectedPath: String) throws {
+        self.port = port
+        self.expectedPath = expectedPath
+
+        guard let nwPort = NWEndpoint.Port(rawValue: port) else {
+            throw OAuthLoopbackError.invalidPort
+        }
+        let params = NWParameters.tcp
+        // The port rides in requiredLocalEndpoint; passing it to init(using:on:)
+        // as well makes NWListener fail at start with a conflict.
+        params.requiredLocalEndpoint = NWEndpoint.hostPort(host: "127.0.0.1", port: nwPort)
+        let l = try NWListener(using: params)
+        self.listener = l
+    }
+
+    func waitForCallback(timeout: TimeInterval) async throws -> URL {
+        guard let listener else { throw OAuthLoopbackError.listenerNotStarted }
+
+        return try await withCheckedThrowingContinuation { continuation in
+            var resumed = false
+            let lock = NSLock()
+
+            func resume(with result: Result<URL, Error>) {
+                lock.lock()
+                defer { lock.unlock() }
+                guard !resumed else { return }
+                resumed = true
+                continuation.resume(with: result)
+            }
+
+            // Timeout task
+            let timeoutItem = DispatchWorkItem {
+                resume(with: .failure(OAuthLoopbackError.timeout))
+            }
+            queue.asyncAfter(deadline: .now() + timeout, execute: timeoutItem)
+
+            listener.newConnectionHandler = { [weak self] connection in
+                guard let self else { return }
+                self.queue.async {
+                    self.activeConnections.append(connection)
+                }
+                self.handleConnection(
+                    connection,
+                    port: self.port,
+                    expectedPath: self.expectedPath,
+                    queue: self.queue,
+                    onMatch: { url in
+                        timeoutItem.cancel()
+                        resume(with: .success(url))
+                    },
+                    onNoMatch: { _ in
+                        // Non-matching path; keep waiting.
+                    }
+                )
+                connection.start(queue: self.queue)
+            }
+
+            listener.stateUpdateHandler = { state in
+                switch state {
+                case .failed(let error):
+                    timeoutItem.cancel()
+                    resume(with: .failure(error))
+                default:
+                    break
+                }
+            }
+
+            listener.start(queue: queue)
+        }
+    }
+
+    func stop() {
+        queue.async { [weak self] in
+            guard let self else { return }
+            self.listener?.cancel()
+            self.listener = nil
+            for conn in self.activeConnections { conn.cancel() }
+            self.activeConnections.removeAll()
+        }
+    }
+
+    // MARK: Private
+
+    private func handleConnection(
+        _ connection: NWConnection,
+        port: UInt16,
+        expectedPath: String,
+        queue: DispatchQueue,
+        onMatch: @escaping (URL) -> Void,
+        onNoMatch: @escaping (String) -> Void
+    ) {
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 8192) { data, _, _, error in
+            guard let data, !data.isEmpty else {
+                connection.cancel()
+                return
+            }
+            let raw = String(decoding: data, as: UTF8.self)
+            // Parse the request line: "GET /path?query HTTP/1.1"
+            let requestLine = raw.components(separatedBy: "\r\n").first ?? ""
+            let parts = requestLine.components(separatedBy: " ")
+            guard parts.count >= 2 else {
+                connection.cancel()
+                return
+            }
+            let requestTarget = parts[1] // e.g. "/callback?code=abc&state=xyz"
+            let pathOnly = requestTarget.components(separatedBy: "?").first ?? requestTarget
+
+            if pathOnly == expectedPath {
+                let callbackURL = URL(string: "http://127.0.0.1:\(port)\(requestTarget)")
+                let body = "<html><body><h2>Connected.</h2><p>You can close this tab and return to Ghostwire.</p></body></html>"
+                let bodyBytes = body.utf8
+                let response =
+                    "HTTP/1.1 200 OK\r\n" +
+                    "Content-Type: text/html\r\n" +
+                    "Content-Length: \(bodyBytes.count)\r\n" +
+                    "Connection: close\r\n\r\n" +
+                    body
+                connection.send(
+                    content: response.data(using: .utf8),
+                    completion: .contentProcessed { _ in connection.cancel() }
+                )
+                if let url = callbackURL {
+                    onMatch(url)
+                }
+            } else {
+                let response =
+                    "HTTP/1.1 404 Not Found\r\n" +
+                    "Content-Length: 0\r\n" +
+                    "Connection: close\r\n\r\n"
+                connection.send(
+                    content: response.data(using: .utf8),
+                    completion: .contentProcessed { _ in connection.cancel() }
+                )
+                onNoMatch(pathOnly)
+            }
+        }
+    }
+}
+
+enum OAuthLoopbackError: LocalizedError {
+    case invalidPort
+    case listenerNotStarted
+    case timeout
+    case badRequestLine
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidPort: return "Invalid loopback port for OAuth listener."
+        case .listenerNotStarted: return "OAuth loopback listener was not started."
+        case .timeout: return "Timed out waiting for the browser sign-in to complete."
+        case .badRequestLine: return "Could not parse HTTP request from browser callback."
+        }
+    }
+}

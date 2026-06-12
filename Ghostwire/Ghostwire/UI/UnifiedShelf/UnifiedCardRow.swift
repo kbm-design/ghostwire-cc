@@ -48,6 +48,9 @@ struct UnifiedCardRow: View {
         }
         .focusable(!model.isEmpty)
         .focused($rowFocused)
+        // The selected card's accent outline is the focus indicator; suppress the
+        // system focus ring that would otherwise outline the whole row.
+        .focusEffectDisabled()
         .onKeyPress(phases: .down) { handleKey($0) }
         // The openClipboardHistory hotkey lands here: grab keyboard focus and
         // seed a selection so arrows work immediately. We only auto-focus on the
@@ -55,6 +58,8 @@ struct UnifiedCardRow: View {
         .onAppear { consumeClipboardRequest() }
         .onChange(of: coordinator.requestClipboardHistory) { consumeClipboardRequest() }
         .onChange(of: model.filterText) { model.selectFirstIfNeeded() }
+        // A click-select (or any focus request) pulls keyboard focus to the row.
+        .onChange(of: model.focusRequest) { rowFocused = true }
     }
 
     private var populated: some View {

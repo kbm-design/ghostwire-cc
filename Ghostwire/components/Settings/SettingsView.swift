@@ -907,6 +907,7 @@ struct Shelf: View {
 
     @Default(.quickShareProvider) var quickShareProvider
     @Default(.expandedDragDetection) var expandedDragDetection: Bool
+    @Default(.cardDoubleClickAction) var cardDoubleClickAction
     @StateObject private var quickShareService = QuickShareService.shared
 
     private var selectedProvider: QuickShareProvider? {
@@ -953,6 +954,11 @@ struct Shelf: View {
             Section {
                 Defaults.Toggle(key: .clipboardHistoryEnabled) {
                     Text("Capture clipboard history")
+                }
+                Picker("Double-click a card", selection: $cardDoubleClickAction) {
+                    ForEach(CardDoubleClickAction.allCases, id: \.self) { action in
+                        Text(action.label).tag(action)
+                    }
                 }
             } header: {
                 Text("Clipboard")

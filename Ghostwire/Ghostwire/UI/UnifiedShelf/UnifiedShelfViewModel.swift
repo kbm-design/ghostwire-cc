@@ -19,7 +19,23 @@
 
 import AppKit
 import Combine
+import Defaults
 import Foundation
+
+/// What a double-click on a card does (user-configurable in Settings, GW-218).
+enum CardDoubleClickAction: String, CaseIterable, Defaults.Serializable {
+    case copy
+    case pasteToField
+    case sendToAgent
+
+    var label: String {
+        switch self {
+        case .copy: return "Copy"
+        case .pasteToField: return "Paste to field"
+        case .sendToAgent: return "Send to agent"
+        }
+    }
+}
 
 @MainActor
 final class UnifiedShelfViewModel: ObservableObject {
@@ -32,6 +48,9 @@ final class UnifiedShelfViewModel: ObservableObject {
     @Published var filterText: String = ""
     /// Selected card id — stable across recompute, unlike an index.
     @Published var selectedID: String?
+    /// Bumped to ask the row to take keyboard focus (e.g. after a click-select),
+    /// since the card can't reach the row's `@FocusState` directly.
+    @Published var focusRequest: Int = 0
 
     private let shelf = ShelfStateViewModel.shared
     private let clipboard = ClipboardHistoryStore.shared
@@ -88,6 +107,13 @@ final class UnifiedShelfViewModel: ObservableObject {
     /// Select the first card if the selection is empty or no longer visible.
     func selectFirstIfNeeded() {
         if selectedCard == nil { selectedID = filteredCards.first?.id }
+    }
+
+    /// Single click: select this card and ask the row to grab keyboard focus so
+    /// arrows / type-to-filter / ↩ take over from the mouse (GW-213).
+    func selectFromClick(_ card: UnifiedCard) {
+        selectedID = card.id
+        focusRequest += 1
     }
 
     // MARK: - Merge

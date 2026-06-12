@@ -2,21 +2,24 @@
 //  UnifiedCardView.swift
 //  Ghostwire
 //
-//  GW-218. One card in the unified feed. Chrome (pin marker, source-app glyph,
-//  relative time, hover actions, right-click menu) + a type-aware preview that
-//  dispatches on `CardKind` via `UnifiedCardContent` — modeled on the
-//  `ToolResultViews` dispatcher idiom, not a parallel one.
+//  GW-218. One card in the unified feed. A type-aware preview dispatched on
+//  `CardKind` via `UnifiedCardContent` (modeled on the `ToolResultViews`
+//  dispatcher idiom), plus chrome: pin marker, hover actions, right-click menu.
 //
-//  Hover reveals exactly three actions — Paste / Copy / Send — per Keelan's
-//  spec. Pin (promote) and Delete live in the right-click menu, not on the card.
+//  Image/color cards are FLUSH — the visual fills the card edge-to-edge with the
+//  filename/hex + source-app glyph + time overlaid on a bottom scrim (Supaste
+//  idiom, reimplemented clean). Text/link/file cards are padded with the footer
+//  below. Hover reveals exactly three actions — Paste / Copy / Send — top-right,
+//  so they don't fight the bottom info. Pin + Delete live in the right-click menu.
 //
 
 import AppKit
+import Defaults
 import SwiftUI
 
 struct UnifiedCardView: View {
     let card: UnifiedCard
-    /// Driven by GW-213 keyboard nav (commit 2); mouse hover also highlights.
+    /// Driven by GW-213 keyboard nav; mouse hover also highlights.
     var isSelected: Bool = false
 
     @ObservedObject private var vm = UnifiedShelfViewModel.shared
@@ -27,144 +30,79 @@ struct UnifiedCardView: View {
 
     private enum ActionFeedback { case idle, ok, fail }
 
-    static let cardWidth: CGFloat = 152
-    static let cardHeight: CGFloat = 96
+    static let cardWidth: CGFloat = 176
+    static let cardHeight: CGFloat = 110
+    private static let corner: CGFloat = 12
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            preview
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                .clipped()
-
-            footer
-        }
-        .padding(8)
-        .frame(width: Self.cardWidth, height: Self.cardHeight, alignment: .topLeading)
-        .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(Color.white.opacity(isSelected ? 0.10 : (isHovered ? 0.07 : 0.04)))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .strokeBorder(
-                    isSelected ? Color.accentColor.opacity(0.8) : Color.white.opacity(0.06),
-                    lineWidth: isSelected ? 1.5 : 1
-                )
-        )
-        .overlay(alignment: .topTrailing) { if card.isPinned { pinMarker } }
-        .overlay(alignment: .bottomTrailing) { if isHovered { hoverActions } }
-        .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .onHover { isHovered = $0 }
-        .contextMenu { contextMenu }
-        .help(card.previewText)
-    }
-
-    // MARK: - Preview + footer
-
-    private var preview: some View {
         UnifiedCardContent(card: card)
+            .frame(width: Self.cardWidth, height: Self.cardHeight)
+            .background(cardFill)
+            .clipShape(RoundedRectangle(cornerRadius: Self.corner, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: Self.corner, style: .continuous)
+                    .strokeBorder(strokeColor, lineWidth: isSelected ? 1.5 : 1)
+            )
+            .overlay(alignment: .topLeading) { if card.isPinned { pinMarker } }
+            .overlay(alignment: .bottomTrailing) { if isHovered { hoverActions } }
+            .contentShape(RoundedRectangle(cornerRadius: Self.corner, style: .continuous))
+            .onHover { isHovered = $0 }
+            // Double click runs the configurable action; single click selects +
+            // focuses the row (declare the 2-tap first so SwiftUI can disambiguate
+            // from the 1-tap).
+            .onTapGesture(count: 2) { performDoubleClick() }
+            .onTapGesture(count: 1) { vm.selectFromClick(card) }
+            .contextMenu { contextMenu }
     }
 
-    private var footer: some View {
-        HStack(spacing: 5) {
-            sourceGlyph
-                .frame(width: 12, height: 12)
+    /// Image/color cards are their own fill; the rest get a subtle panel.
+    private var cardFill: Color {
+        if card.kind == .image || card.kind == .color { return Color.black.opacity(0.25) }
+        return Color.white.opacity(isSelected ? 0.10 : (isHovered ? 0.07 : 0.04))
+    }
 
-            if let date = card.date {
-                Text(Self.relativeFormatter.localizedString(for: date, relativeTo: Date()))
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-                    .lineLimit(1)
-            } else if card.isPinned {
-                Text("Saved")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-            }
-
-            Spacer(minLength: 0)
-
-            if card.isTruncatedText {
-                Text("trimmed")
-                    .font(.system(size: 9))
-                    .foregroundStyle(.tertiary)
-            }
-        }
-        .padding(.top, 4)
-        // Hidden under the hover action bar; keeps layout stable.
-        .opacity(isHovered ? 0 : 1)
+    /// No border on the flush image/color cards (the visual is the boundary);
+    /// a subtle dark-grey hairline on text/link/file so they don't vanish into
+    /// the black. Selected (keyboard nav) always gets the accent outline.
+    private var strokeColor: Color {
+        if isSelected { return Color.accentColor.opacity(0.85) }
+        if card.kind == .image || card.kind == .color { return .clear }
+        return Color(white: 0.2)
     }
 
     private var pinMarker: some View {
         Image(systemName: "pin.fill")
             .font(.system(size: 8, weight: .semibold))
-            .foregroundStyle(.tertiary)
+            .foregroundStyle(.white.opacity(0.9))
+            .padding(4)
+            .background(Circle().fill(.black.opacity(0.35)))
             .padding(5)
     }
 
-    /// Source-app icon (transient capture), else the kind glyph.
-    private var sourceGlyph: some View {
-        Group {
-            if let icon = Self.appIcon(for: card.sourceBundleId) {
-                Image(nsImage: icon).resizable().aspectRatio(contentMode: .fit)
-            } else {
-                Image(systemName: kindSymbol)
-                    .font(.system(size: 9, weight: .medium))
-                    .foregroundStyle(.tertiary)
-            }
-        }
-    }
-
-    private var kindSymbol: String {
-        switch card.kind {
-        case .text: return "text.alignleft"
-        case .color: return "paintpalette"
-        case .link: return "link"
-        case .image: return "photo"
-        case .file: return "doc"
-        }
-    }
-
-    // MARK: - Hover actions (exactly three)
+    // MARK: - Hover actions (exactly three, top-right)
 
     private var hoverActions: some View {
-        HStack(spacing: 8) {
-            actionButton(systemName: pasteGlyph, tint: feedbackTint(pasteState), help: "Paste into current field") {
-                Task {
-                    let ok = await vm.paste(card)
-                    flash($pasteState, ok ? .ok : .fail)
-                }
+        HStack(spacing: 4) {
+            CardActionButton(systemName: pasteGlyph, tint: feedbackTint(pasteState), help: "Paste into current field") {
+                Task { flash($pasteState, await vm.paste(card) ? .ok : .fail) }
             }
-            actionButton(systemName: copied ? "checkmark" : "doc.on.doc", tint: copied ? TerminalColors.green : .secondary, help: "Copy") {
-                vm.copy(card)
-                flashCopied()
+            CardActionButton(systemName: copied ? "checkmark" : "doc.on.doc", tint: copied ? TerminalColors.green : .secondary, help: "Copy") {
+                vm.copy(card); flashCopied()
             }
-            actionButton(systemName: sendGlyph, tint: feedbackTint(sendState), help: "Send to agent") {
+            CardActionButton(systemName: sendGlyph, tint: feedbackTint(sendState), help: "Send to agent") {
                 Task {
-                    let result = await vm.send(card)
-                    switch result {
+                    switch await vm.send(card) {
                     case .delivered: flash($sendState, .ok)
                     case .failed: flash($sendState, .fail)
-                    case .awaitingPick: break // picker carries the outcome
+                    case .awaitingPick: break
                     }
                 }
             }
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 5)
+        .padding(.horizontal, 4)
+        .padding(.vertical, 3)
         .background(.ultraThinMaterial, in: Capsule())
-        .padding(6)
-    }
-
-    private func actionButton(systemName: String, tint: Color, help: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: systemName)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(tint)
-                .frame(width: 16, height: 16)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help(help)
+        .padding(5)
     }
 
     private var pasteGlyph: String {
@@ -191,7 +129,7 @@ struct UnifiedCardView: View {
         }
     }
 
-    // MARK: - Right-click menu (Pin / Delete + a couple of obvious extras)
+    // MARK: - Right-click menu (Pin / Delete + obvious extras)
 
     @ViewBuilder
     private var contextMenu: some View {
@@ -207,6 +145,25 @@ struct UnifiedCardView: View {
         }
         Divider()
         Button(role: .destructive) { vm.delete(card) } label: { Label("Delete", systemImage: "trash") }
+    }
+
+    // MARK: - Double-click (configurable)
+
+    private func performDoubleClick() {
+        switch Defaults[.cardDoubleClickAction] {
+        case .copy:
+            vm.copy(card); flashCopied()
+        case .pasteToField:
+            Task { flash($pasteState, await vm.paste(card) ? .ok : .fail) }
+        case .sendToAgent:
+            Task {
+                switch await vm.send(card) {
+                case .delivered: flash($sendState, .ok)
+                case .failed: flash($sendState, .fail)
+                case .awaitingPick: break
+                }
+            }
+        }
     }
 
     // MARK: - Feedback timers
@@ -226,19 +183,30 @@ struct UnifiedCardView: View {
             await MainActor.run { withAnimation { binding.wrappedValue = .idle } }
         }
     }
+}
 
-    // MARK: - Statics
+// MARK: - Hover action button (own hover highlight + tooltip)
 
-    private static let relativeFormatter: RelativeDateTimeFormatter = {
-        let f = RelativeDateTimeFormatter()
-        f.unitsStyle = .abbreviated
-        return f
-    }()
+private struct CardActionButton: View {
+    let systemName: String
+    let tint: Color
+    let help: String
+    let action: () -> Void
 
-    private static func appIcon(for bundleId: String?) -> NSImage? {
-        guard let bundleId,
-              let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId) else { return nil }
-        return NSWorkspace.shared.icon(forFile: url.path)
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(tint)
+                .frame(width: 20, height: 20)
+                .background(Circle().fill(Color.white.opacity(hovering ? 0.2 : 0)))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(help)
+        .onHover { hovering = $0 }
     }
 }
 
@@ -258,12 +226,108 @@ struct UnifiedCardContent: View {
     }
 }
 
+// MARK: - Shared footer (source-app glyph · time · size)
+
+private struct CardFooter: View {
+    let card: UnifiedCard
+    var sizeText: String?
+    /// White-on-scrim styling for the full-bleed image/color cards.
+    var onImage: Bool = false
+
+    var body: some View {
+        HStack(spacing: 5) {
+            sourceGlyph.frame(width: 12, height: 12)
+
+            if let date = card.date {
+                Text(Self.relativeFormatter.localizedString(for: date, relativeTo: Date()))
+                    .lineLimit(1)
+            } else if card.isPinned {
+                Text("Saved").lineLimit(1)
+            }
+
+            Spacer(minLength: 0)
+
+            if let sizeText {
+                Text(sizeText)
+            } else if card.isTruncatedText {
+                Text("trimmed")
+            }
+        }
+        .font(.system(size: 10))
+        .foregroundStyle(onImage ? AnyShapeStyle(.white.opacity(0.85)) : AnyShapeStyle(.tertiary))
+    }
+
+    private var sourceGlyph: some View {
+        Group {
+            if let icon = Self.appIcon(for: card.sourceBundleId) {
+                Image(nsImage: icon).resizable().aspectRatio(contentMode: .fit)
+            } else {
+                Image(systemName: kindSymbol)
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundStyle(onImage ? AnyShapeStyle(.white.opacity(0.85)) : AnyShapeStyle(.tertiary))
+            }
+        }
+    }
+
+    private var kindSymbol: String {
+        switch card.kind {
+        case .text: return "text.alignleft"
+        case .color: return "paintpalette"
+        case .link: return "link"
+        case .image: return "photo"
+        case .file: return "doc"
+        }
+    }
+
+    private static let relativeFormatter: RelativeDateTimeFormatter = {
+        let f = RelativeDateTimeFormatter()
+        f.unitsStyle = .abbreviated
+        return f
+    }()
+
+    private static func appIcon(for bundleId: String?) -> NSImage? {
+        guard let bundleId,
+              let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId) else { return nil }
+        return NSWorkspace.shared.icon(forFile: url.path)
+    }
+}
+
+/// Bottom scrim + label used by the flush image/color cards.
+private struct FlushCaption: View {
+    let card: UnifiedCard
+    let title: String
+    var sizeText: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(title)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.white)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .help(card.fileURL?.path ?? title)
+            CardFooter(card: card, sizeText: sizeText, onImage: true)
+        }
+        .padding(.horizontal, 7)
+        .padding(.top, 12)
+        .padding(.bottom, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            LinearGradient(
+                colors: [.black.opacity(0.55), .clear],
+                startPoint: .bottom,
+                endPoint: .top
+            )
+        )
+    }
+}
+
+// MARK: - Inset content types (padded, footer below)
+
 private struct TextCardContent: View {
     let card: UnifiedCard
 
-    private var body3: String {
-        card.rawText.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
+    private var body3: String { card.rawText.trimmingCharacters(in: .whitespacesAndNewlines) }
 
     /// Mono for things that look like code/paths (cheap heuristic, preview only).
     private var usesMono: Bool {
@@ -271,101 +335,59 @@ private struct TextCardContent: View {
         return s.contains("/") || s.contains("{") || s.contains(";") || s.contains("()") || s.contains("=>")
     }
 
-    var body: some View {
-        Text(body3.isEmpty ? "(empty)" : body3)
-            .font(usesMono ? .system(size: 11, design: .monospaced) : .caption)
-            .foregroundStyle(.secondary)
-            .lineLimit(3)
-            .truncationMode(.tail)
-            .frame(maxWidth: .infinity, alignment: .leading)
+    private var truncation: Text.TruncationMode {
+        (usesMono && !body3.contains(" ")) ? .middle : .tail
     }
-}
-
-private struct ColorCardContent: View {
-    let card: UnifiedCard
 
     var body: some View {
-        ZStack(alignment: .bottomLeading) {
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(Color(nsColor: card.color ?? .clear))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .strokeBorder(Color.white.opacity(0.12), lineWidth: 1)
-                )
-            Text(card.colorHex ?? "")
-                .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                .foregroundStyle(.white)
-                .padding(.horizontal, 5)
-                .padding(.vertical, 2)
-                .background(Capsule().fill(.black.opacity(0.35)))
-                .padding(4)
+        VStack(alignment: .leading, spacing: 4) {
+            Text(body3.isEmpty ? "(empty)" : body3)
+                .font(usesMono ? .system(size: 11.5, design: .monospaced) : .system(size: 13))
+                .foregroundStyle(.primary.opacity(0.88))
+                .lineLimit(3)
+                .truncationMode(truncation)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .help(String(body3.prefix(600)))
+            CardFooter(card: card)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(8)
     }
 }
 
 private struct LinkCardContent: View {
     let card: UnifiedCard
 
-    var body: some View {
-        HStack(alignment: .top, spacing: 6) {
-            Image(systemName: "globe")
-                .font(.system(size: 12))
-                .foregroundStyle(.tertiary)
-            Text(card.previewText)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(3)
-                .truncationMode(.middle)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
+    private var host: String { card.linkURL?.host ?? card.previewText }
+    private var path: String? {
+        guard let u = card.linkURL, !u.path.isEmpty, u.path != "/" else { return nil }
+        return u.path + (u.query.map { "?\($0)" } ?? "")
     }
-}
-
-private struct ImageCardContent: View {
-    let card: UnifiedCard
-    @State private var thumbnail: NSImage?
-    @State private var sizeText: String?
 
     var body: some View {
-        HStack(spacing: 8) {
-            Group {
-                if let thumbnail {
-                    Image(nsImage: thumbnail)
-                        .resizable()
-                        .aspectRatio(contentMode: .fill)
-                } else {
-                    Image(systemName: "photo")
-                        .font(.system(size: 18))
-                        .foregroundStyle(.tertiary)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                }
-            }
-            .frame(width: 40, height: 40)
-            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(card.previewText)
-                    .font(.caption)
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 5) {
+                Image(systemName: "globe")
+                    .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(.secondary)
+                Text(host)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .help(card.linkURL?.absoluteString ?? host)
+            }
+            if let path {
+                Text(path)
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
                     .lineLimit(2)
                     .truncationMode(.middle)
-                if let sizeText {
-                    Text(sizeText).font(.system(size: 9)).foregroundStyle(.tertiary)
-                }
             }
             Spacer(minLength: 0)
+            CardFooter(card: card)
         }
+        .padding(8)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .task { await load() }
-    }
-
-    private func load() async {
-        guard let url = card.fileURL else { return }
-        sizeText = FileSizeFormatter.string(for: url)
-        if let image = await ThumbnailService.shared.thumbnail(for: url, size: CGSize(width: 80, height: 80)) {
-            thumbnail = image
-        }
     }
 }
 
@@ -379,28 +401,84 @@ private struct FileCardContent: View {
     }
 
     var body: some View {
-        HStack(spacing: 8) {
-            Group {
-                if let icon { Image(nsImage: icon).resizable().aspectRatio(contentMode: .fit) }
-                else { Image(systemName: "doc").font(.system(size: 18)).foregroundStyle(.tertiary) }
-            }
-            .frame(width: 36, height: 36)
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 9) {
+                Group {
+                    if let icon { Image(nsImage: icon).resizable().aspectRatio(contentMode: .fit) }
+                    else { Image(systemName: "doc").font(.system(size: 22)).foregroundStyle(.tertiary) }
+                }
+                .frame(width: 44, height: 44)
 
-            VStack(alignment: .leading, spacing: 2) {
                 Text(card.previewText)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(.primary.opacity(0.9))
                     .lineLimit(2)
                     .truncationMode(.middle)
-                if let sizeText {
-                    Text(sizeText).font(.system(size: 9)).foregroundStyle(.tertiary)
-                }
+                    .help(card.fileURL?.path ?? card.previewText)
+
+                Spacer(minLength: 0)
             }
             Spacer(minLength: 0)
+            CardFooter(card: card, sizeText: sizeText)
         }
+        .padding(8)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .task {
-            if let url = card.fileURL { sizeText = FileSizeFormatter.string(for: url) }
+        .task { if let url = card.fileURL { sizeText = FileSizeFormatter.string(for: url) } }
+    }
+}
+
+// MARK: - Flush content types (edge-to-edge, caption on scrim)
+
+private struct ColorCardContent: View {
+    let card: UnifiedCard
+
+    var body: some View {
+        ZStack(alignment: .bottom) {
+            Color(nsColor: card.color ?? .clear)
+            FlushCaption(card: card, title: card.colorHex ?? "")
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+private struct ImageCardContent: View {
+    let card: UnifiedCard
+    @State private var thumbnail: NSImage?
+    @State private var sizeText: String?
+
+    var body: some View {
+        // `Color.clear` FIXES the layout size to the card box; the image fills +
+        // crops as an overlay so its overflow can't enlarge the layout (a flexible
+        // `.frame(maxWidth: .infinity)` on a `.fill` image reports a width wider
+        // than the card and shifts everything left). The caption then anchors to
+        // this fixed box, pinned inside the card's bottom edge.
+        Color.clear
+            .overlay { thumbnailLayer }
+            .clipped()
+            .overlay(alignment: .bottom) {
+                FlushCaption(card: card, title: card.previewText, sizeText: sizeText)
+            }
+            .task { await load() }
+    }
+
+    @ViewBuilder
+    private var thumbnailLayer: some View {
+        if let thumbnail {
+            Image(nsImage: thumbnail)
+                .resizable()
+                .scaledToFill()
+        } else {
+            Color.white.opacity(0.05)
+                .overlay(Image(systemName: "photo").font(.system(size: 22)).foregroundStyle(.tertiary))
+        }
+    }
+
+    private func load() async {
+        guard let url = card.fileURL else { return }
+        sizeText = FileSizeFormatter.string(for: url)
+        // iconMode:false → edge-to-edge content thumbnail, no white file-icon frame.
+        if let image = await ThumbnailService.shared.thumbnail(for: url, size: CGSize(width: 240, height: 240), iconMode: false) {
+            thumbnail = image
         }
     }
 }

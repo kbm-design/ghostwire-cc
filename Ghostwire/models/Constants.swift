@@ -250,6 +250,8 @@ extension Defaults.Keys {
     // Cap mirrors the alert-history pattern: 100 entries / 7 days, configurable.
     static let clipboardHistoryMaxEntries = Key<Int>("clipboardHistoryMaxEntries", default: 100)
     static let clipboardHistoryMaxAgeDays = Key<Int>("clipboardHistoryMaxAgeDays", default: 7)
+    // GW-218: what a double-click on a unified card does. Default: copy.
+    static let cardDoubleClickAction = Key<CardDoubleClickAction>("cardDoubleClickAction", default: .copy)
 
     // MARK: Modules + notch tabs (GW-144)
     // Media's toggle only hides its settings pane (the player is core);

@@ -883,7 +883,7 @@ struct About: View {
             }
             VStack(spacing: 0) {
                 Divider()
-                Text("Made with ❤️ by TalkValue")
+                Text("Made with ❤️ by Ghostwire Design")
                     .foregroundStyle(.secondary)
                     .padding(.top, 5)
                     .padding(.bottom, 7)

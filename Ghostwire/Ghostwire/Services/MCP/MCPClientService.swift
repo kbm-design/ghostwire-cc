@@ -131,6 +131,11 @@ final class MCPClientService: ObservableObject {
 
     func connect(id: UUID) async {
         guard let config = store.server(id: id) else { return }
+        // Tear down any live connection first — a second Test/Authorize must
+        // not orphan the previously spawned stdio process (Codex review P2).
+        if connections[id] != nil {
+            await disconnect(id: id)
+        }
         guard config.isTrusted else {
             runtimes[id, default: MCPServerRuntime()].status = .needsTrust
             return

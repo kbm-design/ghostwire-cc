@@ -7,13 +7,14 @@ import XCTest
 private final class FakeConnection: MCPConnecting {
     var tools: [MCPToolInfo] = []
     var calledTools: [String] = []
+    var disconnected = false
     func listTools() async throws -> [MCPToolInfo] { tools }
     func callTool(name: String, arguments: [String: Value]?) async throws -> MCPToolCallOutput {
         calledTools.append(name)
         return MCPToolCallOutput(result: CallTool.Result(content: [], isError: false))
     }
     func ping() async throws {}
-    func disconnect() async {}
+    func disconnect() async { disconnected = true }
 }
 
 @MainActor
@@ -111,5 +112,33 @@ final class MCPClientServiceAllowlistTests: XCTestCase {
         service.removeServer(id: config.id)
         XCTAssertNil(service.store.server(id: config.id))
         XCTAssertNil(service.runtime(id: config.id))
+    }
+
+    /// Codex review P2: a second connect (Test/Authorize re-press) must tear
+    /// down the previous connection, not orphan its stdio process.
+    func testReconnectDisconnectsPreviousConnection() async {
+        var created: [FakeConnection] = []
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mcp-reconnect-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let service = MCPClientService(
+            store: MCPServerConfigStore(fileURL: url),
+            secretStore: InMemoryMCPSecretStore(),
+            connectionFactory: { _ in
+                let fake = FakeConnection()
+                created.append(fake)
+                return fake
+            }
+        )
+        let config = MCPServerConfig(
+            id: UUID(), name: "S",
+            transport: .http(endpoint: URL(string: "https://example.com/mcp")!)
+        )
+        service.addServer(config)
+        await service.connect(id: config.id)
+        await service.connect(id: config.id)
+        XCTAssertEqual(created.count, 2)
+        XCTAssertTrue(created[0].disconnected, "first connection must be torn down")
+        XCTAssertFalse(created[1].disconnected, "second connection stays live")
     }
 }

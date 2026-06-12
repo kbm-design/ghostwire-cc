@@ -86,6 +86,12 @@ extension MCPOAuthCoordinator: OAuthAuthorizationDelegate {
         return try await Self.presentOnMain(url: url)
     }
 
+    /// ASWebAuthenticationSession must be retained until its completion
+    /// handler fires, or the auth sheet is torn down as soon as start()
+    /// returns (Codex review P2).
+    @MainActor
+    private static var activeSession: ASWebAuthenticationSession?
+
     @MainActor
     private static func presentOnMain(url: URL) async throws -> URL {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<URL, Error>) in
@@ -93,6 +99,7 @@ extension MCPOAuthCoordinator: OAuthAuthorizationDelegate {
                 url: url,
                 callbackURLScheme: Self.callbackScheme
             ) { callbackURL, error in
+                Task { @MainActor in Self.activeSession = nil }
                 if let callbackURL {
                     continuation.resume(returning: callbackURL)
                 } else {
@@ -100,6 +107,7 @@ extension MCPOAuthCoordinator: OAuthAuthorizationDelegate {
                 }
             }
             session.presentationContextProvider = MCPAuthPresentationAnchor.shared
+            activeSession = session
             session.start()
         }
     }

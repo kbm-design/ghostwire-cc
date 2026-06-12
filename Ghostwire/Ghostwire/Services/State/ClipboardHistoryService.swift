@@ -161,11 +161,53 @@ final class ClipboardHistoryService {
         guard current != lastChangeCount else { return }
         lastChangeCount = current
 
-        guard let entry = ClipboardCapture.entry(
-            from: snapshot(of: pasteboard),
-            maxTextBytes: Self.maxTextBytes
-        ) else { return }
-        store.record(entry)
+        let snap = snapshot(of: pasteboard)
+        // Mirrors ShelfDropService.processProvider's capture priority for COPY:
+        //   1) file-url  -> record the path (sends as @path)
+        //   2) image/data bytes, no file -> spill to a temp file (isTemporary)
+        //   3) text      -> inline
+        let entry = ClipboardCapture.entry(from: snap, maxTextBytes: Self.maxTextBytes)
+
+        // Tier 1: a file URL wins outright.
+        if let entry, entry.resolvedKind == .file {
+            store.record(entry)
+            return
+        }
+        // Tier 2: raw image bytes (e.g. "Copy Image") beat plain text.
+        if !snap.isConcealedOrTransient, !snap.isOwnWrite,
+           let (data, ext) = imageData(from: pasteboard) {
+            spillImageAndRecord(data: data, ext: ext, sourceBundleId: snap.sourceBundleId)
+            return
+        }
+        // Tier 3: text.
+        if let entry {
+            store.record(entry)
+        }
+    }
+
+    /// Raw image bytes on the pasteboard (PNG preferred, then TIFF), with the
+    /// file extension to use for the spilled temp file. Nil when no image.
+    private func imageData(from pb: NSPasteboard) -> (Data, String)? {
+        if let d = pb.data(forType: .png) { return (d, "png") }
+        if let d = pb.data(forType: .tiff) { return (d, "tiff") }
+        return nil
+    }
+
+    /// Spill copied image bytes to a temp file and record a `.file` entry flagged
+    /// `isTemporary` so it's reaped when it leaves history.
+    private func spillImageAndRecord(data: Data, ext: String, sourceBundleId: String?) {
+        Task { @MainActor in
+            let name = "clipboard-image.\(ext)"
+            guard let url = await TemporaryFileStorageService.shared.createTempFile(
+                for: .data(data, suggestedName: name)
+            ) else { return }
+            store.record(ClipboardEntry(
+                kind: .file,
+                path: url.path,
+                sourceBundleId: sourceBundleId,
+                isTemporary: true
+            ))
+        }
     }
 
     /// Read the bits of the live pasteboard we care about into a value type.
@@ -214,5 +256,51 @@ final class ClipboardHistoryService {
         // Keep changeCount in sync so poll() treats this as our write even if
         // the timer fires before the marker is observed.
         lastChangeCount = pasteboard.changeCount
+    }
+
+    // MARK: - GW-218 unified-card pasteboard actions
+
+    /// "Copy" a card back to the live clipboard (marker-stamped so auto-capture
+    /// ignores our own write). Files re-copy as real file URLs so they paste into
+    /// Finder; everything else copies as a plain string.
+    func copyCardToPasteboard(_ card: UnifiedCard) {
+        let marker = NSPasteboard.PasteboardType(ClipboardSnapshot.ghostwireMarkerType)
+        switch card.kind {
+        case .image, .file:
+            if let url = card.fileURL {
+                pasteboard.declareTypes([.fileURL, .string, marker], owner: nil)
+                pasteboard.setString(url.absoluteString, forType: .fileURL)
+                pasteboard.setString(url.path, forType: .string)
+                pasteboard.setString("1", forType: marker)
+            } else {
+                stageString(plainText(for: card), marker: marker)
+            }
+        default:
+            stageString(plainText(for: card), marker: marker)
+        }
+        lastChangeCount = pasteboard.changeCount
+    }
+
+    /// Stage a card's plain-text on the pasteboard ahead of a synthesized ⌘V
+    /// (the "Paste into current field" action). Always a string — a file pastes
+    /// its `@path`-friendly path, not a file ref.
+    func stagePlainTextForPaste(_ card: UnifiedCard) {
+        let marker = NSPasteboard.PasteboardType(ClipboardSnapshot.ghostwireMarkerType)
+        stageString(plainText(for: card), marker: marker)
+        lastChangeCount = pasteboard.changeCount
+    }
+
+    private func stageString(_ string: String, marker: NSPasteboard.PasteboardType) {
+        pasteboard.declareTypes([.string, marker], owner: nil)
+        pasteboard.setString(string, forType: .string)
+        pasteboard.setString("1", forType: marker)
+    }
+
+    private func plainText(for card: UnifiedCard) -> String {
+        switch card.kind {
+        case .image, .file: return card.fileURL?.path ?? card.previewText
+        case .link: return card.linkURL?.absoluteString ?? card.rawText
+        default: return card.rawText
+        }
     }
 }

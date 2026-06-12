@@ -43,6 +43,10 @@ struct ClipboardEntry: Codable, Identifiable, Equatable, Sendable {
     let sourceBundleId: String?
     /// True when capture truncated `content` to the configured byte cap.
     let truncated: Bool
+    /// GW-218: true when `path` points at a temp file we spilled (e.g. a copied
+    /// raw image). Such files are reaped when the entry drops out of history.
+    /// Additive field — decodes as `false` from pre-GW-218 JSON.
+    let isTemporary: Bool
 
     nonisolated init(
         id: UUID = UUID(),
@@ -51,7 +55,8 @@ struct ClipboardEntry: Codable, Identifiable, Equatable, Sendable {
         content: String? = nil,
         path: String? = nil,
         sourceBundleId: String? = nil,
-        truncated: Bool = false
+        truncated: Bool = false,
+        isTemporary: Bool = false
     ) {
         self.id = id
         self.date = date
@@ -60,6 +65,26 @@ struct ClipboardEntry: Codable, Identifiable, Equatable, Sendable {
         self.path = path
         self.sourceBundleId = sourceBundleId
         self.truncated = truncated
+        self.isTemporary = isTemporary
+    }
+
+    // Back-compat decode: every field except id/date/kind is optional-with-
+    // default so older clipboard-history.json (no `isTemporary`/`truncated`)
+    // still loads instead of being salvaged away.
+    enum CodingKeys: String, CodingKey {
+        case id, date, kind, content, path, sourceBundleId, truncated, isTemporary
+    }
+
+    nonisolated init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        date = try c.decode(Date.self, forKey: .date)
+        kind = try c.decode(String.self, forKey: .kind)
+        content = try c.decodeIfPresent(String.self, forKey: .content)
+        path = try c.decodeIfPresent(String.self, forKey: .path)
+        sourceBundleId = try c.decodeIfPresent(String.self, forKey: .sourceBundleId)
+        truncated = try c.decodeIfPresent(Bool.self, forKey: .truncated) ?? false
+        isTemporary = try c.decodeIfPresent(Bool.self, forKey: .isTemporary) ?? false
     }
 
     var resolvedKind: Kind { Kind(rawValue: kind) ?? .text }
@@ -77,13 +102,16 @@ struct ClipboardEntry: Codable, Identifiable, Equatable, Sendable {
 final class ClipboardHistoryStore: ObservableObject {
     static let shared = ClipboardHistoryStore()
 
-    @Published private(set) var entries: [ClipboardEntry] = []
+    @Published private(set) var entries: [ClipboardEntry] = [] {
+        didSet { Self.reapDroppedTempFiles(old: oldValue, new: entries) }
+    }
 
     private let fileURL: URL
     private var limitsCancellable: AnyCancellable?
     /// Serial queue keeps writes ordered while off the main actor (F9).
-    /// Internal so tests can drain it (`ioQueue.sync {}`).
-    static let ioQueue = DispatchQueue(label: "com.ghostwire.clipboard-history-io", qos: .utility)
+    /// Internal so tests can drain it (`ioQueue.sync {}`). Nonisolated so the
+    /// nonisolated temp-file reaper can schedule on it (a queue is Sendable).
+    nonisolated static let ioQueue = DispatchQueue(label: "com.ghostwire.clipboard-history-io", qos: .utility)
 
     private static let defaultFileURL = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent(".ghostwire")
@@ -104,6 +132,21 @@ final class ClipboardHistoryStore: ObservableObject {
     /// Touch the singleton at launch so first-capture recording doesn't pay
     /// the load() disk read on the polling path (review F9).
     func warm() {}
+
+    /// GW-218: delete temp files for `isTemporary` entries that just dropped out
+    /// (expiry/cap/delete/clear). `removeTemporaryFileIfNeeded` guards that the
+    /// path is inside NSTemporaryDirectory, so this can't touch real files.
+    nonisolated static func reapDroppedTempFiles(old: [ClipboardEntry], new: [ClipboardEntry]) {
+        let liveIds = Set(new.map(\.id))
+        let dropped = old.filter { $0.isTemporary && !liveIds.contains($0.id) }
+        guard !dropped.isEmpty else { return }
+        for entry in dropped {
+            guard let path = entry.path else { continue }
+            ioQueue.async {
+                TemporaryFileStorageService.shared.removeTemporaryFileIfNeeded(at: URL(fileURLWithPath: path))
+            }
+        }
+    }
 
     /// Record a freshly captured entry. Consecutive identical content (same
     /// kind + same text/path as the newest entry) updates that entry's

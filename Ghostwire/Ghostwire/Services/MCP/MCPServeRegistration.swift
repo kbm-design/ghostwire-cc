@@ -73,9 +73,14 @@ enum MCPServeRegistration {
 
     // MARK: - Pure builders (testable)
 
-    /// Arguments to `claude` for `claude mcp add ghostwire -- <exe> mcp-serve`.
+    /// Arguments to `claude` for
+    /// `claude mcp add --scope user ghostwire -- <exe> mcp-serve`.
+    /// `--scope user` is required: the CLI defaults to `local` (project config
+    /// keyed to the process cwd), so a GUI-launched registration would land in
+    /// the app bundle's directory instead of `~/.claude.json` and be invisible
+    /// in the user's real projects.
     static func claudeAddArguments(executable: String) -> [String] {
-        ["mcp", "add", serverName, "--", executable, serveArgument]
+        ["mcp", "add", "--scope", "user", serverName, "--", executable, serveArgument]
     }
 
     /// The full copyable command for manual setup / docs.

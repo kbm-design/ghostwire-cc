@@ -16,12 +16,12 @@ final class MCPServeRegistrationTests: XCTestCase {
     func testClaudeAddArguments() {
         XCTAssertEqual(
             MCPServeRegistration.claudeAddArguments(executable: exe),
-            ["mcp", "add", "ghostwire", "--", exe, "mcp-serve"])
+            ["mcp", "add", "--scope", "user", "ghostwire", "--", exe, "mcp-serve"])
     }
 
     func testClaudeCommandStringIsCopyPasteable() {
         let command = MCPServeRegistration.claudeCommandString(executable: exe)
-        XCTAssertTrue(command.hasPrefix("claude mcp add ghostwire -- "))
+        XCTAssertTrue(command.hasPrefix("claude mcp add --scope user ghostwire -- "))
         XCTAssertTrue(command.contains("mcp-serve"))
     }
 

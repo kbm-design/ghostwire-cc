@@ -373,6 +373,11 @@ struct ContentView: View {
                         ShelfView()
                     }
                 }
+                // Fill the panel height (top-aligned) so a short tab — e.g. the
+                // GW-218 unified card row (~110pt) — doesn't leave the black
+                // notch shape sized to its content and centered in the fixed
+                // open height, which read as "the notch isn't flush at the top."
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                 .transition(
                     .scale(scale: 0.8, anchor: .top)
                     .combined(with: .opacity)

@@ -181,3 +181,68 @@ final class NotchTabRepairTests: XCTestCase {
         )
     }
 }
+
+/// GW-226: the default-open tab policy. Last-selected tab is the baseline; a
+/// pending approval forces Agents; an explicit save arms a one-shot Shelf reveal.
+@MainActor
+final class NotchDefaultViewPolicyTests: XCTestCase {
+
+    private func withAllTabsVisible(_ body: () throws -> Void) rethrows {
+        let savedHidden = Defaults[.hiddenNotchTabs]
+        let savedShelf = Defaults[.shelf]
+        let savedOrder = Defaults[.notchTabOrder]
+        let coordinator = GhostwireViewCoordinator.shared
+        let savedProvider = coordinator.pendingApprovalProvider
+        let savedLast = coordinator.lastSelectedTab
+        let savedReveal = coordinator.pendingShelfReveal
+        defer {
+            Defaults[.hiddenNotchTabs] = savedHidden
+            Defaults[.shelf] = savedShelf
+            Defaults[.notchTabOrder] = savedOrder
+            coordinator.pendingApprovalProvider = savedProvider
+            coordinator.lastSelectedTab = savedLast
+            coordinator.pendingShelfReveal = savedReveal
+        }
+        Defaults[.hiddenNotchTabs] = []
+        Defaults[.shelf] = true
+        Defaults[.notchTabOrder] = NotchTab.allCases.map(\.rawValue)
+        coordinator.pendingApprovalProvider = { false }   // deterministic: no live approval
+        try body()
+    }
+
+    func testFallsBackToLastSelectedTab() {
+        withAllTabsVisible {
+            let coordinator = GhostwireViewCoordinator.shared
+            coordinator.pendingShelfReveal = false
+            coordinator.lastSelectedTab = .home
+            XCTAssertEqual(coordinator.defaultViewOnOpen(), .home)
+        }
+    }
+
+    func testPendingApprovalForcesAgentsOverLastTab() {
+        withAllTabsVisible {
+            let coordinator = GhostwireViewCoordinator.shared
+            coordinator.lastSelectedTab = .shelf
+            coordinator.pendingApprovalProvider = { true }
+            XCTAssertEqual(coordinator.defaultViewOnOpen(), .buddy, "a pending approval must win over the last tab")
+        }
+    }
+
+    func testOneShotShelfRevealThenRevertsToLastTab() {
+        withAllTabsVisible {
+            let coordinator = GhostwireViewCoordinator.shared
+            coordinator.lastSelectedTab = .home
+            coordinator.pendingShelfReveal = true
+
+            // Armed → next open reveals the Shelf.
+            XCTAssertEqual(coordinator.defaultViewOnOpen(), .shelf)
+
+            // applyDefaultViewOnOpen consumes the one-shot…
+            coordinator.applyDefaultViewOnOpen()
+            XCTAssertFalse(coordinator.pendingShelfReveal)
+
+            // …and a subsequent open reverts to the last selected tab.
+            XCTAssertEqual(coordinator.defaultViewOnOpen(), .home)
+        }
+    }
+}

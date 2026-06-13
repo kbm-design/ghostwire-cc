@@ -32,6 +32,9 @@ struct TabSelectionView: View {
                     withAnimation(.smooth) {
                         displayedView = tab.view
                         coordinator.currentView = tab.view
+                        // GW-226: a real tap is the only thing that updates the
+                        // "reopen here" memory the default-open policy falls back to.
+                        coordinator.lastSelectedTab = tab.view
                     }
                 }
                 .frame(height: 26)

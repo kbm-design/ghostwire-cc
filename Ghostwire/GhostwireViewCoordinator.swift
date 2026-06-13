@@ -55,6 +55,15 @@ class GhostwireViewCoordinator: ObservableObject {
     /// land directly on the clipboard-history swap-view. ShelfView consumes
     /// (and resets) it on appear/change so a later plain Shelf open is unaffected.
     @Published var requestClipboardHistory: Bool = false
+    /// GW-226: the last tab the user explicitly SELECTED (tapped). The default-
+    /// open policy falls back to this so the notch reopens where you left off.
+    /// An approval-driven Agents jump or a one-shot Shelf reveal never overwrites
+    /// it — only a real tab tap does (TabSelectionView).
+    @Published var lastSelectedTab: NotchViews = .buddy
+    /// GW-226: one-shot — armed when the user explicitly saves/drags something to
+    /// the Shelf, consumed by the very next open so you see what you just saved,
+    /// then it reverts to `lastSelectedTab`. Clipboard auto-capture must NOT arm it.
+    var pendingShelfReveal: Bool = false
     @Published var helloAnimationRunning: Bool = false
     @Published var buddyPanelHeight: CGFloat = 350
     private var sneakPeekDispatch: DispatchWorkItem?
@@ -69,23 +78,14 @@ class GhostwireViewCoordinator: ObservableObject {
     @AppStorage("alwaysShowTabs") var alwaysShowTabs: Bool = true {
         didSet {
             if !alwaysShowTabs {
-                openLastTabByDefault = false
-                // GW-203: route through the single default-view policy instead
-                // of hard-setting .buddy - this path bypassed the shelf-default
-                // / agents-first (GW-199 idle) rule before.
+                // GW-203/GW-226: route through the single default-view policy
+                // instead of hard-setting .buddy - this path bypassed the
+                // last-tab / agents-first rule before.
                 applyDefaultViewOnOpen()
             }
         }
     }
 
-    @AppStorage("openLastTabByDefault") var openLastTabByDefault: Bool = false {
-        didSet {
-            if openLastTabByDefault {
-                alwaysShowTabs = true
-            }
-        }
-    }
-    
     @Default(.hudReplacement) var hudReplacement: Bool
     
     // Legacy storage for migration
@@ -318,28 +318,46 @@ class GhostwireViewCoordinator: ObservableObject {
     /// bypass the shelf-by-default / agents-first (GW-199 idle) rule by
     /// hard-setting .buddy.
     ///
-    /// Rule: open the Shelf when it has content and is the user's default and
-    /// is a visible tab; otherwise the first visible tab, preferring Agents;
-    /// .buddy is the last-resort fallback when nothing else is visible.
-    /// "Remember last tab" (openLastTabByDefault) opts out - currentView is
-    /// left as-is so the previous tab persists.
+    /// GW-226: applies the default-open policy and consumes the one-shot Shelf
+    /// reveal. Runs on close (prepares the next open) and at the approval-driven
+    /// open in GhostwireSessionBridge.
     func applyDefaultViewOnOpen() {
-        guard !openLastTabByDefault else { return }
         currentView = defaultViewOnOpen()
+        pendingShelfReveal = false   // GW-226: one-shot consumed
         NotchTab.ensureCurrentViewVisible()
     }
 
-    /// Pure policy (no side effects) - which view a fresh open should show.
-    /// Exposed for the open/close paths and unit tests.
+    /// GW-226 default-open policy (priority order), pure read - the one-shot is
+    /// consumed by the caller (`applyDefaultViewOnOpen`):
+    ///  1. A pending agent approval → the Agents tab (where Allow/Deny lives).
+    ///     Wins over everything, on auto AND manual opens - you never have to
+    ///     navigate to act on a needs-response alert.
+    ///  2. A one-shot Shelf reveal (you just saved/dragged something) → Shelf.
+    ///  3. Otherwise → the last tab you manually selected (if still visible).
+    ///  4. Fallback → first visible tab, preferring Agents; .buddy last resort.
     func defaultViewOnOpen() -> NotchViews {
         let visible = NotchTab.currentlyVisible
-        if !ShelfStateViewModel.shared.isEmpty,
-           Defaults[.openShelfByDefault],
-           visible.contains(.shelf) {
+        if hasPendingApproval, let agents = visible.first(where: { $0 == .agents }) {
+            return agents.view
+        }
+        if pendingShelfReveal, visible.contains(.shelf) {
             return .shelf
+        }
+        if visible.contains(where: { $0.view == lastSelectedTab }) {
+            return lastSelectedTab
         }
         return visible.first(where: { $0 == .agents })?.view ?? visible.first?.view ?? .buddy
     }
+
+    /// GW-226: is any agent currently waiting on an approval? Drives rule 1 above
+    /// so a needs-response alert always lands on Agents. Injectable seam (mirrors
+    /// SendToAgentCoordinator.liveSessionsProvider) so tests are deterministic; the
+    /// default reads the live bridge lazily at open/close time (never in init, so
+    /// there's no singleton init cycle).
+    var pendingApprovalProvider: () -> Bool = {
+        !GhostwireSessionBridge.shared.sessionMonitor.pendingInstances.isEmpty
+    }
+    var hasPendingApproval: Bool { pendingApprovalProvider() }
 
     func showEmpty() {
         applyDefaultViewOnOpen()

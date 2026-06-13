@@ -77,7 +77,7 @@ enum MCPServeRuntime {
                 Ghostwire's Shelf is the user's local hold-store of files, text \
                 snippets, and links they saved for later. Use `get_held_items` to \
                 see what's there, `search_saves` to find something by keyword, and \
-                `get_file` to pull a specific item's path and/or contents. \
+                `get_item` to pull a specific item's path and/or contents. \
                 Everything is local and read-only; nothing is written back.
                 """,
             capabilities: .init(
@@ -140,7 +140,7 @@ enum MCPServeRuntime {
             let items = provider().search(query, includeTemporary: includeTemporary)
             return listResult(items)
 
-        case Tools.getFile.name:
+        case Tools.getItem.name:
             guard let id = arguments?["id"]?.stringValue else {
                 return errorResult("`id` (string) is required.")
             }
@@ -223,7 +223,7 @@ enum MCPServeRuntime {
 
 extension MCPServeRuntime {
     enum Tools {
-        static let all: [Tool] = [getHeldItems, searchSaves, getFile]
+        static let all: [Tool] = [getHeldItems, searchSaves, getItem]
 
         static let getHeldItems = Tool(
             name: "get_held_items",
@@ -264,8 +264,8 @@ extension MCPServeRuntime {
             annotations: readOnly
         )
 
-        static let getFile = Tool(
-            name: "get_file",
+        static let getItem = Tool(
+            name: "get_item",
             description: "Resolve one held item by id. Returns a filesystem `path` for "
                 + "capable agents and, for textual files within the size cap, inline "
                 + "`content` for sandboxed consumers. Text and link items return their "

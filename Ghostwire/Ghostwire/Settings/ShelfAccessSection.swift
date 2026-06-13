@@ -40,7 +40,7 @@ struct ShelfAccessSection: View {
             Text("Shelf access")
         } footer: {
             Text(
-                "A local MCP server (`get_held_items`, `search_saves`, `get_file`). "
+                "A local MCP server (`get_held_items`, `search_saves`, `get_item`). "
                 + "Agents receive a held file, text, or link only when they call a tool — "
                 + "nothing is sent automatically, and it never leaves your machine."
             )

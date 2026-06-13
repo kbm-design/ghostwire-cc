@@ -43,7 +43,7 @@ final class MCPServeRuntimeTests: XCTestCase {
     func testListToolsExposesThreeReadOnlyTools() async throws {
         let connection = try await connect(items: [])
         let tools = try await connection.listTools()
-        XCTAssertEqual(Set(tools.map(\.name)), ["get_held_items", "search_saves", "get_file"])
+        XCTAssertEqual(Set(tools.map(\.name)), ["get_held_items", "search_saves", "get_item"])
         XCTAssertTrue(tools.allSatisfy { $0.isReadOnlyHinted == true })
         await connection.disconnect()
     }
@@ -62,7 +62,7 @@ final class MCPServeRuntimeTests: XCTestCase {
         let item = ShelfStoredItem(kind: .text(string: "the body text"))
         let connection = try await connect(items: [item])
         let output = try await connection.callTool(
-            name: "get_file", arguments: ["id": .string(item.id.uuidString)])
+            name: "get_item", arguments: ["id": .string(item.id.uuidString)])
         XCTAssertTrue(output.textRepresentation.contains("the body text"))
         await connection.disconnect()
     }
@@ -81,7 +81,7 @@ final class MCPServeRuntimeTests: XCTestCase {
     func testGetFileUnknownIdIsError() async throws {
         let connection = try await connect(items: [])
         let output = try await connection.callTool(
-            name: "get_file", arguments: ["id": .string(UUID().uuidString)])
+            name: "get_item", arguments: ["id": .string(UUID().uuidString)])
         XCTAssertEqual(output.isError, true)
         await connection.disconnect()
     }

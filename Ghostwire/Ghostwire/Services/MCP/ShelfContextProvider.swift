@@ -55,7 +55,7 @@ struct HeldItemSnapshot: Sendable, Codable, Equatable {
     var mimeType: String?
 }
 
-/// A single resolved item for `get_file`: a path for filesystem-capable agents
+/// A single resolved item for `get_item`: a path for filesystem-capable agents
 /// plus inline content for sandboxed consumers (when textual and within the cap).
 struct ResolvedShelfItem: Sendable, Codable, Equatable {
     let id: String
@@ -70,7 +70,7 @@ struct ResolvedShelfItem: Sendable, Codable, Equatable {
 }
 
 struct ShelfContextProvider: Sendable {
-    /// Inline content cap for `get_file`. Larger/binary files return a path only.
+    /// Inline content cap for `get_item`. Larger/binary files return a path only.
     static let maxInlineBytes = 1_000_000
 
     private let loadItems: @Sendable () -> [ShelfStoredItem]

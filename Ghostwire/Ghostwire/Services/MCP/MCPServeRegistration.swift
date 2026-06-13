@@ -2,22 +2,26 @@
 //  MCPServeRegistration.swift
 //  Ghostwire
 //
-//  GW-173: register the Shelf context-hub server (the `mcp-serve` subcommand)
-//  with each agent. The SERVER is agent-agnostic — MCP over stdio is identical
-//  for every client. Only the *registration* differs: where the entry goes.
+//  GW-173: how to register the Shelf context-hub server (`mcp-serve`) with each
+//  agent. The SERVER is agent-agnostic — MCP over stdio is identical for every
+//  client; only the registration entry differs.
+//
+//  TRUST POSTURE: the app NEVER writes an agent's config. It only DISPLAYS the
+//  stdio entry (a `claude mcp add` command for Claude Code, a config snippet for
+//  the rest) and the user adds it themselves — the same model as Obsidian's MCP
+//  and most others. A freshly-downloaded app mutating ~/.claude.json is exactly
+//  the kind of capability we don't want to own.
 //
 //  One code path for every agent (mirrors AgentHookConfig): adding an agent =
-//  appending one `MCPServeTarget`. Claude Code has a CLI (`claude mcp add`), so
-//  we can write its entry on an explicit click; the rest get a copy-paste
-//  config snippet. We never edit a config file without a user action.
+//  appending one `MCPServeTarget`.
 //
 
 import Foundation
 
 struct MCPServeTarget: Identifiable, Sendable {
     enum Method: Sendable {
-        /// Runnable CLI that writes the agent's config (argument vector after the tool name).
-        case cli(tool: String, arguments: [String])
+        /// A shell command the user copies and runs (Claude Code's `claude mcp add`).
+        case command(String)
         /// A config block the user pastes into `configPath`.
         case snippet(String)
     }
@@ -48,7 +52,7 @@ enum MCPServeRegistration {
                 id: "claude",
                 displayName: "Claude Code",
                 configPath: "~/.claude.json",
-                method: .cli(tool: "claude", arguments: claudeAddArguments(executable: exe))
+                method: .command(claudeCommandString(executable: exe))
             ),
             MCPServeTarget(
                 id: "claude-desktop",
@@ -76,14 +80,13 @@ enum MCPServeRegistration {
     /// Arguments to `claude` for
     /// `claude mcp add --scope user ghostwire -- <exe> mcp-serve`.
     /// `--scope user` is required: the CLI defaults to `local` (project config
-    /// keyed to the process cwd), so a GUI-launched registration would land in
-    /// the app bundle's directory instead of `~/.claude.json` and be invisible
-    /// in the user's real projects.
+    /// keyed to the process cwd), so a registration run from the wrong directory
+    /// would land outside `~/.claude.json` and be invisible in real projects.
     static func claudeAddArguments(executable: String) -> [String] {
         ["mcp", "add", "--scope", "user", serverName, "--", executable, serveArgument]
     }
 
-    /// The full copyable command for manual setup / docs.
+    /// The full copyable command the user runs themselves.
     static func claudeCommandString(executable: String) -> String {
         (["claude"] + claudeAddArguments(executable: executable))
             .map { $0.contains(" ") ? "\"\($0)\"" : $0 }
@@ -111,52 +114,6 @@ enum MCPServeRegistration {
         command = "\(tomlEscaped(executable))"
         args = ["\(serveArgument)"]
         """
-    }
-
-    // MARK: - Claude CLI execution (user-initiated)
-
-    enum RegistrationError: LocalizedError {
-        case toolNotFound(String)
-        case failed(String)
-        var errorDescription: String? {
-            switch self {
-            case .toolNotFound(let tool):
-                return "Couldn't find the `\(tool)` CLI on your PATH. Install it, or use the copyable command instead."
-            case .failed(let output):
-                return output.isEmpty ? "Registration failed." : output
-            }
-        }
-    }
-
-    /// Run `claude mcp add …` using the user's login-shell PATH (GW-219's
-    /// resolver — GUI apps inherit launchd's minimal PATH). User-initiated only.
-    @discardableResult
-    static func registerWithClaude() async throws -> String {
-        let exe = executablePath
-        guard let claudePath = await LoginShellPATHResolver.shared.resolve(command: "claude") else {
-            throw RegistrationError.toolNotFound("claude")
-        }
-        return try await run(executable: claudePath, arguments: claudeAddArguments(executable: exe))
-    }
-
-    private static func run(executable: String, arguments: [String]) async throws -> String {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: executable)
-        process.arguments = arguments
-        let outPipe = Pipe()
-        let errPipe = Pipe()
-        process.standardOutput = outPipe
-        process.standardError = errPipe
-
-        try process.run()
-        process.waitUntilExit()
-
-        let out = String(data: outPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-        let err = String(data: errPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-        guard process.terminationStatus == 0 else {
-            throw RegistrationError.failed([out, err].filter { !$0.isEmpty }.joined(separator: "\n"))
-        }
-        return out.isEmpty ? "Registered Ghostwire with Claude Code." : out
     }
 
     // MARK: - Escaping

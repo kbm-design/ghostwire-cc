@@ -50,91 +50,42 @@ struct ShelfAccessSection: View {
     }
 }
 
-/// One agent's registration row. Claude Code can be registered in place (it has
-/// a CLI); the rest expose a copyable config snippet.
+/// One agent's registration row. The app never writes the agent's config — it
+/// shows the stdio entry (a `claude mcp add` command for Claude Code, a config
+/// snippet for the rest) and the user adds it themselves.
 private struct ShelfAccessRow: View {
     let target: MCPServeTarget
 
-    @State private var status: Status = .idle
     @State private var copied = false
 
-    private enum Status: Equatable {
-        case idle, working, done(String), failed(String)
+    private var buttonTitle: String {
+        if copied { return "Copied" }
+        switch target.method {
+        case .command: return "Copy command"
+        case .snippet: return "Copy config"
+        }
+    }
+
+    private var payload: String {
+        switch target.method {
+        case .command(let command): return command
+        case .snippet(let snippet): return snippet
+        }
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(target.displayName)
-                    Text(target.configPath)
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                }
-                Spacer()
-                action
+        HStack {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(target.displayName)
+                Text(target.configPath)
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
             }
-            statusLine
+            Spacer()
+            Button(buttonTitle) { copy(payload) }
+                .buttonStyle(.borderless)
         }
         .padding(.vertical, 2)
-    }
-
-    @ViewBuilder
-    private var action: some View {
-        switch target.method {
-        case .cli:
-            HStack(spacing: 8) {
-                Button("Copy command") { copyCommand() }
-                    .buttonStyle(.borderless)
-                Button {
-                    register()
-                } label: {
-                    if status == .working {
-                        ProgressView().controlSize(.small)
-                    } else {
-                        Text("Register")
-                    }
-                }
-                .disabled(status == .working)
-            }
-        case .snippet(let snippet):
-            Button(copied ? "Copied" : "Copy config") {
-                copy(snippet)
-            }
-            .buttonStyle(.borderless)
-        }
-    }
-
-    @ViewBuilder
-    private var statusLine: some View {
-        switch status {
-        case .done(let msg):
-            Label(msg, systemImage: "checkmark.circle.fill")
-                .font(.caption2).foregroundStyle(.green).lineLimit(2)
-        case .failed(let msg):
-            Label(msg, systemImage: "exclamationmark.triangle.fill")
-                .font(.caption2).foregroundStyle(.orange).lineLimit(3)
-        default:
-            EmptyView()
-        }
-    }
-
-    private func register() {
-        guard case .cli = target.method else { return }
-        status = .working
-        Task {
-            do {
-                let output = try await MCPServeRegistration.registerWithClaude()
-                await MainActor.run { status = .done(output.trimmingCharacters(in: .whitespacesAndNewlines)) }
-            } catch {
-                await MainActor.run { status = .failed(error.localizedDescription) }
-            }
-        }
-    }
-
-    private func copyCommand() {
-        guard case .cli = target.method else { return }
-        copy(MCPServeRegistration.claudeCommandString(executable: MCPServeRegistration.executablePath))
     }
 
     private func copy(_ string: String) {

@@ -181,7 +181,9 @@ extension Defaults.Keys {
     
     // MARK: Shelf
     static let shelf = Key<Bool>("shelf", default: true)
-    static let openShelfByDefault = Key<Bool>("openShelfByDefault", default: true)
+    // GW-226: `openShelfByDefault` retired — the default-open tab is now the last
+    // tab you selected (with an approval→Agents override + one-shot Shelf reveal),
+    // not "Shelf whenever it has items." See GhostwireViewCoordinator.defaultViewOnOpen.
     static let quickShareProvider = Key<String>("quickShareProvider", default: QuickShareProvider.defaultProvider.id)
     static let copyOnDrag = Key<Bool>("copyOnDrag", default: false)
     static let autoRemoveShelfItems = Key<Bool>("autoRemoveShelfItems", default: false)

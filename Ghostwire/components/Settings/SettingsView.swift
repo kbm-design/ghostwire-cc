@@ -416,7 +416,8 @@ struct GeneralSettings: View {
             Defaults.Toggle(key: .enableHaptics) {
                     Text("Enable haptic feedback")
             }
-            Toggle("Remember last tab", isOn: $coordinator.openLastTabByDefault)
+            // GW-226: "Remember last tab" retired — reopening on the last selected
+            // tab is now the baseline behavior (not an opt-in).
             if openNotchOnHover {
                 Slider(value: $minimumHoverDuration, in: 0...1, step: 0.1) {
                     HStack {
@@ -922,9 +923,8 @@ struct Shelf: View {
         Form {
             Section {
                 // Master toggle lives in the sidebar / ModuleGate (GW-144)
-                Defaults.Toggle(key: .openShelfByDefault) {
-                    Text("Open shelf by default if items are present")
-                }
+                // GW-226: "Open shelf by default if items are present" retired —
+                // see GhostwireViewCoordinator.defaultViewOnOpen for the new policy.
                 Defaults.Toggle(key: .expandedDragDetection) {
                     Text("Expanded drag detection area")
                 }

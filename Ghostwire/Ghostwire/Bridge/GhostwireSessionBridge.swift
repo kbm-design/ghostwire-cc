@@ -238,6 +238,11 @@ final class GhostwireSessionBridge: ObservableObject {
             // pending approval holds the notch open until acted on.
             // (The ambient live-activity pill subscriber is separate,
             // pre-existing behavior and intentionally not gated by this rule.)
+            //
+            // GW-226: re-run the default-view policy right before opening so this
+            // event-driven open lands on Agents (hasPendingApproval is true now),
+            // overriding the passive last-tab / shelf-reveal rules.
+            GhostwireViewCoordinator.shared.applyDefaultViewOnOpen()
             ghostwireViewModel?.open()
         }
     }

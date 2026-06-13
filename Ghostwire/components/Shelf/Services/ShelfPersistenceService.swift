@@ -17,6 +17,16 @@ final class ShelfPersistenceService {
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
 
+    /// On-disk location of the Shelf store. Exposed so the read-only MCP serve
+    /// side (GW-173) can load the same file from a separate, nonisolated process
+    /// without going through the @MainActor view model.
+    static var storeURL: URL {
+        let fm = FileManager.default
+        let support = try? fm.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+        let dir = (support ?? fm.temporaryDirectory).appendingPathComponent("buddi", isDirectory: true).appendingPathComponent("Shelf", isDirectory: true)
+        return dir.appendingPathComponent("items.json")
+    }
+
     private init() {
         let fm = FileManager.default
         let support = try? fm.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)

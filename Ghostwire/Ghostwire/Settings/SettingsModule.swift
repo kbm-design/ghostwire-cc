@@ -78,6 +78,19 @@ struct SettingsModule: Identifiable {
     static let all: [SettingsModule] = [media, calendar, huds, battery, shelf, mirror]
 }
 
+extension View {
+    /// Left-align a settings Section footer / help text. macOS grouped `Form`s
+    /// position the footer BLOCK at the trailing edge (and some panes also set
+    /// `.multilineTextAlignment(.trailing)`), so help text reads ragged-left on
+    /// the right. This forces the block full-width and leading — the expected
+    /// reading alignment, consistent across every settings pane. (GW-223)
+    func leadingFooter() -> some View {
+        self
+            .multilineTextAlignment(.leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
 /// Wraps a module's settings pane: shows the pane when the module is on,
 /// otherwise a single enable toggle with the module's hint.
 struct ModuleGate<Content: View>: View {
@@ -105,6 +118,7 @@ struct ModuleGate<Content: View>: View {
                     Text(available ? module.disabledHint : (module.unavailableHint ?? module.disabledHint))
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        .leadingFooter()
                 }
             }
             .navigationTitle(module.label)

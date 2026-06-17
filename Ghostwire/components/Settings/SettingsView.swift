@@ -215,6 +215,7 @@ struct NotchTabManagementSection: View {
             Text("Reorder and hide tabs in the open notch. Agents stays visible — it's where approvals surface. Shelf follows its module toggle.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+                .leadingFooter()
         }
     }
 }
@@ -403,9 +404,9 @@ struct GeneralSettings: View {
             Text(
                 "Two-finger swipe up on notch to close, two-finger swipe down on notch to open when **Open notch on hover** option is disabled"
             )
-            .multilineTextAlignment(.trailing)
             .foregroundStyle(.secondary)
             .font(.caption)
+            .leadingFooter()
         }
     }
 
@@ -418,7 +419,8 @@ struct GeneralSettings: View {
             Defaults.Toggle(key: .enableHaptics) {
                     Text("Enable haptic feedback")
             }
-            Toggle("Remember last tab", isOn: $coordinator.openLastTabByDefault)
+            // GW-226: "Remember last tab" retired — reopening on the last selected
+            // tab is now the baseline behavior (not an opt-in).
             if openNotchOnHover {
                 Slider(value: $minimumHoverDuration, in: 0...1, step: 0.1) {
                     HStack {
@@ -637,12 +639,14 @@ struct Media: View {
                         .font(.caption)
                         .foregroundColor(.blue)  // Ensures it's visibly a link
                     }
+                    .leadingFooter()
                 } else {
                     Text(
                         "'Now Playing' was the only option on previous versions and works with all media apps."
                     )
                     .foregroundStyle(.secondary)
                     .font(.caption)
+                    .leadingFooter()
                 }
             }
             
@@ -924,9 +928,8 @@ struct Shelf: View {
         Form {
             Section {
                 // Master toggle lives in the sidebar / ModuleGate (GW-144)
-                Defaults.Toggle(key: .openShelfByDefault) {
-                    Text("Open shelf by default if items are present")
-                }
+                // GW-226: "Open shelf by default if items are present" retired —
+                // see GhostwireViewCoordinator.defaultViewOnOpen for the new policy.
                 Defaults.Toggle(key: .expandedDragDetection) {
                     Text("Expanded drag detection area")
                 }
@@ -966,9 +969,9 @@ struct Shelf: View {
                 Text("Clipboard")
             } footer: {
                 Text("Stored locally on this Mac. Password-manager and transient copies are skipped. Open with the Clipboard row in the Shelf, or the shortcut below.")
-                    .multilineTextAlignment(.trailing)
                     .foregroundStyle(.secondary)
                     .font(.caption)
+                    .leadingFooter()
             }
 
             Section {
@@ -1027,6 +1030,7 @@ struct Shelf: View {
                 Text("Choose which service to use when sharing files from the shelf. Click the shelf button to select files, or drag files onto it to share immediately.")
                     .font(.caption)
                     .foregroundColor(.secondary)
+                    .leadingFooter()
             }
         }
         .accentColor(.effectiveAccent)
@@ -1096,6 +1100,7 @@ struct MirrorSettings: View {
                     Text("No camera detected on this Mac.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        .leadingFooter()
                 }
             }
         }
@@ -1246,9 +1251,9 @@ struct Advanced: View {
                 Text("Accent color")
             } footer: {
                 Text("Choose between your system accent color or customize it with your own selection.")
-                    .multilineTextAlignment(.trailing)
                     .foregroundStyle(.secondary)
                     .font(.caption)
+                    .leadingFooter()
             }
             .onAppear {
                 initializeAccentColorState()
@@ -1386,9 +1391,9 @@ struct Shortcuts: View {
                 Text(
                     "Sneak Peek shows the media title and artist under the notch for a few seconds."
                 )
-                .multilineTextAlignment(.trailing)
                 .foregroundStyle(.secondary)
                 .font(.caption)
+                .leadingFooter()
             }
             Section {
                 KeyboardShortcuts.Recorder("Toggle Notch Open:", name: .toggleNotchOpen)

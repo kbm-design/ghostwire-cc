@@ -64,40 +64,27 @@ struct GhostwireHeader: View {
                         OpenNotchHUD(type: $coordinator.sneakPeek.type, value: $coordinator.sneakPeek.value, icon: $coordinator.sneakPeek.icon)
                             .transition(.scale(scale: 0.8).combined(with: .opacity))
                     } else {
-                        if Defaults[.showMirror] {
-                            Button(action: {
-                                vm.toggleCameraPreview()
-                            }) {
-                                Capsule()
-                                    .fill(.black)
-                                    .frame(width: 30, height: 30)
-                                    .overlay {
-                                        Image(systemName: "web.camera")
-                                            .foregroundColor(.white)
-                                            .padding()
-                                            .imageScale(.medium)
-                                    }
+                        // GW-223: detach the Shelf into a full resizable window.
+                        // Always shown while the notch is open — it's a destination
+                        // opener, not a shelf-only action — in the same 30×30 capsule
+                        // vocabulary as the gear/camera buttons.
+                        // (In-notch expand is GW-222; this is the simple opener.)
+                        NotchHeaderIconButton(systemName: "macwindow", help: "Open Shelf in window") {
+                            DispatchQueue.main.async {
+                                ShelfWindowController.shared.showWindow()
                             }
-                            .buttonStyle(PlainButtonStyle())
+                        }
+                        if Defaults[.showMirror] {
+                            NotchHeaderIconButton(systemName: "web.camera") {
+                                vm.toggleCameraPreview()
+                            }
                         }
                         if Defaults[.settingsIconInNotch] {
-                            Button(action: {
+                            NotchHeaderIconButton(systemName: "gear") {
                                 DispatchQueue.main.async {
                                     SettingsWindowController.shared.showWindow()
                                 }
-                                
-                            }) {
-                                Capsule()
-                                    .fill(.black)
-                                    .frame(width: 30, height: 30)
-                                    .overlay {
-                                        Image(systemName: "gear")
-                                            .foregroundColor(.white)
-                                            .padding()
-                                            .imageScale(.medium)
-                                    }
                             }
-                            .buttonStyle(PlainButtonStyle())
                         }
                         if Defaults[.showBatteryIndicator] {
                             GhostwireBatteryView(
@@ -131,6 +118,35 @@ struct GhostwireHeader: View {
         default:
             return false
         }
+    }
+}
+
+/// GW-223: notch-header action button (detach / camera / settings). Dimmed to
+/// grey at rest so it reads as an inactive affordance like the tabs, brightening
+/// to full white on hover. Same 30×30 black capsule vocabulary as before.
+private struct NotchHeaderIconButton: View {
+    let systemName: String
+    var help: String?
+    let action: () -> Void
+
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Capsule()
+                .fill(.black)
+                .frame(width: 30, height: 30)
+                .overlay {
+                    Image(systemName: systemName)
+                        .foregroundColor(.white.opacity(hovering ? 1.0 : 0.5))
+                        .padding()
+                        .imageScale(.medium)
+                }
+        }
+        .buttonStyle(PlainButtonStyle())
+        .onHover { hovering = $0 }
+        .animation(.easeOut(duration: 0.12), value: hovering)
+        .help(help ?? "")
     }
 }
 

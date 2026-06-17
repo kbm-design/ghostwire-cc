@@ -43,6 +43,11 @@ struct GhostwireApp: App {
 
     var body: some Scene {
         MenuBarExtra("Notch", systemImage: "sparkle", isInserted: $showMenuBarIcon) {
+            Button("Open Shelf Window") {
+                DispatchQueue.main.async {
+                    ShelfWindowController.shared.showWindow()
+                }
+            }
             Button("Settings") {
                 DispatchQueue.main.async {
                     SettingsWindowController.shared.showWindow()

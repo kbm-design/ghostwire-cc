@@ -32,14 +32,22 @@ final class ShelfStateViewModel: ObservableObject {
         var merged = items
         // Deduplicate by identityKey while preserving order (existing first)
         var seen: Set<String> = Set(merged.map { $0.identityKey })
+        var didAppend = false
         for it in newItems {
             let key = it.identityKey
             if !seen.contains(key) {
                 merged.append(it)
                 seen.insert(key)
+                didAppend = true
             }
         }
+        guard didAppend else { return }
         items = merged
+        // GW-226: an explicit save/drag arms the one-shot Shelf reveal so the next
+        // open shows what you just saved (then reverts to your last tab). This is
+        // the saved-store choke point — clipboard auto-capture lives in
+        // ClipboardHistoryStore and never reaches here, so it can't arm it.
+        GhostwireViewCoordinator.shared.pendingShelfReveal = true
     }
 
     func remove(_ item: ShelfItem) {

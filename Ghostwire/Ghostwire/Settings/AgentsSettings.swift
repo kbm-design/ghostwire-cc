@@ -52,6 +52,7 @@ struct AgentsSettings: View {
                 Text("Hooks forward agent events to Ghostwire via Unix socket.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .leadingFooter()
             }
 
             // GW-173: pull side — let agents read the Shelf over local MCP.
@@ -71,6 +72,7 @@ struct AgentsSettings: View {
                 Text("Per-agent approval modes (auto-approve · plan · review · full gate) are planned.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .leadingFooter()
             }
 
             Section {
@@ -92,6 +94,7 @@ struct AgentsSettings: View {
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)
+                .leadingFooter()
             }
 
             Section {
@@ -111,6 +114,7 @@ struct AgentsSettings: View {
                 Text("Caps the recorded permission and ready alerts. Whichever limit hits first wins.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .leadingFooter()
             }
 
             Section {
@@ -131,6 +135,7 @@ struct AgentsSettings: View {
                 Text("Plays when an agent finishes and is ready for input.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .leadingFooter()
             }
 
             Section {
@@ -166,6 +171,7 @@ struct AgentsSettings: View {
                 Text("The socket is shared by all agents. OAuth login required for plan usage display.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .leadingFooter()
             }
 
             // cmux socket access (GW-206). Multiplexer-level, not per-agent:
@@ -185,6 +191,7 @@ struct AgentsSettings: View {
                     Text("Lets Ghostwire send messages and focus cmux surfaces. cmux is optional.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        .leadingFooter()
                 }
             }
         }

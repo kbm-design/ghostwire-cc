@@ -12,6 +12,10 @@ import Sparkle
 class SettingsWindowController: NSWindowController {
     static let shared = SettingsWindowController()
     private var updaterController: SPUStandardUpdaterController?
+
+    /// GW-223: read access so the unified Ghostwire window can host `SettingsView`
+    /// in-pane with the real Sparkle updater wired into the About pane.
+    var sharedUpdaterController: SPUStandardUpdaterController? { updaterController }
     
     private init() {
         let window = NSWindow(

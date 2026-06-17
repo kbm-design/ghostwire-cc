@@ -41,8 +41,8 @@ struct ShelfAccessSection: View {
         } footer: {
             Text(
                 "A local MCP server (`get_held_items`, `search_saves`, `get_item`). "
-                + "Agents receive a held file, text, or link only when they call a tool — "
-                + "nothing is sent automatically, and it never leaves your machine."
+                + "Nothing is sent automatically — a held file, text, or link is shared "
+                + "only when an agent calls a tool, and only the item requested."
             )
             .font(.caption)
             .foregroundStyle(.secondary)

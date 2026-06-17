@@ -29,10 +29,24 @@ final class ShelfPersistenceService {
 
     private init() {
         let fm = FileManager.default
-        let support = try? fm.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
-        let dir = (support ?? fm.temporaryDirectory).appendingPathComponent("buddi", isDirectory: true).appendingPathComponent("Shelf", isDirectory: true)
+        let support = (try? fm.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)) ?? fm.temporaryDirectory
+        // GW-248: canonical Application Support root is "Ghostwire" (UsageService
+        // already uses it); the Shelf store missed the buddi→Ghostwire rename.
+        let dir = support.appendingPathComponent("Ghostwire", isDirectory: true).appendingPathComponent("Shelf", isDirectory: true)
         try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
         fileURL = dir.appendingPathComponent("items.json")
+
+        // One-time, non-destructive migration off the legacy "buddi" dir: copy
+        // the old store in only when we don't already have one, so existing held
+        // items aren't orphaned and a re-run can't clobber newer data.
+        let legacyFileURL = support
+            .appendingPathComponent("buddi", isDirectory: true)
+            .appendingPathComponent("Shelf", isDirectory: true)
+            .appendingPathComponent("items.json")
+        if !fm.fileExists(atPath: fileURL.path), fm.fileExists(atPath: legacyFileURL.path) {
+            try? fm.copyItem(at: legacyFileURL, to: fileURL)
+        }
+
         encoder.outputFormatting = [.prettyPrinted]
         decoder.dateDecodingStrategy = .iso8601
         encoder.dateEncodingStrategy = .iso8601

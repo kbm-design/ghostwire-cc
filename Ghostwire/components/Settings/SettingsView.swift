@@ -112,6 +112,8 @@ struct SettingsView: View {
                     ModuleGate(.shelf) { Shelf() }
                 case "Mirror":
                     ModuleGate(.mirror) { MirrorSettings() }
+                case "Activity":
+                    ModuleGate(.ambient) { AmbientSettings() }
                 case "Shortcuts":
                     Shortcuts()
                 case "MCP":

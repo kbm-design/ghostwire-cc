@@ -95,6 +95,26 @@ final class ShelfContextProviderTests: XCTestCase {
         XCTAssertNotNil(snap?.modifiedAt)
     }
 
+    func testUnresolvableFileSurfacesUnavailableInsteadOfBlank() {
+        // Garbage bookmark data can never resolve to a URL — simulates a file
+        // that moved/was deleted, or a saved reference that predates a re-sign.
+        let item = ShelfStoredItem(kind: .file(bookmark: Data([0x00, 0x01, 0x02, 0x03])))
+        let provider = ShelfContextProvider(items: [item])
+
+        let snap = provider.heldItems().first
+        XCTAssertEqual(snap?.kind, .file)
+        XCTAssertEqual(snap?.available, false)              // flagged, not silently dropped
+        XCTAssertNil(snap?.path)
+        XCTAssertFalse(snap?.displayName.isEmpty ?? true)   // non-empty placeholder, not ""
+        XCTAssertNotNil(snap?.note)                         // explains how to repair
+
+        // get_item on the same item is an explicit "unavailable" result, not nil.
+        let resolved = provider.resolve(id: item.id.uuidString)
+        XCTAssertEqual(resolved?.kind, .file)
+        XCTAssertEqual(resolved?.contentOmitted, true)
+        XCTAssertNotNil(resolved?.note)
+    }
+
     func testResolveUnknownIdReturnsNil() {
         let provider = ShelfContextProvider(items: [])
         XCTAssertNil(provider.resolve(id: UUID().uuidString))

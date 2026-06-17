@@ -53,6 +53,14 @@ struct HeldItemSnapshot: Sendable, Codable, Equatable {
     var byteSize: Int?
     var modifiedAt: String?  // ISO-8601, filesystem mtime
     var mimeType: String?
+
+    /// False when a `.file` item's security-scoped bookmark could not be
+    /// resolved (the file moved/was deleted, or the saved reference predates a
+    /// code-signing change). The item still appears so it isn't silently
+    /// dropped, but path/size/mime are absent and `note` explains the state.
+    var available: Bool = true
+    /// Agent/user-facing explanation when `available` is false.
+    var note: String?
 }
 
 /// A single resolved item for `get_item`: a path for filesystem-capable agents
@@ -165,17 +173,27 @@ struct ShelfContextProvider: Sendable {
                 id: item.id.uuidString, kind: .link, displayName: name,
                 position: position, isTemporary: item.isTemporary)
         case .file(let bookmarkData):
+            guard let url = Bookmark(data: bookmarkData).resolveURL() else {
+                // Don't silently blank the row: keep the item visible but flag it
+                // unresolved so the agent (and the user) know a saved file needs
+                // repair, rather than seeing an empty, path-less entry.
+                return HeldItemSnapshot(
+                    id: item.id.uuidString, kind: .file, displayName: name,
+                    position: position, isTemporary: item.isTemporary,
+                    available: false,
+                    note: "This saved file's reference could not be resolved "
+                        + "(it may have moved, been deleted, or need re-adding). "
+                        + "Open Ghostwire's Shelf to repair it.")
+            }
             var snap = HeldItemSnapshot(
                 id: item.id.uuidString, kind: .file, displayName: name,
                 position: position, isTemporary: item.isTemporary)
-            if let url = Bookmark(data: bookmarkData).resolveURL() {
-                snap.path = url.path
-                snap.mimeType = UTType(filenameExtension: url.pathExtension)?.preferredMIMEType
-                let values = try? url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
-                snap.byteSize = values?.fileSize
-                if let mtime = values?.contentModificationDate {
-                    snap.modifiedAt = Self.iso8601.string(from: mtime)
-                }
+            snap.path = url.path
+            snap.mimeType = UTType(filenameExtension: url.pathExtension)?.preferredMIMEType
+            let values = try? url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+            snap.byteSize = values?.fileSize
+            if let mtime = values?.contentModificationDate {
+                snap.modifiedAt = Self.iso8601.string(from: mtime)
             }
             return snap
         }
@@ -229,7 +247,7 @@ struct ShelfContextProvider: Sendable {
             if s.hasPrefix("http://") { return String(s.dropFirst("http://".count)) }
             return s
         case .file(let bookmarkData):
-            guard let url = Bookmark(data: bookmarkData).resolveURL() else { return "" }
+            guard let url = Bookmark(data: bookmarkData).resolveURL() else { return "Unresolved file" }
             if url.pathExtension.lowercased() == "json" && url.path.contains("TextBlocks") {
                 if let name = textBlockTitle(at: url) { return name }
             } else if url.pathExtension.lowercased() == "webloc" && url.path.contains("WebLocs") {

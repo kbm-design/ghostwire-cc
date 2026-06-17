@@ -80,14 +80,19 @@ final class UnifiedShelfViewModel: ObservableObject {
 
     /// Cards after the type-to-filter query (substring over preview/raw/path).
     var filteredCards: [UnifiedCard] {
-        let q = filterText.trimmingCharacters(in: .whitespaces).lowercased()
-        guard !q.isEmpty else { return cards }
-        return cards.filter { card in
-            if card.previewText.lowercased().contains(q) { return true }
-            if card.rawText.lowercased().contains(q) { return true }
-            if let path = card.fileURL?.path.lowercased(), path.contains(q) { return true }
-            return false
-        }
+        cards.filter { Self.matches($0, query: filterText) }
+    }
+
+    /// Substring match over a card's preview / raw text / file path. Shared by the
+    /// in-notch row's type-to-filter and the detached window's search field
+    /// (GW-223) so both surfaces narrow identically. An empty query matches all.
+    static func matches(_ card: UnifiedCard, query: String) -> Bool {
+        let q = query.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !q.isEmpty else { return true }
+        if card.previewText.lowercased().contains(q) { return true }
+        if card.rawText.lowercased().contains(q) { return true }
+        if let path = card.fileURL?.path.lowercased(), path.contains(q) { return true }
+        return false
     }
 
     var selectedCard: UnifiedCard? {

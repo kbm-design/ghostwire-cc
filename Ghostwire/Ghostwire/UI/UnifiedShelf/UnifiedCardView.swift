@@ -21,6 +21,15 @@ struct UnifiedCardView: View {
     let card: UnifiedCard
     /// Driven by GW-213 keyboard nav; mouse hover also highlights.
     var isSelected: Bool = false
+    /// Single-click selection handler. Defaults (nil) to the shared in-notch
+    /// selection on `UnifiedShelfViewModel`; the detached window (GW-223) injects
+    /// its own so a click in the window doesn't reach into the notch's selection.
+    var onSelect: ((UnifiedCard) -> Void)? = nil
+    /// Whether the "Paste into current field" action is offered (GW-223). It
+    /// auto-fires ⌘V into the previously-frontmost app, which only works from the
+    /// non-activating notch; the detached window passes `false` (it steals focus,
+    /// so ⌘V would land in the window itself). Copy + Send are unaffected.
+    var showsPasteAction: Bool = true
 
     @ObservedObject private var vm = UnifiedShelfViewModel.shared
     @State private var isHovered = false
@@ -51,7 +60,7 @@ struct UnifiedCardView: View {
             // focuses the row (declare the 2-tap first so SwiftUI can disambiguate
             // from the 1-tap).
             .onTapGesture(count: 2) { performDoubleClick() }
-            .onTapGesture(count: 1) { vm.selectFromClick(card) }
+            .onTapGesture(count: 1) { (onSelect ?? { vm.selectFromClick($0) })(card) }
             .contextMenu { contextMenu }
     }
 
@@ -79,12 +88,14 @@ struct UnifiedCardView: View {
             .padding(5)
     }
 
-    // MARK: - Hover actions (exactly three, top-right)
+    // MARK: - Hover actions (top-right; Paste suppressed in the detached window)
 
     private var hoverActions: some View {
         HStack(spacing: 4) {
-            CardActionButton(systemName: pasteGlyph, tint: feedbackTint(pasteState), help: "Paste into current field") {
-                Task { flash($pasteState, await vm.paste(card) ? .ok : .fail) }
+            if showsPasteAction {
+                CardActionButton(systemName: pasteGlyph, tint: feedbackTint(pasteState), help: "Paste into current field") {
+                    Task { flash($pasteState, await vm.paste(card) ? .ok : .fail) }
+                }
             }
             CardActionButton(systemName: copied ? "checkmark" : "doc.on.doc", tint: copied ? TerminalColors.green : .secondary, help: "Copy") {
                 vm.copy(card); flashCopied()
@@ -154,6 +165,9 @@ struct UnifiedCardView: View {
         case .copy:
             vm.copy(card); flashCopied()
         case .pasteToField:
+            // In the detached window paste-to-field can't work (we'd ⌘V into our
+            // own window), so a paste-configured double-click falls back to copy.
+            guard showsPasteAction else { vm.copy(card); flashCopied(); break }
             Task { flash($pasteState, await vm.paste(card) ? .ok : .fail) }
         case .sendToAgent:
             Task {

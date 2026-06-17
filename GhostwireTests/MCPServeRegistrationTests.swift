@@ -41,9 +41,27 @@ final class MCPServeRegistrationTests: XCTestCase {
         XCTAssertTrue(toml.contains("args = [\"mcp-serve\"]"))
     }
 
-    func testTargetsCoverFourAgents() {
-        let ids = MCPServeRegistration.targets().map(\.id)
-        XCTAssertEqual(Set(ids), ["claude", "claude-desktop", "cursor", "codex"])
+    func testCodexAddArguments() {
+        XCTAssertEqual(
+            MCPServeRegistration.codexAddArguments(executable: exe),
+            ["mcp", "add", "ghostwire", "--", exe, "mcp-serve"])
+    }
+
+    func testCodexCommandStringIsCopyPasteable() {
+        let command = MCPServeRegistration.codexCommandString(executable: exe)
+        XCTAssertTrue(command.hasPrefix("codex mcp add ghostwire -- "))
+        XCTAssertTrue(command.contains("mcp-serve"))
+    }
+
+    func testTargetsSurfaceClaudeAndCodexAsCommands() {
+        let targets = MCPServeRegistration.targets()
+        // Only the two CLI agents are shown today, Codex right under Claude Code.
+        XCTAssertEqual(targets.map(\.id), ["claude", "codex"])
+        for target in targets {
+            guard case .command = target.method else {
+                return XCTFail("\(target.id) should register via a copyable command")
+            }
+        }
     }
 
     func testExecutablePathContainsArgsArrayEvenWithSpaces() {

@@ -45,6 +45,11 @@ enum MCPServeRegistration {
 
     // MARK: - Per-agent targets (one code path)
 
+    /// Agents surfaced in the Shelf-access UI today. We show only the two with a
+    /// one-line `mcp add` CLI (paste-and-go), Codex directly under Claude Code.
+    /// The snippet-based clients (Cursor, Claude Desktop) and a generic "any
+    /// stdio client" entry are deferred to the planned add-agent picker — the
+    /// `jsonSnippet`/`tomlSnippet` builders below stay ready for it.
     static func targets() -> [MCPServeTarget] {
         let exe = executablePath
         return [
@@ -55,22 +60,10 @@ enum MCPServeRegistration {
                 method: .command(claudeCommandString(executable: exe))
             ),
             MCPServeTarget(
-                id: "claude-desktop",
-                displayName: "Claude Desktop",
-                configPath: "~/Library/Application Support/Claude/claude_desktop_config.json",
-                method: .snippet(jsonSnippet(executable: exe))
-            ),
-            MCPServeTarget(
-                id: "cursor",
-                displayName: "Cursor",
-                configPath: "~/.cursor/mcp.json",
-                method: .snippet(jsonSnippet(executable: exe))
-            ),
-            MCPServeTarget(
                 id: "codex",
                 displayName: "Codex",
                 configPath: "~/.codex/config.toml",
-                method: .snippet(tomlSnippet(executable: exe))
+                method: .command(codexCommandString(executable: exe))
             ),
         ]
     }
@@ -89,6 +82,20 @@ enum MCPServeRegistration {
     /// The full copyable command the user runs themselves.
     static func claudeCommandString(executable: String) -> String {
         (["claude"] + claudeAddArguments(executable: executable))
+            .map { $0.contains(" ") ? "\"\($0)\"" : $0 }
+            .joined(separator: " ")
+    }
+
+    /// Arguments to `codex` for `codex mcp add ghostwire -- <exe> mcp-serve`.
+    /// Codex writes the `[mcp_servers.ghostwire]` block into `~/.codex/config.toml`
+    /// (global by default — no per-scope flag like Claude's `--scope user`).
+    static func codexAddArguments(executable: String) -> [String] {
+        ["mcp", "add", serverName, "--", executable, serveArgument]
+    }
+
+    /// The full copyable command the user runs themselves.
+    static func codexCommandString(executable: String) -> String {
+        (["codex"] + codexAddArguments(executable: executable))
             .map { $0.contains(" ") ? "\"\($0)\"" : $0 }
             .joined(separator: " ")
     }

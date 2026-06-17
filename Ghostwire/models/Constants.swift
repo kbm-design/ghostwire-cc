@@ -249,6 +249,10 @@ extension Defaults.Keys {
     // uninstall from the Agents tab sticks across relaunches.
     static let claudeHooksEnabled = Key<Bool>("claudeHooksEnabled", default: true)
     static let codexHooksEnabled = Key<Bool>("codexHooksEnabled", default: true)
+    // GW-173: consent gate for the MCP context-hub server (pull side). When
+    // off, the `mcp-serve` subcommand serves an empty Shelf even if an agent
+    // is registered. Default off — exposing held context to agents is opt-in.
+    static let mcpServeEnabled = Key<Bool>("mcpServeEnabled", default: false)
     // Pending Codex re-trust map (GW-196): `[hooks.state]` position key ->
     // the stale `trusted_hash` that was in config.toml when we changed that
     // hook's command in place (e.g. buddi -> ghostwire). The installer records

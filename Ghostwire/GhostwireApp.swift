@@ -11,7 +11,21 @@ import KeyboardShortcuts
 import Sparkle
 import SwiftUI
 
+/// Process entry point. The same signed binary serves two roles:
+///  - `Ghostwire mcp-serve` → the GW-173 MCP context-hub server over stdio
+///    (no GUI, no AppKit/Sparkle init), so `.withSecurityScope` Shelf bookmarks
+///    resolve under the app's own code signature.
+///  - otherwise → the normal SwiftUI/menu-bar app.
 @main
+enum GhostwireMain {
+    static func main() {
+        if CommandLine.arguments.dropFirst().contains("mcp-serve") {
+            MCPServeRuntime.main()  // never returns
+        }
+        GhostwireApp.main()
+    }
+}
+
 struct GhostwireApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @Default(.menubarIcon) var showMenuBarIcon

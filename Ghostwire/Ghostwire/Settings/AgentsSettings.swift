@@ -55,6 +55,9 @@ struct AgentsSettings: View {
                     .leadingFooter()
             }
 
+            // GW-173: pull side — let agents read the Shelf over local MCP.
+            ShelfAccessSection()
+
             // Reserved IA slot (GW-144): per-agent approval modes are gated
             // on the PreToolUse-as-gate work (GW-139) — greyed, not wired.
             Section {

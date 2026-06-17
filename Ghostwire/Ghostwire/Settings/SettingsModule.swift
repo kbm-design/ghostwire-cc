@@ -75,7 +75,15 @@ struct SettingsModule: Identifiable {
         unavailableHint: "No camera detected on this Mac."
     )
 
-    static let all: [SettingsModule] = [media, calendar, huds, battery, shelf, mirror]
+    static let ambient = SettingsModule(
+        id: "Activity",
+        label: "Activity",
+        icon: "clock.arrow.circlepath",
+        enabledKey: .ambientCaptureEnabled,
+        disabledHint: "Quietly records which app is frontmost so Ghostwire can surface the right thing later. App names only — no window titles or content. Stays on this Mac."
+    )
+
+    static let all: [SettingsModule] = [media, calendar, huds, battery, shelf, mirror, ambient]
 }
 
 extension View {

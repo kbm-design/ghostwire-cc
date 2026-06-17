@@ -91,6 +91,30 @@ enum PermissionAutoOpenMode: String, CaseIterable, Identifiable, Defaults.Serial
     var id: String { rawValue }
 }
 
+// Ambient context retention (GW-172). How long frontmost-app activity shards
+// are kept on disk. session-only = RAM only, nothing is ever written (and
+// switching to it wipes existing shards). `forever` keeps everything.
+enum AmbientRetention: String, CaseIterable, Identifiable, Defaults.Serializable {
+    case days7 = "7 days"
+    case days30 = "30 days"
+    case days90 = "90 days"
+    case forever = "Forever"
+    case sessionOnly = "Session only"
+
+    var id: String { rawValue }
+
+    /// Max age to keep, or nil for `forever`. `sessionOnly` also returns nil
+    /// here but is special-cased upstream (nothing is persisted at all).
+    var maxAge: TimeInterval? {
+        switch self {
+        case .days7: return 7 * 86_400
+        case .days30: return 30 * 86_400
+        case .days90: return 90 * 86_400
+        case .forever, .sessionOnly: return nil
+        }
+    }
+}
+
 extension Defaults.Keys {
     // MARK: General
     static let menubarIcon = Key<Bool>("menubarIcon", default: true)
@@ -261,4 +285,21 @@ extension Defaults.Keys {
     static let mediaModuleEnabled = Key<Bool>("mediaModuleEnabled", default: true)
     static let notchTabOrder = Key<[String]>("notchTabOrder", default: ["agents", "dashboard", "shelf"])
     static let hiddenNotchTabs = Key<Set<String>>("hiddenNotchTabs", default: [])
+
+    // MARK: Ambient context (GW-172) — Tier-0 frontmost-app spine.
+    // SILENT: collects + persists which app is frontmost (identity only — no
+    // window titles or content) for Ghostwire's OWN future surfacing (ranking
+    // GW-182, display GW-214). Local-only — never narrated to a cloud agent.
+    //
+    // Master toggle, default ON (Tier 0 is free, zero-TCC). AmbientContextService
+    // follows this key live; SettingsModule.ambient exposes it as the sidebar
+    // module toggle.
+    static let ambientCaptureEnabled = Key<Bool>("ambientCaptureEnabled", default: true)
+    static let ambientRetention = Key<AmbientRetention>("ambientRetention", default: .days30)
+    // Apps whose activity is never recorded (capture-suppressing). Empty by
+    // default: the spine records app identity only (no window titles, no
+    // content), so there's little to protect yet — users add their own apps in
+    // Settings → Activity. (Revisit the seed when Tier-1 window titles land in
+    // GW-182+, where the privacy stakes are higher.)
+    static let ambientAppDenylist = Key<[String]>("ambientAppDenylist", default: [])
 }

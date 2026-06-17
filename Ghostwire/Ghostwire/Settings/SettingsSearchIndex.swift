@@ -90,6 +90,10 @@ enum SettingsSearchIndex {
         "Battery": ["charge", "power", "percentage", "low power"],
         "Shelf": ["files", "drag", "drop", "quick share", "airdrop", "tray", "clipboard", "history", "copy", "paste"],
         "Mirror": ["camera", "webcam", "face", "shape"],
+        "Activity": [
+            "activity", "context", "ambient", "capture", "frontmost",
+            "retention", "denylist", "excluded apps", "privacy", "history",
+        ],
     ]
 
     /// Pane ids matching a query (case-insensitive substring over label +

@@ -295,7 +295,11 @@ extension Defaults.Keys {
     // follows this key live; SettingsModule.ambient exposes it as the sidebar
     // module toggle.
     static let ambientCaptureEnabled = Key<Bool>("ambientCaptureEnabled", default: true)
-    static let ambientRetention = Key<AmbientRetention>("ambientRetention", default: .days30)
+    // Default 7 days: plenty for the interim substrate, light on disk; retention
+    // has no RAM/perf effect (the in-memory ring is capped independently), so
+    // this is purely a how-much-history-to-bank choice. Bump when GW-182's
+    // pattern logic wants a longer lookback.
+    static let ambientRetention = Key<AmbientRetention>("ambientRetention", default: .days7)
     // Apps whose activity is never recorded (capture-suppressing). Empty by
     // default: the spine records app identity only (no window titles, no
     // content), so there's little to protect yet — users add their own apps in

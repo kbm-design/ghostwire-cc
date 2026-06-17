@@ -422,6 +422,9 @@ struct NotchHomeView: View {
     @ObservedObject var webcamManager = WebcamManager.shared
     @ObservedObject var batteryModel = BatteryStatusViewModel.shared
     @ObservedObject var coordinator = GhostwireViewCoordinator.shared
+    // GW-223: .window when reused in the detached window — no notch collapse, so
+    // the collapse-blur stays off regardless of the (notch's) notchState.
+    @Environment(\.ghostwireSurface) private var surface
     let albumArtNamespace: Namespace.ID
 
     var body: some View {
@@ -432,6 +435,11 @@ struct NotchHomeView: View {
         }
         // simplified: use a straightforward opacity transition
         .transition(.opacity)
+    }
+
+    /// Collapsing (and its hide-blur) only happens inside the notch panel.
+    private var notchCollapsed: Bool {
+        surface == .notch && vm.notchState == .closed
     }
 
     private var shouldShowCamera: Bool {
@@ -455,13 +463,13 @@ struct NotchHomeView: View {
             if shouldShowCamera {
                 CameraPreviewView(webcamManager: webcamManager)
                     .scaledToFit()
-                    .opacity(vm.notchState == .closed ? 0 : 1)
-                    .blur(radius: vm.notchState == .closed ? 20 : 0)
+                    .opacity(notchCollapsed ? 0 : 1)
+                    .blur(radius: notchCollapsed ? 20 : 0)
                     .animation(.interactiveSpring(response: 0.32, dampingFraction: 0.76, blendDuration: 0), value: shouldShowCamera)
             }
         }
         .transition(.asymmetric(insertion: .opacity.combined(with: .move(edge: .top)), removal: .opacity))
-        .blur(radius: vm.notchState == .closed ? 30 : 0)
+        .blur(radius: notchCollapsed ? 30 : 0)
     }
 }
 

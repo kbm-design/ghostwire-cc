@@ -2,8 +2,15 @@ import SwiftUI
 
 struct AgentsTabView: View {
     @EnvironmentObject var vm: GhostwireViewModel
+    // GW-223: .window when reused in the detached window — no notch collapse, so
+    // no collapse-blur and no notch scroll-gesture suppression.
+    @Environment(\.ghostwireSurface) private var surface
     @ObservedObject private var bridge = GhostwireSessionBridge.shared
-    @ObservedObject private var panelVM = GhostwireSessionBridge.shared.panelViewModel
+    // GW-223: the chat-navigation state. Defaults to the shared notch panel VM,
+    // but the detached window injects its OWN instance so the two surfaces can
+    // browse different chats independently (and closing/switching one can't exit
+    // the other's chat).
+    @ObservedObject private var panelVM: AgentPanelViewModel
     @ObservedObject private var usageService = UsageService.shared
     @ObservedObject private var codexUsageService = CodexUsageService.shared
     @State private var suppressionToken = UUID()
@@ -15,6 +22,12 @@ struct AgentsTabView: View {
     @State private var showingAlertHistory = false
     /// GW-151: meter slot order - first agent to come alive keeps slot 1
     @State private var agentOrder: [String] = []
+
+    /// Defaults to the shared notch panel VM; the window passes its own so chat
+    /// navigation is per-surface (GW-223).
+    init(panelViewModel: AgentPanelViewModel = GhostwireSessionBridge.shared.panelViewModel) {
+        _panelVM = ObservedObject(wrappedValue: panelViewModel)
+    }
 
     private var isInChat: Bool {
         if case .chat = panelVM.contentType { return true }
@@ -90,7 +103,7 @@ struct AgentsTabView: View {
         .padding(.top, 10)
         .padding(.leading, 5)
         .transition(.asymmetric(insertion: .opacity.combined(with: .move(edge: .top)), removal: .opacity))
-        .blur(radius: vm.notchState == .closed ? 30 : 0)
+        .blur(radius: surface == .notch && vm.notchState == .closed ? 30 : 0)
         .onHover { hovering in
             updateSuppression(for: hovering)
         }
@@ -295,6 +308,8 @@ struct AgentsTabView: View {
     private var sessions: [SessionState] { bridge.sessionMonitor.instances }
 
     private func updateSuppression(for hovering: Bool) {
+        // No notch scroll to suppress when hosted in the window.
+        guard surface == .notch else { return }
         guard hovering != isSuppressing else { return }
         isSuppressing = hovering
         vm.setScrollGestureSuppression(hovering, token: suppressionToken)

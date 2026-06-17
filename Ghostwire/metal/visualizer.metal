@@ -1,6 +1,6 @@
 //
 //  visualizer.metal
-//  buddi
+//  Ghostwire
 //
 //
 

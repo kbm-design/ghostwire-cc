@@ -31,6 +31,10 @@ build/
 *.app
 *.dSYM
 
+# Code coverage artifacts
+*.profraw
+*.profdata
+
 # Temporary files
 *.swp
 *.swo

@@ -21,18 +21,18 @@ enum GatewayError: Error, Equatable {
 
 /// Maps an exposed (namespaced) tool name back to its downstream server + the
 /// downstream's own tool name.
-struct GatewayRoute {
+struct GatewayRoute: Sendable {
     let serverID: UUID
     let originalName: String
 }
 
 /// The gateway's merged tool surface plus the routing table behind it.
-struct GatewayExposure {
+struct GatewayExposure: Sendable {
     let tools: [Tool]
     let routes: [String: GatewayRoute]
 }
 
-struct MCPGatewayCore {
+struct MCPGatewayCore: Sendable {
     let source: GatewayUpstreamSource
 
     init(source: GatewayUpstreamSource) {

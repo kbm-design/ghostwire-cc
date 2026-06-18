@@ -13,8 +13,9 @@ import XCTest
 @testable import Ghostwire
 
 final class MCPGatewayCoreTests: XCTestCase {
-    /// Captures calls so routing assertions can inspect them.
-    private final class FakeSource: GatewayUpstreamSource {
+    /// Captures calls so routing assertions can inspect them. `@unchecked` —
+    /// test-only, driven single-threaded through `await`.
+    private final class FakeSource: GatewayUpstreamSource, @unchecked Sendable {
         struct Recorded { let serverID: UUID; let tool: String; let arguments: [String: Value]? }
         let provided: [GatewayUpstreamServer]
         private(set) var recorded: Recorded?

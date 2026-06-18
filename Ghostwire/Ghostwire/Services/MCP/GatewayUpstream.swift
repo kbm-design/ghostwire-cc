@@ -25,7 +25,7 @@ enum GatewaySlug {
 
 /// One connected downstream server's contribution to the gateway: its identity
 /// plus the full SDK `Tool`s (with `inputSchema`) the user has allowlisted.
-struct GatewayUpstreamServer {
+struct GatewayUpstreamServer: Sendable {
     let id: UUID
     let displayName: String
     let tools: [Tool]
@@ -34,7 +34,8 @@ struct GatewayUpstreamServer {
 /// What the gateway core reads from. Faked in tests; backed by
 /// `MCPClientService` in production (a later task). `servers()` yields only
 /// connected, allowlisted tools; `call` forwards to the real downstream.
-protocol GatewayUpstreamSource {
+/// Sendable so the core can run behind the SDK's `@Sendable` server handlers.
+protocol GatewayUpstreamSource: Sendable {
     func servers() async -> [GatewayUpstreamServer]
     func call(serverID: UUID, tool: String, arguments: [String: Value]?) async throws
         -> MCPToolCallOutput

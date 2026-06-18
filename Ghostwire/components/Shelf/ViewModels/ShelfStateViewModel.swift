@@ -29,20 +29,19 @@ final class ShelfStateViewModel: ObservableObject {
 
     func add(_ newItems: [ShelfItem]) {
         guard !newItems.isEmpty else { return }
-        var merged = items
-        // Deduplicate by identityKey while preserving order (existing first)
-        var seen: Set<String> = Set(merged.map { $0.identityKey })
-        var didAppend = false
+        // Newest first: prepend the not-yet-present items so the most recent
+        // save sits at the FRONT of the row (the reveal lands on it).
+        var fresh: [ShelfItem] = []
+        var seen: Set<String> = Set(items.map { $0.identityKey })
         for it in newItems {
             let key = it.identityKey
             if !seen.contains(key) {
-                merged.append(it)
+                fresh.append(it)
                 seen.insert(key)
-                didAppend = true
             }
         }
-        guard didAppend else { return }
-        items = merged
+        guard !fresh.isEmpty else { return }
+        items = fresh + items
         // GW-226: an explicit save/drag arms the one-shot Shelf reveal so the next
         // open shows what you just saved (then reverts to your last tab). This is
         // the saved-store choke point — clipboard auto-capture lives in

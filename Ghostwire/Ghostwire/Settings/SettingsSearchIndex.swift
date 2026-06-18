@@ -27,7 +27,7 @@ enum SettingsSearchIndex {
             keywords: [
                 "menu bar", "launch", "login", "display", "screen", "height",
                 "notch", "hover", "haptics", "gesture", "tabs", "reorder",
-                "lock screen", "recording",
+                "lock screen", "recording", "voice", "dictation", "speech",
             ]
         ),
         SettingsSearchEntry(
@@ -47,7 +47,7 @@ enum SettingsSearchIndex {
         ),
         SettingsSearchEntry(
             id: "Shortcuts", label: "Shortcuts", icon: "keyboard",
-            keywords: ["keyboard", "hotkey", "sneak peek", "clipboard"]
+            keywords: ["keyboard", "hotkey", "sneak peek", "clipboard", "voice", "capture", "dictation"]
         ),
         SettingsSearchEntry(
             id: "MCP", label: "MCP Servers", icon: "server.rack",

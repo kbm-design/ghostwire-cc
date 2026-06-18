@@ -286,6 +286,20 @@ extension Defaults.Keys {
     // Cap mirrors the alert-history pattern: 100 entries / 7 days, configurable.
     static let clipboardHistoryMaxEntries = Key<Int>("clipboardHistoryMaxEntries", default: 100)
     static let clipboardHistoryMaxAgeDays = Key<Int>("clipboardHistoryMaxAgeDays", default: 7)
+
+    // MARK: Voice capture (GW-229)
+    // Master switch for the voice hotkey (record → clipboard + Shelf, paste into
+    // a focused field). On by default; when off the ⌃⇧Space handler no-ops.
+    static let voiceCaptureEnabled = Key<Bool>("voiceCaptureEnabled", default: true)
+    // When on, a finished transcript pastes into the focused editable field (if
+    // any); otherwise it always goes to the clipboard + Shelf. On by default.
+    static let voicePasteIntoFocusedField = Key<Bool>("voicePasteIntoFocusedField", default: true)
+    // Selected speech engine/model: a VoiceModel rawValue (default "nemotronEN",
+    // on-device FluidAudio) or "apple" for the built-in engine.
+    static let voiceModel = Key<String>("voiceModel", default: "nemotronEN")
+    // VoiceModel rawValues whose on-device model has been downloaded (so the
+    // Settings UI can show "Downloaded ✓" across launches without re-checking).
+    static let voiceDownloadedModels = Key<[String]>("voiceDownloadedModels", default: [])
     // GW-218: what a double-click on a unified card does. Default: copy.
     static let cardDoubleClickAction = Key<CardDoubleClickAction>("cardDoubleClickAction", default: .copy)
 

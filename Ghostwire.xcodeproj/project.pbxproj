@@ -108,6 +108,7 @@
 		30AF3A8D2FE38A3B005DEC77 /* NIOCore in Frameworks */ = {isa = PBXBuildFile; productRef = 30AF3A8C2FE38A3B005DEC77 /* NIOCore */; };
 		30AF3A8F2FE38A3B005DEC77 /* NIOHTTP1 in Frameworks */ = {isa = PBXBuildFile; productRef = 30AF3A8E2FE38A3B005DEC77 /* NIOHTTP1 */; };
 		30AF3A912FE38A3B005DEC77 /* NIOPosix in Frameworks */ = {isa = PBXBuildFile; productRef = 30AF3A902FE38A3B005DEC77 /* NIOPosix */; };
+		30DBC2DC2FE3C30200F7605A /* FluidAudio in Frameworks */ = {isa = PBXBuildFile; productRef = 30DBC2DB2FE3C30200F7605A /* FluidAudio */; };
 		507266DB2C908E2E00A2D00D /* HoverButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = 507266DA2C908E2E00A2D00D /* HoverButton.swift */; };
 		5917FD112E57891600E87F1C /* MediaKeyInterceptor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5917FD102E57891600E87F1C /* MediaKeyInterceptor.swift */; };
 		5955950D2E900ED800C66711 /* ApplicationRelauncher.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5955950C2E900ED800C66711 /* ApplicationRelauncher.swift */; };
@@ -350,6 +351,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				111BEA5F2ED07A340079DD4E /* MacroVisionKit in Frameworks */,
+				30DBC2DC2FE3C30200F7605A /* FluidAudio in Frameworks */,
 				9A987A102C73CA8D005CA465 /* Collections in Frameworks */,
 				1194E8852EA57D23009C82D6 /* SkyLightWindow in Frameworks */,
 				112B0EBB2E30DD5000562D6C /* MediaRemoteAdapter.framework in Frameworks */,
@@ -366,6 +368,13 @@
 				111BE95D2ECD71E10079DD4E /* AsyncXPCConnection in Frameworks */,
 				B1628B922CC260C0003D8DF3 /* SwiftUIIntrospect in Frameworks */,
 				30AF3A8F2FE38A3B005DEC77 /* NIOHTTP1 in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		AA1920000000000000000004 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -843,6 +852,7 @@
 				30AF3A8C2FE38A3B005DEC77 /* NIOCore */,
 				30AF3A8E2FE38A3B005DEC77 /* NIOHTTP1 */,
 				30AF3A902FE38A3B005DEC77 /* NIOPosix */,
+				30DBC2DB2FE3C30200F7605A /* FluidAudio */,
 			);
 			productName = dynamicNotch;
 			productReference = 14CEF4122C5CAED300855D72 /* Ghostwire.app */;
@@ -917,6 +927,7 @@
 				111BEA6D2ED166E20079DD4E /* XCRemoteSwiftPackageReference "MacroVisionKit" */,
 				11AA00012F00000000000001 /* XCRemoteSwiftPackageReference "swift-sdk" */,
 				30AF3A8B2FE38A3B005DEC77 /* XCRemoteSwiftPackageReference "swift-nio" */,
+				30DBC2DA2FE3C30200F7605A /* XCRemoteSwiftPackageReference "FluidAudio" */,
 			);
 			productRefGroup = 14CEF4132C5CAED300855D72 /* Products */;
 			projectDirPath = "";
@@ -1319,7 +1330,9 @@
 				INFOPLIST_KEY_NSCalendarsUsageDescription = "This app uses the calendar to display your calendar events";
 				INFOPLIST_KEY_NSCameraUsageDescription = "This app uses the camera to display a live camera view";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Ghostwire uses the microphone to capture your voice for on-device transcription.";
 				INFOPLIST_KEY_NSRemindersUsageDescription = "This app uses Reminders to display your scheduled reminder in the calendar";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Ghostwire transcribes your speech on-device to send it to your agent and save it to the Shelf.";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -1371,7 +1384,9 @@
 				INFOPLIST_KEY_NSCalendarsUsageDescription = "This app uses the calendar to display your calendar events";
 				INFOPLIST_KEY_NSCameraUsageDescription = "This app uses the camera to display a live camera view";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Ghostwire uses the microphone to capture your voice for on-device transcription.";
 				INFOPLIST_KEY_NSRemindersUsageDescription = "This app uses Reminders to display your scheduled reminder in the calendar";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Ghostwire transcribes your speech on-device to send it to your agent and save it to the Shelf.";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -1535,6 +1550,14 @@
 				minimumVersion = 2.101.0;
 			};
 		};
+		30DBC2DA2FE3C30200F7605A /* XCRemoteSwiftPackageReference "FluidAudio" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/FluidInference/FluidAudio.git";
+			requirement = {
+				kind = upToNextMinorVersion;
+				minimumVersion = 0.15.4;
+			};
+		};
 		9A987A0E2C73CA8D005CA465 /* XCRemoteSwiftPackageReference "swift-collections" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/apple/swift-collections.git";
@@ -1635,6 +1658,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 30AF3A8B2FE38A3B005DEC77 /* XCRemoteSwiftPackageReference "swift-nio" */;
 			productName = NIOPosix;
+		};
+		30DBC2DB2FE3C30200F7605A /* FluidAudio */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 30DBC2DA2FE3C30200F7605A /* XCRemoteSwiftPackageReference "FluidAudio" */;
+			productName = FluidAudio;
 		};
 		9A987A0F2C73CA8D005CA465 /* Collections */ = {
 			isa = XCSwiftPackageProductDependency;

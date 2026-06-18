@@ -229,6 +229,7 @@ struct GeneralSettings: View {
     }
     @EnvironmentObject var vm: GhostwireViewModel
     @ObservedObject var coordinator = GhostwireViewCoordinator.shared
+    @ObservedObject private var voiceModels = VoiceModelStore.shared
 
     @Default(.mirrorShape) var mirrorShape
     @Default(.gestureSensitivity) var gestureSensitivity
@@ -241,6 +242,8 @@ struct GeneralSettings: View {
     @Default(.automaticallySwitchDisplay) var automaticallySwitchDisplay
     @Default(.enableGestures) var enableGestures
     @Default(.openNotchOnHover) var openNotchOnHover
+    @Default(.voiceCaptureEnabled) var voiceCaptureEnabled
+    @Default(.voiceModel) var voiceModel
     
 
     var body: some View {
@@ -358,6 +361,48 @@ struct GeneralSettings: View {
             NotchBehaviour()
 
             gestureControls()
+
+            Section {
+                Defaults.Toggle(key: .voiceCaptureEnabled) {
+                    Text("Voice capture")
+                }
+                Defaults.Toggle(key: .voicePasteIntoFocusedField) {
+                    Text("Paste into the focused text field when possible")
+                }
+                .disabled(!voiceCaptureEnabled)
+                Picker("Speech engine", selection: Binding(
+                    get: { voiceModel },
+                    set: { newValue in
+                        Defaults[.voiceModel] = newValue
+                        // Pre-download/load the chosen on-device model so the
+                        // next recording isn't a cold start.
+                        if newValue != DefaultTranscriberFactory.appleEngineKey,
+                           let model = VoiceModel(rawValue: newValue) {
+                            FluidAudioTranscriber.prepare(model)
+                        }
+                    }
+                )) {
+                    ForEach(VoiceModel.allCases, id: \.self) { model in
+                        Text(model.displayName).tag(model.rawValue)
+                    }
+                    Text("Apple built-in (no download)").tag(DefaultTranscriberFactory.appleEngineKey)
+                }
+                .disabled(!voiceCaptureEnabled)
+                if voiceCaptureEnabled,
+                   voiceModel != DefaultTranscriberFactory.appleEngineKey,
+                   let model = VoiceModel(rawValue: voiceModel) {
+                    voiceModelStatus(model)
+                }
+            } header: {
+                Text("Voice")
+            } footer: {
+                Text(
+                    "Press the Voice Capture shortcut (⌃⇧Space by default) to record a thought — on-device. If you're in a text field it pastes there; otherwise it's copied and saved to the Shelf. With paste off, captures always go to the clipboard + Shelf. Change the shortcut in Settings ▸ Shortcuts."
+                )
+                .foregroundStyle(.secondary)
+                .font(.caption)
+                .leadingFooter()
+            }
         }
         .toolbar {
             Button("Quit app") {
@@ -409,6 +454,39 @@ struct GeneralSettings: View {
             .foregroundStyle(.secondary)
             .font(.caption)
             .leadingFooter()
+        }
+    }
+
+    @ViewBuilder
+    func voiceModelStatus(_ model: VoiceModel) -> some View {
+        switch voiceModels.state(model) {
+        case .ready:
+            Label("Model downloaded", systemImage: "checkmark.circle.fill")
+                .foregroundStyle(.green)
+                .font(.caption)
+        case .downloading:
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small)
+                Text("Downloading model… (\(model.approxDownload), one time)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        case .notDownloaded:
+            HStack {
+                Text("Model not downloaded (\(model.approxDownload))")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button("Download") { FluidAudioTranscriber.prepare(model) }
+            }
+        case .failed:
+            HStack {
+                Text("Download failed — check your connection")
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                Spacer()
+                Button("Retry") { FluidAudioTranscriber.prepare(model) }
+            }
         }
     }
 
@@ -1399,9 +1477,18 @@ struct Shortcuts: View {
             }
             Section {
                 KeyboardShortcuts.Recorder("Toggle Notch Open:", name: .toggleNotchOpen)
+            } header: {
+                Text("Notch")
+            }
+            Section {
                 // GW-210: unbound by default — opens the notch on the Shelf tab
                 // and lands on clipboard history.
                 KeyboardShortcuts.Recorder("Open Clipboard History:", name: .openClipboardHistory)
+                // GW-229: ⌃⇧Space by default — record a thought and send it to a
+                // running agent without leaving the app you're in.
+                KeyboardShortcuts.Recorder("Voice Capture:", name: .toggleVoiceCapture)
+            } header: {
+                Text("Capture")
             }
         }
         .accentColor(.effectiveAccent)

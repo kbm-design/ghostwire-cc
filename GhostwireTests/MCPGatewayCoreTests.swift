@@ -47,4 +47,24 @@ final class MCPGatewayCoreTests: XCTestCase {
         XCTAssertEqual(exposure.routes["linear_create_issue"]?.serverID, serverID)
         XCTAssertEqual(exposure.routes["linear_create_issue"]?.originalName, "create_issue")
     }
+
+    func testBuildExposureDisambiguatesCollidingNames() async {
+        let idA = UUID()
+        let idB = UUID()
+        let objSchema: Value = .object(["type": .string("object")])
+        let toolA = Tool(name: "create_issue", description: "A", inputSchema: objSchema)
+        let toolB = Tool(name: "create_issue", description: "B", inputSchema: objSchema)
+        // Two servers slug-identical ("linear") both exposing create_issue.
+        let source = FakeSource([
+            GatewayUpstreamServer(id: idA, displayName: "Linear", tools: [toolA]),
+            GatewayUpstreamServer(id: idB, displayName: "Linear", tools: [toolB]),
+        ])
+
+        let exposure = await MCPGatewayCore(source: source).buildExposure()
+
+        XCTAssertEqual(exposure.tools.map(\.name), ["linear_create_issue", "linear_create_issue_2"])
+        XCTAssertEqual(exposure.routes["linear_create_issue"]?.serverID, idA)
+        XCTAssertEqual(exposure.routes["linear_create_issue_2"]?.serverID, idB)
+        XCTAssertEqual(exposure.routes["linear_create_issue_2"]?.originalName, "create_issue")
+    }
 }

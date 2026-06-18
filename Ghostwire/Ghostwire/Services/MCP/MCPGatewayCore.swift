@@ -41,7 +41,7 @@ struct MCPGatewayCore {
         for server in await source.servers() {
             let slug = GatewaySlug.slugify(server.displayName)
             for tool in server.tools {
-                let exposedName = "\(slug)_\(tool.name)"
+                let exposedName = Self.uniqueName("\(slug)_\(tool.name)", taken: routes)
                 tools.append(
                     Tool(
                         name: exposedName,
@@ -53,5 +53,15 @@ struct MCPGatewayCore {
             }
         }
         return GatewayExposure(tools: tools, routes: routes)
+    }
+
+    /// Disambiguate exposed names that collide across servers (e.g. two
+    /// servers that slug identically and share a tool name) by suffixing
+    /// `_2`, `_3`, … — never let a later tool overwrite an earlier route.
+    private static func uniqueName(_ base: String, taken routes: [String: GatewayRoute]) -> String {
+        guard routes[base] != nil else { return base }
+        var n = 2
+        while routes["\(base)_\(n)"] != nil { n += 1 }
+        return "\(base)_\(n)"
     }
 }

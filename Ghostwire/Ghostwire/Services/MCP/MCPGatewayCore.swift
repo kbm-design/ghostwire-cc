@@ -14,6 +14,11 @@
 import Foundation
 import MCP
 
+enum GatewayError: Error, Equatable {
+    /// The host called an exposed name that resolves to no downstream tool.
+    case unknownTool(String)
+}
+
 /// Maps an exposed (namespaced) tool name back to its downstream server + the
 /// downstream's own tool name.
 struct GatewayRoute {
@@ -53,6 +58,18 @@ struct MCPGatewayCore {
             }
         }
         return GatewayExposure(tools: tools, routes: routes)
+    }
+
+    /// Resolve an exposed name to its downstream and forward the call. Rebuilds
+    /// the route map per call (stateless probe) — caching the exposure is a
+    /// Phase-2 refinement once the gateway is hosted behind a transport.
+    func call(exposedName: String, arguments: [String: Value]?) async throws -> MCPToolCallOutput {
+        let routes = await buildExposure().routes
+        guard let route = routes[exposedName] else {
+            throw GatewayError.unknownTool(exposedName)
+        }
+        return try await source.call(
+            serverID: route.serverID, tool: route.originalName, arguments: arguments)
     }
 
     /// Disambiguate exposed names that collide across servers (e.g. two

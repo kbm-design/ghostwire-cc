@@ -15,12 +15,15 @@ import XCTest
 final class MCPGatewayCoreTests: XCTestCase {
     /// Captures calls so routing assertions can inspect them.
     private final class FakeSource: GatewayUpstreamSource {
+        struct Recorded { let serverID: UUID; let tool: String; let arguments: [String: Value]? }
         let provided: [GatewayUpstreamServer]
+        private(set) var recorded: Recorded?
         init(_ provided: [GatewayUpstreamServer]) { self.provided = provided }
         func servers() async -> [GatewayUpstreamServer] { provided }
         func call(serverID: UUID, tool: String, arguments: [String: Value]?) async throws
             -> MCPToolCallOutput {
-            MCPToolCallOutput(
+            recorded = Recorded(serverID: serverID, tool: tool, arguments: arguments)
+            return MCPToolCallOutput(
                 result: CallTool.Result(content: [.text(text: "stub", annotations: nil, _meta: nil)]))
         }
     }
@@ -66,5 +69,34 @@ final class MCPGatewayCoreTests: XCTestCase {
         XCTAssertEqual(exposure.routes["linear_create_issue"]?.serverID, idA)
         XCTAssertEqual(exposure.routes["linear_create_issue_2"]?.serverID, idB)
         XCTAssertEqual(exposure.routes["linear_create_issue_2"]?.originalName, "create_issue")
+    }
+
+    func testCallRoutesToDownstreamByExposedName() async throws {
+        let serverID = UUID()
+        let create = Tool(name: "create_issue", description: "", inputSchema: .object(["type": .string("object")]))
+        let source = FakeSource([
+            GatewayUpstreamServer(id: serverID, displayName: "Linear", tools: [create])
+        ])
+        let core = MCPGatewayCore(source: source)
+
+        let output = try await core.call(
+            exposedName: "linear_create_issue", arguments: ["title": .string("Bug")])
+
+        XCTAssertEqual(source.recorded?.serverID, serverID)
+        XCTAssertEqual(source.recorded?.tool, "create_issue")  // bare downstream name, prefix stripped
+        XCTAssertEqual(source.recorded?.arguments?["title"], .string("Bug"))
+        XCTAssertEqual(output.textRepresentation, "stub")
+    }
+
+    func testCallUnknownToolThrows() async {
+        let core = MCPGatewayCore(source: FakeSource([]))
+        do {
+            _ = try await core.call(exposedName: "nope_tool", arguments: nil)
+            XCTFail("expected unknownTool to throw")
+        } catch GatewayError.unknownTool(let name) {
+            XCTAssertEqual(name, "nope_tool")
+        } catch {
+            XCTFail("wrong error: \(error)")
+        }
     }
 }

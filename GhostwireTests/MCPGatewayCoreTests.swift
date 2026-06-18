@@ -52,6 +52,25 @@ final class MCPGatewayCoreTests: XCTestCase {
         XCTAssertEqual(exposure.routes["linear_create_issue"]?.originalName, "create_issue")
     }
 
+    func testBuildExposurePreservesOutputSchema() async {
+        // Codex P2: structured-output tools must keep their outputSchema contract
+        // when re-exposed, not just inputSchema.
+        let outputSchema: Value = .object([
+            "type": .string("object"),
+            "properties": .object(["id": .object(["type": .string("string")])]),
+        ])
+        let tool = Tool(
+            name: "create_issue", description: "", inputSchema: .object(["type": .string("object")]),
+            outputSchema: outputSchema)
+        let source = FakeSource([
+            GatewayUpstreamServer(id: UUID(), displayName: "Linear", tools: [tool])
+        ])
+
+        let exposure = await MCPGatewayCore(source: source).buildExposure()
+
+        XCTAssertEqual(exposure.tools.first?.outputSchema, outputSchema)
+    }
+
     func testBuildExposureDisambiguatesCollidingNames() async {
         let idA = UUID()
         let idB = UUID()

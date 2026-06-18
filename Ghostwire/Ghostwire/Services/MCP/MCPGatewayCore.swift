@@ -52,7 +52,8 @@ struct MCPGatewayCore: Sendable {
                         name: exposedName,
                         description: tool.description,
                         inputSchema: tool.inputSchema,
-                        annotations: tool.annotations
+                        annotations: tool.annotations,
+                        outputSchema: tool.outputSchema
                     ))
                 routes[exposedName] = GatewayRoute(serverID: server.id, originalName: tool.name)
             }

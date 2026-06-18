@@ -11,11 +11,20 @@
 //  a Default is a follow-up once the UX lands.
 //
 
+import Defaults
 import Foundation
 
 @MainActor
 final class GatewayHTTPService {
     static let shared = GatewayHTTPService()
+
+    /// Auto-start at app launch when the consent gate is on (skipped under
+    /// tests, where there's no run loop to serve and a bound port would leak).
+    static func startIfEnabled() {
+        guard NSClassFromString("XCTestCase") == nil else { return }
+        guard Defaults[.mcpGatewayEnabled] else { return }
+        Task { await shared.start() }
+    }
 
     let auth = GatewayAuth()
     private let config = GatewayHTTPListener.Configuration()

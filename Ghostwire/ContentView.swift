@@ -124,8 +124,8 @@ struct ContentView: View {
                         color: ((vm.notchState == .open || isHovering) && Defaults[.enableShadow])
                             ? .black.opacity(0.7) : .clear, radius: Defaults[.cornerRadiusScaling] ? 6 : 4
                     )
-                    .shadow(color: sessionBridge.passiveAlertTint.opacity(passiveGlowOpacity), radius: 14)
-                    .shadow(color: sessionBridge.passiveAlertTint.opacity(passiveGlowOpacity * 0.6), radius: 24)
+                    .shadow(color: sessionBridge.passiveAlertTint.opacity(effectiveGlowOpacity), radius: 14)
+                    .shadow(color: sessionBridge.passiveAlertTint.opacity(effectiveGlowOpacity * 0.6), radius: 24)
                     .onChange(of: sessionBridge.passiveAlertPulse) { _, _ in
                         triggerPassiveGlow()
                     }
@@ -240,6 +240,9 @@ struct ContentView: View {
             if isTargeted {
                 if vm.notchState == .closed {
                     coordinator.currentView = .shelf
+                    // GW-224: dragging onto the Shelf is a user-driven surface
+                    // use → it becomes the "reopen here" memory.
+                    coordinator.lastSelectedTab = .shelf
                     doOpen()
                 }
                 return
@@ -570,6 +573,10 @@ struct ContentView: View {
 
     private func handleHover(_ hovering: Bool) {
         if coordinator.firstLaunch { return }
+        // GW-264 (WCAG 2.2.1): hovering/interacting pauses the auto-reveal dwell
+        // timer; mouse-out restarts it. Independent of whether this hover also
+        // opens/closes the notch below.
+        NotchRevealController.shared.hoverChanged(hovering)
         hoverTask?.cancel()
         
         if hovering {
@@ -793,6 +800,16 @@ extension ContentView {
 
     /// Fires a ~1.5s edge-glow pulse around the notch when a new permission arrives.
     /// Purely visual — no focus change, no notch state change.
+    /// GW-138/GW-264: the edge-glow opacity actually drawn. The transient pulse
+    /// (`passiveGlowOpacity`, fires-and-decays on each new permission) is floored
+    /// by a PERSISTENT glow while an approval is still pending and the notch is
+    /// closed — this is what an actionable reveal "recedes to" when its dwell
+    /// expires, so a blocked agent stays visible until you act on it.
+    private var effectiveGlowOpacity: Double {
+        let persistentFloor = (sessionBridge.hasUnactedPendingApproval && vm.notchState == .closed) ? 0.32 : 0
+        return max(passiveGlowOpacity, persistentFloor)
+    }
+
     private func triggerPassiveGlow() {
         passiveGlowDecayTask?.cancel()
         withAnimation(.easeOut(duration: 0.25)) {

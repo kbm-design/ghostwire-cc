@@ -32,6 +32,15 @@ extension SkyLightOperator {
 
 class GhostwireSkyLightWindow: NSPanel {
     private var isSkyLightEnabled: Bool = false
+
+    /// GW-265: gates `canBecomeKey`. The notch is a non-activating panel, but a
+    /// key-capable panel can still pull the key window (and thus keyboard focus)
+    /// out from under the app you're typing in when a passive reveal renders a
+    /// focusable view. So we DENY key by default and only grant it on a real user
+    /// click into the notch (set in FirstMouseHostingView.mouseDown) — a passive
+    /// auto-open / glow can never steal focus. Reset to false on close.
+    /// Touched only on the main thread (AppKit click + view-model close).
+    nonisolated(unsafe) static var allowsKeyFocus = false
     
     override init(
         contentRect: NSRect,
@@ -108,6 +117,6 @@ class GhostwireSkyLightWindow: NSPanel {
     
     private var observers: Set<AnyCancellable> = []
     
-    override var canBecomeKey: Bool { true }
+    override var canBecomeKey: Bool { Self.allowsKeyFocus }
     override var canBecomeMain: Bool { false }
 }

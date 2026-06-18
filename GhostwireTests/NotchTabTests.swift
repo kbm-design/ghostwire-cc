@@ -245,4 +245,47 @@ final class NotchDefaultViewPolicyTests: XCTestCase {
             XCTAssertEqual(coordinator.defaultViewOnOpen(), .home)
         }
     }
+
+    // MARK: - GW-224: no-alert opens must NOT default to Agents
+
+    func testNoAlertDefaultLandsOnShelfNotAgents() {
+        // GW-224: with the last-used memory at its default and no pending
+        // approval, a manual/hover open lands on Shelf (the utility home),
+        // never on Agents. (Restores GW-203's shelf-by-default intent that
+        // GW-226 overcorrected into always-Agents.)
+        withAllTabsVisible {
+            let coordinator = GhostwireViewCoordinator.shared
+            coordinator.pendingShelfReveal = false
+            coordinator.lastSelectedTab = GhostwireViewCoordinator.defaultLastSelectedTab
+            XCTAssertEqual(coordinator.defaultViewOnOpen(), .shelf)
+        }
+    }
+
+    func testDefaultLastSelectedTabIsShelf() {
+        // The "reopen here" baseline is Shelf, not Agents.
+        XCTAssertEqual(GhostwireViewCoordinator.defaultLastSelectedTab, .shelf)
+    }
+
+    func testFallbackPrefersShelfWhenLastTabHidden() {
+        // GW-224: no approval, and the last-selected tab is no longer visible
+        // → fall back to Shelf rather than defaulting to Agents.
+        withAllTabsVisible {
+            let coordinator = GhostwireViewCoordinator.shared
+            coordinator.pendingShelfReveal = false
+            Defaults[.hiddenNotchTabs] = [NotchTab.dashboard.rawValue]  // Home hidden
+            coordinator.lastSelectedTab = .home                         // points at the hidden tab
+            XCTAssertEqual(coordinator.defaultViewOnOpen(), .shelf)
+        }
+    }
+
+    func testRestoresShelfAsLastUsedSurface() {
+        // The voice/clipboard/drop reveal paths record Shelf as the last-used
+        // surface; a later no-alert open must return there.
+        withAllTabsVisible {
+            let coordinator = GhostwireViewCoordinator.shared
+            coordinator.pendingShelfReveal = false
+            coordinator.lastSelectedTab = .shelf
+            XCTAssertEqual(coordinator.defaultViewOnOpen(), .shelf)
+        }
+    }
 }

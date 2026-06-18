@@ -38,14 +38,14 @@ enum GatewayServer {
         await server.withMethodHandler(CallTool.self) { params in
             do {
                 let output = try await core.call(exposedName: params.name, arguments: params.arguments)
-                let text = output.textRepresentation
-                return (try? CallTool.Result(
-                    content: [.text(text: text, annotations: nil, _meta: nil)],
+                // Forward the downstream result verbatim — full content array
+                // (text/image/audio/resource + per-item meta), structuredContent,
+                // isError, and result-level _meta. No flattening to text.
+                return CallTool.Result(
+                    content: output.content,
                     structuredContent: output.structuredContent,
-                    isError: output.isError ?? false))
-                    ?? CallTool.Result(
-                        content: [.text(text: text, annotations: nil, _meta: nil)],
-                        isError: output.isError ?? false)
+                    isError: output.isError ?? false,
+                    _meta: output.meta)
             } catch {
                 return CallTool.Result(
                     content: [.text(text: error.localizedDescription, annotations: nil, _meta: nil)],

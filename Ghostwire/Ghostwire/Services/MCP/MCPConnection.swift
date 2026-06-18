@@ -39,10 +39,19 @@ struct MCPToolCallOutput: Sendable {
     let structuredContent: Value?
     let isError: Bool?
     let textRepresentation: String
+    /// Full content array (text/image/audio/resource, each with its own
+    /// annotations + _meta) + the result-level _meta — kept intact so the
+    /// gateway (GW-253) can forward arbitrary downstream results faithfully
+    /// instead of flattening to text. `textRepresentation` stays for the
+    /// text-only consumers (Settings/probe).
+    let content: [Tool.Content]
+    let meta: Metadata?
 
     init(result: CallTool.Result) {
         self.structuredContent = result.structuredContent
         self.isError = result.isError
+        self.content = result.content
+        self.meta = result._meta
         self.textRepresentation = result.content.compactMap { content -> String? in
             if case .text(let text, _, _) = content { return text }
             return nil

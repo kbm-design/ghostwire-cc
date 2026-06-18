@@ -6,9 +6,11 @@ import XCTest
 /// Fake connection: records calls, returns canned tools/results.
 private final class FakeConnection: MCPConnecting {
     var tools: [MCPToolInfo] = []
+    var fullTools: [Tool] = []
     var calledTools: [String] = []
     var disconnected = false
     func listTools() async throws -> [MCPToolInfo] { tools }
+    func listFullTools() async throws -> [Tool] { fullTools }
     func callTool(name: String, arguments: [String: Value]?) async throws -> MCPToolCallOutput {
         calledTools.append(name)
         return MCPToolCallOutput(result: CallTool.Result(content: [], isError: false))
@@ -105,6 +107,44 @@ final class MCPClientServiceAllowlistTests: XCTestCase {
         let probe = service.store.server(id: config.id)?.lastProbe
         XCTAssertEqual(probe?.toolCount, 2)
         XCTAssertEqual(probe?.toolsWithOutputSchema, ["typed"])
+    }
+
+    // MARK: - GW-253 gateway source
+
+    func testGatewaySourceYieldsAllowlistedFullToolsWithSchema() async {
+        let schema: Value = .object([
+            "type": .string("object"),
+            "properties": .object(["title": .object(["type": .string("string")])]),
+        ])
+        fake.fullTools = [
+            Tool(name: "create_issue", description: "Create", inputSchema: schema),
+            Tool(name: "delete_issue", description: "Delete", inputSchema: .object(["type": .string("object")])),
+        ]
+        let config = addHTTPServer(allowed: ["create_issue"])  // delete_issue NOT allowed
+        await service.connect(id: config.id)
+
+        let source = MCPClientServiceUpstreamSource(service: service)
+        let servers = await source.servers()
+
+        XCTAssertEqual(servers.count, 1)
+        XCTAssertEqual(servers.first?.id, config.id)
+        XCTAssertEqual(servers.first?.displayName, "S")
+        XCTAssertEqual(servers.first?.tools.map(\.name), ["create_issue"])  // allowlist applied
+        XCTAssertEqual(servers.first?.tools.first?.inputSchema, schema)  // full schema, not dropped
+    }
+
+    func testGatewaySourceCallRoutesThroughAllowlistChokepoint() async throws {
+        fake.fullTools = [
+            Tool(name: "create_issue", description: "", inputSchema: .object(["type": .string("object")]))
+        ]
+        let config = addHTTPServer(allowed: ["create_issue"])
+        await service.connect(id: config.id)
+
+        let source = MCPClientServiceUpstreamSource(service: service)
+        _ = try await source.call(
+            serverID: config.id, tool: "create_issue", arguments: ["title": .string("Bug")])
+
+        XCTAssertEqual(fake.calledTools, ["create_issue"])
     }
 
     func testRemoveServerDeletesConfig() async {

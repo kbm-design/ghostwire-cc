@@ -35,7 +35,7 @@ extension MCPToolInfo {
 
 /// Result of a tool call with structuredContent preserved (the async SDK
 /// convenience drops it — we go through RequestContext instead).
-struct MCPToolCallOutput {
+struct MCPToolCallOutput: Sendable {
     let structuredContent: Value?
     let isError: Bool?
     let textRepresentation: String
@@ -87,6 +87,12 @@ actor MCPConnection {
     }
 
     func listTools() async throws -> [MCPToolInfo] {
+        try await listFullTools().map(MCPToolInfo.init(tool:))
+    }
+
+    /// Full SDK `Tool`s (with `inputSchema`/`outputSchema`) — the gateway
+    /// (GW-253) re-exposes these, so it needs the schemas `MCPToolInfo` drops.
+    func listFullTools() async throws -> [Tool] {
         guard let client else { throw ConnectionError.notConnected }
         var collected: [Tool] = []
         var cursor: String? = nil
@@ -95,7 +101,7 @@ actor MCPConnection {
             collected += page.tools
             cursor = page.nextCursor
         } while cursor != nil
-        return collected.map(MCPToolInfo.init(tool:))
+        return collected
     }
 
     func callTool(name: String, arguments: [String: Value]?) async throws -> MCPToolCallOutput {

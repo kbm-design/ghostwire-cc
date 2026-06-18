@@ -15,6 +15,7 @@ import MCP
 /// Seam so tests can fake the protocol layer.
 protocol MCPConnecting: AnyObject {
     func listTools() async throws -> [MCPToolInfo]
+    func listFullTools() async throws -> [Tool]
     func callTool(name: String, arguments: [String: Value]?) async throws -> MCPToolCallOutput
     func ping() async throws
     func disconnect() async
@@ -202,6 +203,24 @@ final class MCPClientService: ObservableObject {
             await handleFailure(id: serverID, error: error)
             throw error
         }
+    }
+
+    // MARK: - GW-253 gateway source
+
+    /// Build the gateway's upstream list: one entry per CONNECTED server,
+    /// carrying its allowlisted full `Tool`s (with schemas). Live-fetches per
+    /// call for now — caching at connect-time is a Phase-2 refinement.
+    func gatewayServers() async -> [GatewayUpstreamServer] {
+        var result: [GatewayUpstreamServer] = []
+        for config in store.servers {
+            guard let connection = connections[config.id] else { continue }
+            let full = (try? await connection.listFullTools()) ?? []
+            let allowed = full.filter { config.allowedTools.contains($0.name) }
+            guard !allowed.isEmpty else { continue }
+            result.append(
+                GatewayUpstreamServer(id: config.id, displayName: config.name, tools: allowed))
+        }
+        return result
     }
 
     // MARK: - Health / wake supervision

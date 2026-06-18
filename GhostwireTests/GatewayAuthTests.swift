@@ -37,4 +37,14 @@ final class GatewayAuthTests: XCTestCase {
         let auth = GatewayAuth(token: "secret")
         XCTAssertNil(auth.gate(request(["authorization": "Bearer secret"])))
     }
+
+    func testPersistentTokenIsStableAcrossInstances() {
+        // The token must survive app restarts, or a `claude mcp add`
+        // registration breaks on the next launch.
+        let store = InMemoryMCPSecretStore()
+        let first = GatewayAuth.persistent(store: store)
+        let second = GatewayAuth.persistent(store: store)
+        XCTAssertFalse(first.token.isEmpty)
+        XCTAssertEqual(first.token, second.token)  // reused, not regenerated
+    }
 }

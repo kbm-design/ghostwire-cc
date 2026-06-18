@@ -18,6 +18,17 @@ struct GatewayAuth: Sendable {
         self.token = token
     }
 
+    /// Load the persisted token, or mint + store one on first use. Stable
+    /// across launches so a `claude mcp add` registration keeps working.
+    static func persistent(store: MCPSecretStore = KeychainMCPSecretStore.shared) -> GatewayAuth {
+        if let existing = store.string(account: MCPSecretAccount.gatewayToken), !existing.isEmpty {
+            return GatewayAuth(token: existing)
+        }
+        let token = UUID().uuidString
+        store.setString(token, account: MCPSecretAccount.gatewayToken)
+        return GatewayAuth(token: token)
+    }
+
     /// `RequestGate`: returns nil to allow, or a 401 `HTTPResponse` to reject.
     func gate(_ request: HTTPRequest) -> HTTPResponse? {
         let provided = request.headers.first {

@@ -18,15 +18,17 @@ import Foundation
 final class GatewayHTTPService {
     static let shared = GatewayHTTPService()
 
-    /// Auto-start at app launch when the consent gate is on (skipped under
-    /// tests, where there's no run loop to serve and a bound port would leak).
+    /// Auto-start at app launch. Runs only when the user actually has MCP
+    /// servers configured (nothing to expose otherwise) and the kill-switch is
+    /// on. Skipped under tests (no run loop; a bound port would leak).
     static func startIfEnabled() {
         guard NSClassFromString("XCTestCase") == nil else { return }
-        guard Defaults[.mcpGatewayEnabled] else { return }
+        guard Defaults[.mcpGatewayEnabled] else { return }  // kill-switch (default on)
+        guard !MCPClientService.shared.store.servers.isEmpty else { return }  // nothing to expose
         Task { await shared.start() }
     }
 
-    let auth = GatewayAuth()
+    let auth = GatewayAuth.persistent()
     private let config = GatewayHTTPListener.Configuration()
     private var listener: GatewayHTTPListener?
     private(set) var isRunning = false

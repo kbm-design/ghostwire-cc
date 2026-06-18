@@ -502,6 +502,54 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
+        // GW-229: toggle voice capture. Opens the notch as an overlay (the panel
+        // is non-activating, so the foreground app stays put) and toggles the
+        // recorder. The capture flow resolves the target agent in-notch, so no
+        // tab switch is needed — the overlay floats over whatever tab is shown.
+        KeyboardShortcuts.onKeyDown(for: .toggleVoiceCapture) { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self = self else { return }
+                guard Defaults[.voiceCaptureEnabled] else { return }
+
+                let mouseLocation = NSEvent.mouseLocation
+                var viewModel = self.vm
+                if Defaults[.showOnAllDisplays] {
+                    for screen in NSScreen.screens where screen.frame.contains(mouseLocation) {
+                        if let uuid = screen.displayUUID, let screenViewModel = self.viewModels[uuid] {
+                            viewModel = screenViewModel
+                            break
+                        }
+                    }
+                }
+
+                self.closeNotchTask?.cancel()
+                self.closeNotchTask = nil
+
+                // Recording shows an ambient indicator in the CLOSED notch. A
+                // finished transcript either pastes into the focused field
+                // (notch stays closed) or pops the Shelf open on the right
+                // per-display notch. onRequestOpen/Close are only for errors.
+                let voice = VoiceCaptureViewModel.shared
+                voice.onRevealShelf = { [weak viewModel] in
+                    guard let viewModel else { return }
+                    viewModel.open()
+                    NotchTab.setHidden(.shelf, false)
+                    GhostwireViewCoordinator.shared.currentView = .shelf
+                    NotchTab.ensureCurrentViewVisible()
+                    GhostwireViewCoordinator.shared.pendingShelfReveal = true
+                }
+                voice.onRequestOpen = { [weak viewModel] in viewModel?.open() }
+                voice.onRequestClose = { [weak viewModel] in viewModel?.close() }
+                await voice.toggle()
+            }
+        }
+
+        // GW-229: NB the on-device speech model is NOT prefetched at launch —
+        // that would pull ~600MB on a fresh install even if voice is never used.
+        // It downloads on explicit intent: the Settings "Download" button, a
+        // model-picker change, or the first recording (which shows a
+        // "Preparing model…" state via VoiceCaptureViewModel).
+
         if !Defaults[.showOnAllDisplays] {
             let viewModel = self.vm
             GhostwireSessionBridge.shared.ghostwireViewModel = viewModel

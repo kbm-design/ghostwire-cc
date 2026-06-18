@@ -253,6 +253,12 @@ extension Defaults.Keys {
     // off, the `mcp-serve` subcommand serves an empty Shelf even if an agent
     // is registered. Default off — exposing held context to agents is opt-in.
     static let mcpServeEnabled = Key<Bool>("mcpServeEnabled", default: false)
+    // GW-253: kill-switch for the localhost MCP gateway HTTP server. On by
+    // default — the gateway auto-starts only when you actually have ≥1 MCP
+    // server configured (nothing to expose otherwise), and it's bearer-token +
+    // localhost-gated, so registration is the real consent. Set false to
+    // disable entirely. A Settings toggle is the GW-255 follow-up.
+    static let mcpGatewayEnabled = Key<Bool>("mcpGatewayEnabled", default: true)
     // Pending Codex re-trust map (GW-196): `[hooks.state]` position key ->
     // the stale `trusted_hash` that was in config.toml when we changed that
     // hook's command in place (e.g. buddi -> ghostwire). The installer records

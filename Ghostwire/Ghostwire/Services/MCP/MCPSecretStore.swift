@@ -14,6 +14,9 @@ import Security
 enum MCPSecretAccount {
     static func env(serverID: UUID, key: String) -> String { "env.\(serverID.uuidString).\(key)" }
     static func oauthToken(serverID: UUID) -> String { "oauth.\(serverID.uuidString)" }
+    /// GW-253: the gateway's HTTP bearer token — one stable value across
+    /// launches so a registered agent keeps working.
+    static let gatewayToken = "gateway.token"
 }
 
 protocol MCPSecretStore: AnyObject {

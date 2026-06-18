@@ -534,6 +534,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         ClipboardHistoryService.shared.start()  // GW-210: follows the master toggle (default off)
         AmbientContextService.shared.start()  // GW-172: Tier-0 frontmost-app spine (silent; default on)
         GhostwireSessionBridge.shared.startMonitoring()
+        GatewayHTTPService.startIfEnabled()  // GW-253: localhost MCP gateway (opt-in)
         UsageService.shared.startPolling()
         CodexUsageService.shared.startPolling()
 

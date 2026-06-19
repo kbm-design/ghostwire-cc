@@ -72,6 +72,7 @@ final class VoiceCaptureTests: XCTestCase {
         func start(onBuffer: @escaping (AVAudioPCMBuffer) -> Void) throws {
             if let startError { throw startError }
             started = true
+            stopped = false // a fresh session is live; detect a later stray stop()
         }
         func stop() { stopped = true }
     }
@@ -364,6 +365,48 @@ final class VoiceCaptureTests: XCTestCase {
         t.finishText = "fresh"
         await vm.stopRecording()
         XCTAssertEqual(sink.shelf, ["fresh"])
+    }
+
+    /// A stale cold-start that resumes AFTER a cancel + a newer begin must tear down
+    /// only its own engine — never the shared audio/busy state of the newer session.
+    func testStaleBeginDoesNotStopNewerRecording() async {
+        let engineA = MockTranscriber(); engineA.manualStart = true
+        let engineB = MockTranscriber()
+        var calls = 0
+        let audio = MockAudio()
+        let sink = Sink()
+        let vm = VoiceCaptureViewModel(
+            makeTranscriber: { calls += 1; return calls == 1 ? engineA : engineB },
+            audio: audio,
+            saveToShelf: { sink.shelf.append($0) },
+            copyToClipboard: { sink.clipboard.append($0) },
+            isFieldFocused: { false },
+            pasteIntoField: { sink.pasteCalls += 1; return true },
+            pasteEnabled: { true },
+            isEngineWarm: { false }
+        )
+        vm.onRevealShelf = { sink.revealed += 1 }
+        vm.onRequestOpen = { sink.opened += 1 }
+        vm.onRequestClose = { sink.closed += 1 }
+
+        let beginA = Task { await vm.begin() }     // suspends in engineA.start
+        try? await Task.sleep(for: .milliseconds(20))
+        vm.cancel()                                 // A is now stale
+        await vm.begin()                            // begin B starts fresh + records
+        XCTAssertEqual(vm.stage, .recording)
+        XCTAssertTrue(audio.started)
+
+        engineA.completeStart()                     // A resumes stale
+        await beginA.value
+
+        XCTAssertEqual(vm.stage, .recording)        // B still live
+        XCTAssertFalse(audio.stopped)               // A did NOT stop B's capture
+        XCTAssertTrue(engineA.cancelled)            // A tore down its own engine
+        XCTAssertFalse(engineB.cancelled)           // B untouched
+
+        engineB.finishText = "the real one"
+        await vm.stopRecording()
+        XCTAssertEqual(sink.shelf, ["the real one"])
     }
 
     /// requestStop() with no live or pending session is a strict no-op (a stray

@@ -97,6 +97,8 @@ enum HoldToTalkOutput: Equatable {
     case beginRecording
     case scheduleMaxDuration
     case requestStop
+    /// Discard the active recording WITHOUT routing (a combo struck mid-hold).
+    case cancelRecording
     case cancelMaxDuration
 }
 
@@ -133,8 +135,14 @@ struct HoldToTalkClassifier {
         case (.recording, .maxDurationFired):
             phase = .idle
             return [.requestStop]
+        // A non-modifier key while recording means this was a slow combo (held the
+        // modifier past 150ms, THEN pressed a shortcut key) — discard, don't route
+        // accidental ambient audio. Keeps "combos never route" true through release.
+        case (.recording, .otherKeyDown):
+            phase = .idle
+            return [.cancelRecording, .cancelMaxDuration]
 
-        // Everything else (stale timers, re-downs, typing mid-dictation) is ignored.
+        // Everything else (stale timers, re-downs) is ignored.
         default:
             return []
         }
@@ -151,7 +159,10 @@ enum HoldToTalkDecoder {
     struct Result: Equatable {
         var input: HoldToTalkInput?
         var consume: Bool
-        var fnHeld: Bool
+        /// Raw physical Fn state (edge detection — Fn keycode is unreliable).
+        var fnRawPresent: Bool
+        /// Whether we armed a BARE-Fn talk hold (so the release is ours to emit).
+        var fnArmed: Bool
     }
 
     static func decodeFlagsChanged(
@@ -159,28 +170,43 @@ enum HoldToTalkDecoder {
         keycodeMatchesTarget: Bool,
         targetMaskPresent: Bool,
         fnPresent: Bool,
-        fnHeld: Bool,
+        otherModifiersPresent: Bool,
+        fnRawPresent: Bool,
+        fnArmed: Bool,
         isEngaged: Bool
     ) -> Result {
         if targetKey == .fn {
-            // Fn keycode is unreliable across keyboards — detect by the flag edge,
-            // and CONSUME the transition so macOS's globe behavior doesn't fire.
-            guard fnPresent != fnHeld else {
-                return Result(input: nil, consume: false, fnHeld: fnHeld)
+            // Act only on a real Fn press/release edge (ignore other-modifier churn).
+            guard fnPresent != fnRawPresent else {
+                return Result(input: nil, consume: false, fnRawPresent: fnRawPresent, fnArmed: fnArmed)
             }
-            return Result(input: fnPresent ? .keyDown : .keyUp, consume: true, fnHeld: fnPresent)
+            if fnPresent {
+                // Fn down. Only a BARE Fn is a talk gesture we arm + consume (consume
+                // so macOS's globe/dictation default doesn't fire). Fn pressed WITH
+                // another modifier is a system combo — leave it entirely untouched.
+                if otherModifiersPresent {
+                    return Result(input: nil, consume: false, fnRawPresent: true, fnArmed: false)
+                }
+                return Result(input: .keyDown, consume: true, fnRawPresent: true, fnArmed: true)
+            }
+            // Fn up. Emit (and consume) the release only if we'd armed a bare-Fn hold.
+            guard fnArmed else {
+                return Result(input: nil, consume: false, fnRawPresent: false, fnArmed: false)
+            }
+            return Result(input: .keyUp, consume: true, fnRawPresent: false, fnArmed: false)
         }
 
         // Right modifiers: match the exact physical key by keycode; never consume.
         if keycodeMatchesTarget {
-            return Result(input: targetMaskPresent ? .keyDown : .keyUp, consume: false, fnHeld: fnHeld)
+            return Result(input: targetMaskPresent ? .keyDown : .keyUp,
+                          consume: false, fnRawPresent: fnRawPresent, fnArmed: fnArmed)
         }
         // Recovery: a different modifier changed and ours is no longer held while a
         // gesture is engaged — we missed the up. Synthesize it so nothing sticks.
         if isEngaged, !targetMaskPresent {
-            return Result(input: .keyUp, consume: false, fnHeld: fnHeld)
+            return Result(input: .keyUp, consume: false, fnRawPresent: fnRawPresent, fnArmed: fnArmed)
         }
-        return Result(input: nil, consume: false, fnHeld: fnHeld)
+        return Result(input: nil, consume: false, fnRawPresent: fnRawPresent, fnArmed: fnArmed)
     }
 }
 
@@ -210,8 +236,10 @@ final class HoldToTalkMonitor {
     private var armingWork: DispatchWorkItem?
     private var maxDurationWork: DispatchWorkItem?
 
-    /// Last-seen Fn flag state, for edge detection (the Fn keycode is unreliable).
-    private var fnHeld = false
+    /// Raw physical Fn state + whether we armed a bare-Fn hold (Fn keycode is
+    /// unreliable, so Fn is tracked by flag edge; only bare Fn is consumed/armed).
+    private var fnRawPresent = false
+    private var fnArmed = false
 
     /// Set by GhostwireApp: wire the per-display reveal/open/close callbacks for the
     /// notch under the mouse BEFORE begin(), so the hold path routes like the toggle.
@@ -269,15 +297,18 @@ final class HoldToTalkMonitor {
             options: .defaultTap,
             eventsOfInterest: mask,
             callback: { _, type, cgEvent, userInfo in
-                guard let userInfo else { return Unmanaged.passRetained(cgEvent) }
+                // Pass-through returns the SAME borrowed event unretained — the tap
+                // doesn't transfer ownership. passRetained would leak on every event,
+                // and this tap sees every keystroke. nil only for a consumed event.
+                guard let userInfo else { return Unmanaged.passUnretained(cgEvent) }
                 let monitor = Unmanaged<HoldToTalkMonitor>.fromOpaque(userInfo).takeUnretainedValue()
                 // The source is on the main run loop, so the callback runs on main.
                 if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
                     MainActor.assumeIsolated { monitor.handleTapDisabled() }
-                    return Unmanaged.passRetained(cgEvent)
+                    return Unmanaged.passUnretained(cgEvent)
                 }
                 let consume = MainActor.assumeIsolated { monitor.handle(type: type, event: cgEvent) }
-                return consume ? nil : Unmanaged.passRetained(cgEvent)
+                return consume ? nil : Unmanaged.passUnretained(cgEvent)
             },
             userInfo: UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
         )
@@ -297,7 +328,8 @@ final class HoldToTalkMonitor {
     private func stop() {
         cancelTimers()
         classifier = HoldToTalkClassifier()
-        fnHeld = false
+        fnRawPresent = false
+        fnArmed = false
         if let eventTap {
             CGEvent.tapEnable(tap: eventTap, enable: false)
         }
@@ -335,15 +367,20 @@ final class HoldToTalkMonitor {
         case .flagsChanged:
             guard let mask = targetKey.flagMask else { return false }
             let flags = event.flags
+            let otherModifiersPresent = flags.contains(.maskCommand) || flags.contains(.maskControl)
+                || flags.contains(.maskAlternate) || flags.contains(.maskShift)
             let result = HoldToTalkDecoder.decodeFlagsChanged(
                 targetKey: targetKey,
                 keycodeMatchesTarget: targetKey.keyCode == event.getIntegerValueField(.keyboardEventKeycode),
                 targetMaskPresent: flags.contains(mask),
                 fnPresent: flags.contains(.maskSecondaryFn),
-                fnHeld: fnHeld,
+                otherModifiersPresent: otherModifiersPresent,
+                fnRawPresent: fnRawPresent,
+                fnArmed: fnArmed,
                 isEngaged: classifier.isEngaged
             )
-            fnHeld = result.fnHeld
+            fnRawPresent = result.fnRawPresent
+            fnArmed = result.fnArmed
             if let input = result.input {
                 process(classifier.handle(input))
             }
@@ -372,6 +409,10 @@ final class HoldToTalkMonitor {
                 maxDurationWork?.cancel()
                 maxDurationWork = nil
                 Task { await VoiceCaptureViewModel.shared.requestStop() }
+            case .cancelRecording:
+                maxDurationWork?.cancel()
+                maxDurationWork = nil
+                VoiceCaptureViewModel.shared.cancel() // discard, no route
             case .cancelMaxDuration:
                 maxDurationWork?.cancel()
                 maxDurationWork = nil

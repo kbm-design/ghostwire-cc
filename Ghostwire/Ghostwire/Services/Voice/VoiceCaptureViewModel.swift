@@ -166,12 +166,14 @@ final class VoiceCaptureViewModel: ObservableObject {
             try await engine.start(onResult: { [weak self] result in
                 self?.partialText = result.text
             })
-            // Canceled (or superseded) during a cold-model prepare: cancel() has
-            // already torn down — abandon this start instead of stranding it live.
+            // Canceled (or superseded) during the cold-model prepare: cancel() has
+            // already torn down, and a newer begin() may now own `audio`/`isBusy`/
+            // `transcriber`. Tear down ONLY this stale engine — touching the shared
+            // audio or busy state here would kill the newer session. (This is the
+            // only await in begin(); audio.start() below is synchronous, so no
+            // second generation re-check is needed.)
             guard gen == generation else {
                 engine.cancel()
-                audio.stop()
-                isBusy = false
                 return
             }
             // Feed capture into the engine; the engine instance is captured
@@ -179,12 +181,6 @@ final class VoiceCaptureViewModel: ObservableObject {
             try audio.start(onBuffer: { [weak engine] buffer in
                 engine?.append(buffer)
             })
-            guard gen == generation else {
-                audio.stop()
-                engine.cancel()
-                isBusy = false
-                return
-            }
             if preparing {
                 preparing = false
                 onRequestClose() // collapse the prep surface; recording is ambient

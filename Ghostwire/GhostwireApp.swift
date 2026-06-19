@@ -566,6 +566,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // model-picker change, or the first recording (which shows a
         // "Preparing model…" state via VoiceCaptureViewModel).
         //
+        // GW-270: normalize a stale/unknown voiceModel rawValue (e.g. a renamed
+        // engine from an older build) back to the default — otherwise the Settings
+        // engine picker renders blank and the stored value is invalid (recording
+        // still falls back to Nemotron, but the UI looks broken).
+        let storedVoiceModel = Defaults[.voiceModel]
+        if storedVoiceModel != DefaultTranscriberFactory.appleEngineKey,
+           VoiceModel(rawValue: storedVoiceModel) == nil {
+            Defaults[.voiceModel] = VoiceModel.nemotronEN.rawValue
+        }
+
         // GW-270: but if the model is ALREADY downloaded, warm it into memory now so
         // the first hold/toggle of the session isn't a cold load. Gated on
         // voiceDownloadedModels, so this never triggers a download on a fresh install.

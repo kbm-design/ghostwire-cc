@@ -240,10 +240,25 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         guard let uuid = screen.displayUUID else { return }
         
         let screenFrame = screen.frame
-        let notchHeight = openNotchSize.height
-        let notchWidth = openNotchSize.width
-        
-        // Create notch region at the top-center of the screen where an open notch would occupy
+
+        // Reveal band tied to the PHYSICAL notch, not the open-notch size.
+        // The old 640×190 region (openNotchSize) reached ~190pt down into the
+        // work area, so dragging files/windows across the upper-center of the
+        // screen toggled the shelf before reaching the notch. Clamp the height
+        // hard (menu-bar/notch height + small pad); keep the width forgiving so
+        // it's still an easy drop target.
+        let menuBarHeight = screenFrame.maxY - screen.visibleFrame.maxY
+        let physicalNotchHeight = max(screen.safeAreaInsets.top, menuBarHeight, 32)
+        let notchHeight = physicalNotchHeight + 20
+
+        var physicalNotchWidth: CGFloat = 185
+        if let topLeftPadding = screen.auxiliaryTopLeftArea?.width,
+           let topRightPadding = screen.auxiliaryTopRightArea?.width {
+            physicalNotchWidth = screenFrame.width - topLeftPadding - topRightPadding + 4
+        }
+        let notchWidth = physicalNotchWidth + 160  // ~80pt of slack each side
+
+        // Create reveal region at the top-center of the screen, just below the notch.
         let notchRegion = CGRect(
             x: screenFrame.midX - notchWidth / 2,
             y: screenFrame.maxY - notchHeight,

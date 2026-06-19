@@ -366,6 +366,10 @@ struct GeneralSettings: View {
                 Defaults.Toggle(key: .voiceCaptureEnabled) {
                     Text("Voice capture")
                 }
+                // GW-270: the master switch also gates the hold-to-talk event tap.
+                .onChange(of: voiceCaptureEnabled) { _, _ in
+                    HoldToTalkMonitor.shared.reconfigure()
+                }
                 Defaults.Toggle(key: .voicePasteIntoFocusedField) {
                     Text("Paste into the focused text field when possible")
                 }
@@ -1461,6 +1465,8 @@ struct AccentCircleButton: View {
 }
 
 struct Shortcuts: View {
+    @Default(.voiceHoldToTalkKey) private var voiceHoldToTalkKey
+
     var body: some View {
         Form {
             Section {
@@ -1487,8 +1493,26 @@ struct Shortcuts: View {
                 // GW-229: ⌃⇧Space by default — record a thought and send it to a
                 // running agent without leaving the app you're in.
                 KeyboardShortcuts.Recorder("Voice Capture:", name: .toggleVoiceCapture)
+                // GW-270: hold-to-talk (push-to-talk) — independent of the toggle
+                // above. Selecting a key starts the event-tap monitor (prompts for
+                // Accessibility if needed); "Off" stops it.
+                Picker("Hold to Talk:", selection: $voiceHoldToTalkKey) {
+                    ForEach(HoldToTalkKey.allCases, id: \.self) { key in
+                        Text(key.displayName).tag(key.rawValue)
+                    }
+                }
+                .onChange(of: voiceHoldToTalkKey) { _, _ in
+                    HoldToTalkMonitor.shared.reconfigure(promptIfNeeded: true)
+                }
             } header: {
                 Text("Capture")
+            } footer: {
+                Text(
+                    "Voice Capture is a toggle (press to start, press again to stop). Hold to Talk records only while the key is held, then routes on release. Right Control is recommended — Right Command / Right Option briefly arm on every shortcut you press with them. Fn suppresses macOS's globe-key behavior while held and isn't on most external keyboards."
+                )
+                .foregroundStyle(.secondary)
+                .font(.caption)
+                .leadingFooter()
             }
         }
         .accentColor(.effectiveAccent)

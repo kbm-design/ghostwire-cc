@@ -337,6 +337,42 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
 
 
+    /// Wire the voice-capture reveal/open/close callbacks to the notch under the
+    /// mouse, mirroring the per-display resolution the ⌃⇧Space toggle uses. Both the
+    /// toggle handler and the hold-to-talk monitor call this at gesture start, so the
+    /// hold path routes onto the right notch instead of dead `{}` closures (GW-270).
+    @MainActor
+    func wireVoiceCallbacks(forScreenUnder mouseLocation: NSPoint) {
+        var viewModel = self.vm
+        if Defaults[.showOnAllDisplays] {
+            for screen in NSScreen.screens where screen.frame.contains(mouseLocation) {
+                if let uuid = screen.displayUUID, let screenViewModel = self.viewModels[uuid] {
+                    viewModel = screenViewModel
+                    break
+                }
+            }
+        }
+
+        self.closeNotchTask?.cancel()
+        self.closeNotchTask = nil
+
+        // Recording shows an ambient indicator in the CLOSED notch. A finished
+        // transcript either pastes into the focused field (notch stays closed) or
+        // pops the Shelf open on the right per-display notch. onRequestOpen/Close are
+        // only for errors.
+        let voice = VoiceCaptureViewModel.shared
+        voice.onRevealShelf = { [weak viewModel] in
+            guard let viewModel else { return }
+            viewModel.open()
+            NotchTab.setHidden(.shelf, false)
+            GhostwireViewCoordinator.shared.currentView = .shelf
+            NotchTab.ensureCurrentViewVisible()
+            GhostwireViewCoordinator.shared.pendingShelfReveal = true
+        }
+        voice.onRequestOpen = { [weak viewModel] in viewModel?.open() }
+        voice.onRequestClose = { [weak viewModel] in viewModel?.close() }
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
 
         NotificationCenter.default.addObserver(
@@ -510,39 +546,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             Task { @MainActor [weak self] in
                 guard let self = self else { return }
                 guard Defaults[.voiceCaptureEnabled] else { return }
-
-                let mouseLocation = NSEvent.mouseLocation
-                var viewModel = self.vm
-                if Defaults[.showOnAllDisplays] {
-                    for screen in NSScreen.screens where screen.frame.contains(mouseLocation) {
-                        if let uuid = screen.displayUUID, let screenViewModel = self.viewModels[uuid] {
-                            viewModel = screenViewModel
-                            break
-                        }
-                    }
-                }
-
-                self.closeNotchTask?.cancel()
-                self.closeNotchTask = nil
-
-                // Recording shows an ambient indicator in the CLOSED notch. A
-                // finished transcript either pastes into the focused field
-                // (notch stays closed) or pops the Shelf open on the right
-                // per-display notch. onRequestOpen/Close are only for errors.
-                let voice = VoiceCaptureViewModel.shared
-                voice.onRevealShelf = { [weak viewModel] in
-                    guard let viewModel else { return }
-                    viewModel.open()
-                    NotchTab.setHidden(.shelf, false)
-                    GhostwireViewCoordinator.shared.currentView = .shelf
-                    NotchTab.ensureCurrentViewVisible()
-                    GhostwireViewCoordinator.shared.pendingShelfReveal = true
-                }
-                voice.onRequestOpen = { [weak viewModel] in viewModel?.open() }
-                voice.onRequestClose = { [weak viewModel] in viewModel?.close() }
-                await voice.toggle()
+                self.wireVoiceCallbacks(forScreenUnder: NSEvent.mouseLocation)
+                await VoiceCaptureViewModel.shared.toggle()
             }
         }
+
+        // GW-270: hold-to-talk (push-to-talk). The monitor owns the CGEventTap for
+        // the held modifier; at gesture start it wires the same per-display callbacks
+        // as the toggle so begin()/release route onto the notch under the mouse. It
+        // self-gates on Defaults (voice off or key == .off ⇒ tap not running).
+        HoldToTalkMonitor.shared.prepareForGesture = { [weak self] in
+            self?.wireVoiceCallbacks(forScreenUnder: NSEvent.mouseLocation)
+        }
+        HoldToTalkMonitor.shared.reconfigure()
 
         // GW-229: NB the on-device speech model is NOT prefetched at launch —
         // that would pull ~600MB on a fresh install even if voice is never used.

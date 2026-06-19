@@ -300,6 +300,11 @@ extension Defaults.Keys {
     // VoiceModel rawValues whose on-device model has been downloaded (so the
     // Settings UI can show "Downloaded ✓" across launches without re-checking).
     static let voiceDownloadedModels = Key<[String]>("voiceDownloadedModels", default: [])
+    // GW-270: push-to-talk (hold-to-talk) modifier key, a HoldToTalkKey rawValue.
+    // Default Right Control — a bare hold triggers no macOS behavior, exists on every
+    // keyboard, and needs no event suppression. "off" disables the hold gesture; the
+    // ⌃⇧Space toggle is independent and always available.
+    static let voiceHoldToTalkKey = Key<String>("voiceHoldToTalkKey", default: HoldToTalkKey.rightControl.rawValue)
     // GW-218: what a double-click on a unified card does. Default: copy.
     static let cardDoubleClickAction = Key<CardDoubleClickAction>("cardDoubleClickAction", default: .copy)
 

@@ -69,9 +69,15 @@ final class VoiceCaptureViewModel: ObservableObject {
 
     private var transcriber: Transcriber?
 
-    /// Monotonic session token — bumped on begin()/cancel() so a stopRecording()
-    /// that resumes after a cancel can detect it's stale and drop the result.
+    /// Monotonic session token — bumped at begin() entry and on cancel() so any
+    /// async tail (stopRecording finalizing, or begin's own start/prepare awaits)
+    /// that resumes after a supersede can detect it's stale and drop the result.
     private var generation = 0
+
+    /// GW-270: a stop (push-to-talk release) that lands while begin() is still
+    /// preparing/starting can't stop yet — it sets this so begin()'s tail routes
+    /// the moment recording is live. Cleared on every begin() entry and reset().
+    private var stopWhenReady = false
 
     // MARK: - Init
 
@@ -114,6 +120,18 @@ final class VoiceCaptureViewModel: ObservableObject {
         }
     }
 
+    /// GW-270: push-to-talk release. Stop + route now if recording is live; if a
+    /// release lands while begin() is still preparing/starting, defer it so begin's
+    /// tail routes the moment recording exists. Strict no-op when there's no live or
+    /// pending session, so a stray up-event can't strand a deferred stop.
+    func requestStop() async {
+        if stage == .recording, !isBusy {
+            await stopRecording()
+        } else if isBusy || preparing {
+            stopWhenReady = true
+        }
+    }
+
     // MARK: - Recording
 
     func begin() async {
@@ -126,6 +144,12 @@ final class VoiceCaptureViewModel: ObservableObject {
         }
         isBusy = true
         partialText = ""
+        stopWhenReady = false
+        // Mark this session live up front so a cancel()/release landing during the
+        // start/prepare awaits below is detected as a supersede (gen mismatch) and
+        // can't be clobbered into a stuck `.recording`.
+        generation &+= 1
+        let gen = generation
 
         // Cold engine (first use / model not downloaded): show a "Preparing…"
         // surface while start() downloads/loads, instead of a silent wait.
@@ -142,12 +166,25 @@ final class VoiceCaptureViewModel: ObservableObject {
             try await engine.start(onResult: { [weak self] result in
                 self?.partialText = result.text
             })
+            // Canceled (or superseded) during a cold-model prepare: cancel() has
+            // already torn down — abandon this start instead of stranding it live.
+            guard gen == generation else {
+                engine.cancel()
+                audio.stop()
+                isBusy = false
+                return
+            }
             // Feed capture into the engine; the engine instance is captured
             // directly so the audio thread never touches main-isolated state.
             try audio.start(onBuffer: { [weak engine] buffer in
                 engine?.append(buffer)
             })
-            generation &+= 1
+            guard gen == generation else {
+                audio.stop()
+                engine.cancel()
+                isBusy = false
+                return
+            }
             if preparing {
                 preparing = false
                 onRequestClose() // collapse the prep surface; recording is ambient
@@ -156,13 +193,22 @@ final class VoiceCaptureViewModel: ObservableObject {
         } catch let error as TranscriberError {
             transcriber = nil
             preparing = false
+            stopWhenReady = false
             showError(Self.message(for: error))
         } catch {
             transcriber = nil
             preparing = false
+            stopWhenReady = false
             showError("Couldn’t start recording.")
         }
         isBusy = false
+
+        // A push-to-talk release that landed mid-prepare → route it now that
+        // recording is live (no-op unless start actually reached `.recording`).
+        if stage == .recording, stopWhenReady {
+            stopWhenReady = false
+            await stopRecording()
+        }
     }
 
     /// Stop capture, finalize, and route the transcript. An empty transcript
@@ -247,6 +293,8 @@ final class VoiceCaptureViewModel: ObservableObject {
         partialText = ""
         errorMessage = nil
         isBusy = false
+        preparing = false
+        stopWhenReady = false
     }
 
     private static func message(for error: TranscriberError) -> String {

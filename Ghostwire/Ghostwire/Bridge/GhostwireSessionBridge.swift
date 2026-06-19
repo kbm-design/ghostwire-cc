@@ -253,10 +253,12 @@ final class GhostwireSessionBridge: ObservableObject {
             // (The ambient live-activity pill subscriber is separate,
             // pre-existing behavior and intentionally not gated by this rule.)
             //
-            // GW-226: re-run the default-view policy right before opening so this
-            // event-driven open lands on Agents (hasPendingApproval is true now),
-            // overriding the passive last-tab / shelf-reveal rules.
-            GhostwireViewCoordinator.shared.applyDefaultViewOnOpen()
+            // GW-224: route THIS auto-reveal to Agents (where Allow/Deny lives) —
+            // but only here, at the moment the alert arrives. Manual reopens go
+            // through defaultViewOnOpen and respect your last-used tab, so an
+            // approval you're deliberately leaving unanswered never keeps
+            // re-hijacking the notch onto Agents.
+            GhostwireViewCoordinator.shared.showAgentsForApproval()
             ghostwireViewModel?.open()
             // GW-264: an approval is an ACTIONABLE reveal — auto-collapse after the
             // actionable dwell unless the user engages. On expiry the panel closes

@@ -335,20 +335,21 @@ class GhostwireViewCoordinator: ObservableObject {
         NotchTab.ensureCurrentViewVisible()
     }
 
-    /// GW-226 default-open policy (priority order), pure read - the one-shot is
+    /// GW-224 default-open policy (priority order), pure read - the one-shot is
     /// consumed by the caller (`applyDefaultViewOnOpen`):
-    ///  1. A pending agent approval → the Agents tab (where Allow/Deny lives).
-    ///     Wins over everything, on auto AND manual opens - you never have to
-    ///     navigate to act on a needs-response alert.
-    ///  2. A one-shot Shelf reveal (you just saved/dragged something) → Shelf.
-    ///  3. Otherwise → the last surface you used (if still visible).
-    ///  4. Fallback → first visible tab, preferring Shelf (GW-224: never default
-    ///     a no-alert open to Agents); first visible / .shelf as last resort.
+    ///  1. A one-shot Shelf reveal (you just saved/dragged something) → Shelf.
+    ///  2. Otherwise → the last surface you used (if still visible).
+    ///  3. Fallback → first visible tab, preferring Shelf (never default a
+    ///     no-alert open to Agents); first visible / .shelf as last resort.
+    ///
+    /// A pending approval deliberately does NOT force Agents here. Forcing Agents
+    /// is the job of `showAgentsForApproval()`, called only by the event-driven
+    /// AUTO-REVEAL (GhostwireSessionBridge) at the moment an alert arrives. Once
+    /// you've navigated away from an approval you're choosing not to answer yet,
+    /// reopening respects your last-used tab instead of trapping you on Agents —
+    /// the pending row stays in the Agents tab (with its glow/badge) regardless.
     func defaultViewOnOpen() -> NotchViews {
         let visible = NotchTab.currentlyVisible
-        if hasPendingApproval, let agents = visible.first(where: { $0 == .agents }) {
-            return agents.view
-        }
         if pendingShelfReveal, visible.contains(.shelf) {
             return .shelf
         }
@@ -360,15 +361,18 @@ class GhostwireViewCoordinator: ObservableObject {
             ?? Self.defaultLastSelectedTab
     }
 
-    /// GW-226: is any agent currently waiting on an approval? Drives rule 1 above
-    /// so a needs-response alert always lands on Agents. Injectable seam (mirrors
-    /// SendToAgentCoordinator.liveSessionsProvider) so tests are deterministic; the
-    /// default reads the live bridge lazily at open/close time (never in init, so
-    /// there's no singleton init cycle).
-    var pendingApprovalProvider: () -> Bool = {
-        !GhostwireSessionBridge.shared.sessionMonitor.pendingInstances.isEmpty
+    /// GW-224: route a fresh approval ALERT to the Agents tab — but only at the
+    /// moment it auto-reveals. Manual reopens go through `defaultViewOnOpen()`,
+    /// which respects your last-used tab, so an approval you're ignoring on
+    /// purpose never re-hijacks the notch onto Agents. A live alert supersedes a
+    /// queued one-shot Shelf reveal.
+    func showAgentsForApproval() {
+        if let agents = NotchTab.currentlyVisible.first(where: { $0 == .agents }) {
+            currentView = agents.view
+        }
+        pendingShelfReveal = false
+        NotchTab.ensureCurrentViewVisible()
     }
-    var hasPendingApproval: Bool { pendingApprovalProvider() }
 
     func showEmpty() {
         applyDefaultViewOnOpen()

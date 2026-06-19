@@ -279,7 +279,7 @@ extension Defaults.Keys {
     // reveals (track change, saved-to-Shelf, agent-finished, waiting-for-input)
     // collapse to nothing; actionable reveals (pending approval) recede to the
     // passive glow and the request stays pending in the Agents tab.
-    static let notchInfoDwellSeconds = Key<Double>("notchInfoDwellSeconds", default: 4.0)
+    static let notchInfoDwellSeconds = Key<Double>("notchInfoDwellSeconds", default: 3.0)
     static let notchActionableDwellSeconds = Key<Double>("notchActionableDwellSeconds", default: 6.0)
     // Alert-history cap (GW-139 spec: 100 entries / 7 days, configurable)
     static let alertHistoryMaxEntries = Key<Int>("alertHistoryMaxEntries", default: 100)

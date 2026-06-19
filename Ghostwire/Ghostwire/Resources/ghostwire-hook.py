@@ -17,6 +17,7 @@ import json
 import os
 import socket
 import sys
+import uuid
 
 GHOSTWIRE_SOCKET = os.environ.get("GHOSTWIRE_SOCKET", "/tmp/com.ghostwire.notch.sock")
 GHOSTWIRE_HOST = os.environ.get("GHOSTWIRE_HOST")
@@ -142,6 +143,131 @@ def send_event(state):
         return None
 
 
+# ---------------------------------------------------------------------------
+# Third-party agent adapter (GW-175 + cluster)
+#
+# Claude and Codex speak Ghostwire's native hook vocabulary directly
+# (PreToolUse telemetry + a dedicated blocking PermissionRequest, decided via
+# {hookSpecificOutput:{decision:{behavior}}}). Every other agent we support
+# (Cursor, Copilot, Factory droid, Qoder, CodeBuddy) instead gates on a single
+# pre-tool event and honours a universal block signal: exit code 2.
+#
+# So for those agents this hook NORMALISES on the way in (their native gate
+# event -> internal "PermissionRequest" so the existing socket/approval path
+# fires unchanged) and DENORMALISES on the way out (deny -> exit 2 + stderr
+# reason; allow -> the agent's native allow decision; ask/no-response -> exit 0,
+# deferring to the agent's own permission UI). No Swift socket/approval changes.
+#
+# Field spelling per agent should be re-confirmed against current vendor docs;
+# see the plan / GW-175.
+# ---------------------------------------------------------------------------
+
+_THIRD_PARTY_AGENTS = {"cursor", "copilot", "factory", "qoder", "codebuddy"}
+
+# Native pre-tool events (lowercased) that should block and wait for the notch.
+_GATE_EVENTS = {
+    "cursor": {"pretooluse", "beforeshellexecution", "beforemcpexecution"},
+    "copilot": {"pretooluse"},
+    "factory": {"pretooluse"},
+    "qoder": {"pretooluse"},
+    "codebuddy": {"pretooluse"},
+}
+
+# Native telemetry events (lowercased) -> internal (event name, status).
+_TELEMETRY_EVENTS = {
+    "posttooluse": ("PostToolUse", "processing"),
+    "aftershellexecution": ("PostToolUse", "processing"),
+    "userpromptsubmit": ("UserPromptSubmit", "processing"),
+    "userpromptsubmitted": ("UserPromptSubmit", "processing"),
+    "beforesubmitprompt": ("UserPromptSubmit", "processing"),
+    "stop": ("Stop", "waiting_for_input"),
+    "sessionstart": ("SessionStart", "waiting_for_input"),
+    "sessionend": ("SessionEnd", "ended"),
+}
+
+
+def _extract_tool(data):
+    """Pull (tool_name, tool_input) from a third-party gate payload.
+
+    Most agents mirror Claude's tool_name/tool_input. Cursor's
+    beforeShellExecution carries `command`/`cwd` instead, and
+    beforeMCPExecution carries `url`/`command`."""
+    name = data.get("tool_name")
+    tool_input = data.get("tool_input", {})
+    if not name:
+        if data.get("command") is not None:
+            name = "Shell"
+            tool_input = {"command": data.get("command"), "cwd": data.get("cwd")}
+        elif data.get("url"):
+            name = "MCP"
+            tool_input = {"url": data.get("url")}
+    return name, tool_input
+
+
+def _allow_output(source):
+    """Native allow decision so the agent doesn't re-prompt after a notch allow.
+    None -> just exit 0 (exit-code-only agents)."""
+    if source in ("factory", "qoder", "codebuddy"):
+        return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "allow"}}
+    if source == "copilot":
+        return {"permissionDecision": "allow"}
+    if source == "cursor":
+        return {"permission": "allow"}
+    return None
+
+
+def _emit_third_party_decision(source, decision, reason):
+    """Denormalise the notch decision into the agent's native contract."""
+    if decision == "deny":
+        # Universal block lever across all third-party agents.
+        sys.stderr.write(reason or "Denied by user via Ghostwire")
+        sys.exit(2)
+    if decision == "allow":
+        out = _allow_output(source)
+        if out is not None:
+            print(json.dumps(out))
+        sys.exit(0)
+    # "ask" / unknown: defer to the agent's own permission UI.
+    sys.exit(0)
+
+
+def _handle_third_party(data, source, state):
+    """Route a third-party agent event through the normalise/denormalise path."""
+    raw = data.get("hook_event_name", "").lower()
+
+    if raw in _GATE_EVENTS.get(source, set()):
+        name, tool_input = _extract_tool(data)
+        state["event"] = "PermissionRequest"  # normalise to the internal gate
+        state["status"] = "waiting_for_approval"
+        state["tool"] = name
+        state["tool_input"] = tool_input
+        # HookSocketServer correlates a held PermissionRequest by tool_use_id;
+        # with none (e.g. Cursor's beforeShellExecution carries no id) it closes
+        # the request without waiting and we'd silently fail open. Synthesise a
+        # stable id so the direct-correlation path keeps the socket open. There
+        # is no preceding PreToolUse for these agents, so the cache never has it.
+        state["tool_use_id"] = data.get("tool_use_id") or f"ghostwire-{uuid.uuid4().hex}"
+
+        response = send_event(state)
+        if response:
+            _emit_third_party_decision(
+                source, response.get("decision", "ask"), response.get("reason", "")
+            )
+        # No response (app down / timeout) -> fail open, let the agent proceed.
+        sys.exit(0)
+
+    mapped = _TELEMETRY_EVENTS.get(raw)
+    if mapped:
+        state["event"], state["status"] = mapped
+        if state["status"] == "processing" and raw in ("posttooluse", "aftershellexecution"):
+            name, tool_input = _extract_tool(data)
+            state["tool"] = name
+            state["tool_input"] = tool_input
+    else:
+        state["status"] = "unknown"
+    send_event(state)
+
+
 def main():
     try:
         data = json.load(sys.stdin)
@@ -181,6 +307,13 @@ def main():
     if cmux_workspace and cmux_surface:
         state["cmux_workspace"] = cmux_workspace
         state["cmux_surface"] = cmux_surface
+
+    # Third-party agents (Cursor, Copilot, droid, Qoder, CodeBuddy) speak their
+    # own event/decision dialect — normalise in, denormalise out. Claude/Codex
+    # fall through to the native path below unchanged.
+    if state["source"] in _THIRD_PARTY_AGENTS:
+        _handle_third_party(data, state["source"], state)
+        return
 
     # Map events to status
     if event == "UserPromptSubmit":

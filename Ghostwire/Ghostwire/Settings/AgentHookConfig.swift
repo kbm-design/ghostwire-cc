@@ -29,7 +29,7 @@ struct AgentHookConfig: Identifiable {
     /// surfaces never fork on agent, they just skip the trust line when nil.
     let trustStatus: () -> CodexHookTrust.TrustStatus?
 
-    static let all: [AgentHookConfig] = [claude, codex]
+    static let all: [AgentHookConfig] = [claude, codex, cursor, copilot, factory, qoder, codebuddy]
 
     static let claude = AgentHookConfig(
         id: "claude",
@@ -55,6 +55,36 @@ struct AgentHookConfig: Identifiable {
         requiresCLITrust: true,
         trustStatus: { CodexHookTrust.currentStatus() }
     )
+
+    // Third-party agent cluster (GW-175). All run through GenericHookInstaller
+    // with their own HookInstallSpec, and self-guard on the CLI binary being
+    // present (config dirs linger after a CLI is removed, so we detect by the
+    // binary, not the dir). None has a Codex-style `/hooks` trust gate, so
+    // requiresCLITrust is false.
+    static let cursor = thirdParty("Cursor", .cursorHooksEnabled, GenericHookInstaller.cursor)
+    static let copilot = thirdParty("Copilot", .copilotHooksEnabled, GenericHookInstaller.copilot)
+    static let factory = thirdParty("Factory droid", .factoryHooksEnabled, GenericHookInstaller.factory)
+    static let qoder = thirdParty("Qoder", .qoderHooksEnabled, GenericHookInstaller.qoder)
+    static let codebuddy = thirdParty("CodeBuddy", .codebuddyHooksEnabled, GenericHookInstaller.codebuddy)
+
+    /// Build a cluster agent descriptor backed by GenericHookInstaller + a spec.
+    private static func thirdParty(
+        _ displayName: String,
+        _ enabledKey: Defaults.Key<Bool>,
+        _ spec: HookInstallSpec
+    ) -> AgentHookConfig {
+        AgentHookConfig(
+            id: spec.agentId,
+            displayName: displayName,
+            enabledKey: enabledKey,
+            isDetected: { GenericHookInstaller.isBinaryAvailable(spec.binaryName) },
+            isInstalled: { GenericHookInstaller.isInstalled(spec) },
+            install: { GenericHookInstaller.installIfNeeded(spec) },
+            uninstall: { GenericHookInstaller.uninstall(spec) },
+            requiresCLITrust: false,
+            trustStatus: { nil }
+        )
+    }
 
     /// Install hooks at launch for every agent whose toggle is on.
     /// Replaces the unconditional installs in GhostwireApp.

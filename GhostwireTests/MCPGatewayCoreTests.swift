@@ -205,6 +205,26 @@ final class MCPGatewayCoreTests: XCTestCase {
         }
     }
 
+    func testDownstreamCannotShadowMetaToolNames() async {
+        // Codex P2: a server slugging to "search_tools"/"call_tool" must not
+        // collide with the meta tools — it gets suffixed, meta names stay ours.
+        let searchServer = GatewayUpstreamServer(
+            id: UUID(), displayName: "search", tools: [bareTool("tools")])  // → search_tools
+        let callServer = GatewayUpstreamServer(
+            id: UUID(), displayName: "call", tools: [bareTool("tool")])  // → call_tool
+        let source = FakeSource([searchServer, callServer])
+        let core = MCPGatewayCore(source: source, usage: FakeUsage())
+
+        let exposure = await core.buildExposure()
+
+        // The downstream tools are reachable under disambiguated names...
+        XCTAssertEqual(exposure.routes["search_tools_2"]?.serverID, searchServer.id)
+        XCTAssertEqual(exposure.routes["call_tool_2"]?.serverID, callServer.id)
+        // ...and the bare meta names are NOT downstream routes.
+        XCTAssertNil(exposure.routes["search_tools"])
+        XCTAssertNil(exposure.routes["call_tool"])
+    }
+
     func testSearchToolsMetaReturnsMatchesWithoutCallingDownstream() async throws {
         let source = FakeSource([
             server("Linear", [bareTool("create_issue", "Create a Linear issue")]),

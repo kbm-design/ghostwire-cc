@@ -116,6 +116,17 @@ struct MCPGatewayCore: Sendable {
     /// The bounded surface the host actually sees: the working set (recency ∪
     /// frequency) plus search_tools and call_tool. Recomputed per build; the
     /// full route map is retained so call_tool/search can still reach anything.
+    ///
+    /// Gating tradeoff (GW-184): tools outside the working set are reachable only
+    /// via the generic `call_tool`, so a host that caches "always allow
+    /// call_tool" loses per-tool approval for the long tail (working-set tools
+    /// keep per-name host gating). This matches every major aggregator
+    /// (Composio/Pipedream/Zapier/Klavis), which all relax host per-tool consent
+    /// behind a generic execute tool and lean on server-side authz instead. Our
+    /// authz floor is `MCPServerConfig.allowedTools` (default-deny): call_tool
+    /// can only reach tools the user already allowlisted in the notch. Restoring
+    /// granular gating for the long tail (pin sensitive tools to always-exposed,
+    /// or notch-side per-call prompts) is a tracked fast-follow.
     func publicExposure() async -> GatewayExposure {
         let full = await buildExposure()
         let snapshot = await usage.snapshot()
@@ -205,13 +216,18 @@ struct MCPGatewayCore: Sendable {
         return MCPToolCallOutput(result: result)
     }
 
+    /// Names reserved for the gateway's own meta tools — a downstream must
+    /// never claim them, or it would shadow search_tools/call_tool dispatch.
+    private static let reservedNames: Set<String> = [searchToolName, callToolName]
+
     /// Disambiguate exposed names that collide across servers (e.g. two
-    /// servers that slug identically and share a tool name) by suffixing
-    /// `_2`, `_3`, … — never let a later tool overwrite an earlier route.
+    /// servers that slug identically and share a tool name) — or collide with a
+    /// reserved meta name — by suffixing `_2`, `_3`, … Never let a later tool
+    /// overwrite an earlier route or a meta tool.
     private static func uniqueName(_ base: String, taken routes: [String: GatewayRoute]) -> String {
-        guard routes[base] != nil else { return base }
+        if routes[base] == nil && !reservedNames.contains(base) { return base }
         var n = 2
-        while routes["\(base)_\(n)"] != nil { n += 1 }
+        while routes["\(base)_\(n)"] != nil || reservedNames.contains("\(base)_\(n)") { n += 1 }
         return "\(base)_\(n)"
     }
 }

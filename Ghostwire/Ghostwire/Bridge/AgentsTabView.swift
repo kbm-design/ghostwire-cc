@@ -43,6 +43,10 @@ struct AgentsTabView: View {
                     sessionMonitor: bridge.sessionMonitor,
                     viewModel: panelVM
                 )
+                // GW-286: tie the view's identity to the session so a chat→chat
+                // switch (e.g. Jump-to-Next while already in a chat) rebuilds it
+                // for the new session instead of SwiftUI reusing the stale one.
+                .id(session.sessionId)
                 .onHover { hovering in
                     updateSuppression(for: hovering)
                 }

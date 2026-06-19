@@ -98,6 +98,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var whatsNewWindow: NSWindow?
     var timer: Timer?
     var closeNotchTask: Task<Void, Never>?
+    /// GW-286: cursor for "jump to next" — the sessionId we last jumped to, so
+    /// repeated presses advance through the pending set and wrap around.
+    private var lastJumpedSessionId: String?
     private var previousScreens: [NSScreen]?
     private var onboardingWindowController: NSWindowController?
     private var screenLockedObserver: Any?
@@ -400,6 +403,157 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         voice.onRequestClose = { [weak viewModel] in viewModel?.close() }
     }
 
+    // MARK: - GW-286 tab-open / jump-to-approval hotkeys
+
+    /// Resolve the GhostwireViewModel for the notch under the mouse — mirrors
+    /// the per-display resolution used by toggleNotchOpen / openClipboardHistory.
+    @MainActor
+    private func viewModelUnderMouse() -> GhostwireViewModel {
+        var viewModel = self.vm
+        if Defaults[.showOnAllDisplays] {
+            let mouseLocation = NSEvent.mouseLocation
+            for screen in NSScreen.screens where screen.frame.contains(mouseLocation) {
+                if let uuid = screen.displayUUID, let screenViewModel = self.viewModels[uuid] {
+                    viewModel = screenViewModel
+                    break
+                }
+            }
+        }
+        return viewModel
+    }
+
+    /// GW-286: open the notch on a specific tab. Unhides the tab if the user hid
+    /// it, lands on it, and records it as the last-used surface (GW-224). No
+    /// auto-close timer — a hand-triggered open stays put until acted on.
+    @MainActor
+    private func openNotch(onTab tab: NotchTab) {
+        let viewModel = viewModelUnderMouse()
+        closeNotchTask?.cancel()
+        closeNotchTask = nil
+
+        viewModel.open()
+        // A hotkey open is a deliberate, sticky open — mark it engaged so a
+        // stale auto-reveal dwell timer (from a prior approval) can't collapse
+        // the notch out from under it.
+        NotchRevealController.shared.engaged()
+        NotchTab.setHidden(tab, false)
+        coordinator.currentView = tab.view
+        NotchTab.ensureCurrentViewVisible()
+        // GW-267: Open-on-Agents lands on the instances LIST. If you were drilled
+        // into a chat, back out to it — a reliable "get me back to the list"
+        // fail-safe (esp. to leave an approval chat that's still up).
+        if tab == .agents {
+            GhostwireSessionBridge.shared.panelViewModel.exitChat()
+        }
+        // GW-224: a deliberate open-on-tab is user-driven surface use, so it
+        // becomes the "reopen here" memory for the next no-alert open.
+        coordinator.lastSelectedTab = tab.view
+    }
+
+    /// GW-286/GW-267: open the notch on Agents and drill into the next session
+    /// that needs you, cycling in order (remembering the last jump so repeated
+    /// presses advance and wrap). Navigation ONLY — never writes a verdict.
+    ///
+    /// `approvalsOnly` narrows the cycle to pending approvals — used by the
+    /// Approve/Deny reveal-fallback, which is specifically hunting an approval to
+    /// act on. The Jump hotkey passes `false` to cycle EVERYTHING needing
+    /// attention (approvals AND waiting-for-input questions), so you can triage
+    /// the whole queue by keyboard. No-ops when nothing's pending.
+    @MainActor
+    private func jumpToNext(approvalsOnly: Bool) {
+        let all = GhostwireSessionBridge.shared.sessionMonitor.pendingInstances
+        let candidates = approvalsOnly ? all.filter { $0.activePermission != nil } : all
+        guard !candidates.isEmpty else { return }
+
+        // Where are we now? Prefer the chat currently on screen so a press
+        // advances PAST what you're looking at, then fall back to the last jump
+        // cursor. (Without this, pressing Jump while already in a target's chat
+        // targets that same session and no-ops — feels dead.)
+        let currentSessionId: String?
+        if case .chat(let shown) = GhostwireSessionBridge.shared.panelViewModel.contentType,
+           candidates.contains(where: { $0.sessionId == shown.sessionId }) {
+            currentSessionId = shown.sessionId
+        } else {
+            currentSessionId = lastJumpedSessionId
+        }
+
+        let nextIndex: Int
+        if let current = currentSessionId,
+           let i = candidates.firstIndex(where: { $0.sessionId == current }) {
+            nextIndex = (i + 1) % candidates.count
+        } else {
+            nextIndex = 0
+        }
+        let target = candidates[nextIndex]
+        lastJumpedSessionId = target.sessionId
+
+        let viewModel = viewModelUnderMouse()
+        closeNotchTask?.cancel()
+        closeNotchTask = nil
+
+        viewModel.open()
+        // A deliberate jump is a sticky open — mark engaged so a stale
+        // auto-reveal dwell can't collapse it (GW-264).
+        NotchRevealController.shared.engaged()
+        // Reuse the approval-reveal path: ensure Agents is reachable, land on
+        // it, and drill into the target's chat. Like the auto-reveal, this does
+        // NOT overwrite lastSelectedTab — answering/leaving a request must not
+        // strand the next no-alert open on Agents (GW-224).
+        NotchTab.ensureAgentsVisibleForApproval()
+        coordinator.showAgentsForApproval()
+        GhostwireSessionBridge.shared.panelViewModel.showChat(for: target)
+    }
+
+    /// GW-267: the session whose chat is currently shown in the OPEN notch
+    /// (Agents tab, drilled in), refreshed from the live instance list. nil if
+    /// the notch is closed, not on Agents, or not in a chat — so the quick-action
+    /// keys below only fire when a request is genuinely in front of you.
+    @MainActor
+    private func focusedChatSession() -> SessionState? {
+        // A closed notch can still hold a stale `.chat` content type, so the
+        // notch must actually be open (on any display) before we trust it.
+        let anyNotchOpen = vm.notchState == .open
+            || viewModels.values.contains { $0.notchState == .open }
+        guard anyNotchOpen,
+              coordinator.currentView == .buddy,   // Agents tab is the one showing
+              case .chat(let shown) = GhostwireSessionBridge.shared.panelViewModel.contentType,
+              let live = GhostwireSessionBridge.shared.sessionMonitor.instances
+                  .first(where: { $0.sessionId == shown.sessionId })
+        else { return nil }
+        return live
+    }
+
+    /// GW-267: approve/deny the approval in the focused chat. If a pending
+    /// approval is in front of you, act on it (same verdict path as the notch
+    /// buttons — never a blind auto-approve). If NOT — you're on the list, the
+    /// notch is closed, or the chat has nothing pending — this first press just
+    /// REVEALS the next pending approval (same as Jump); a second press, now
+    /// looking at it, confirms. So Approve/Deny double as "reveal-then-act" and
+    /// never act on something you can't see.
+    @MainActor
+    private func resolveFocusedApproval(approve: Bool) {
+        guard let session = focusedChatSession(), session.activePermission != nil else {
+            // Nothing actionable in front of you → reveal the next APPROVAL
+            // instead (you're hunting one to act on, so skip plain questions).
+            jumpToNext(approvalsOnly: true)
+            return
+        }
+        let monitor = GhostwireSessionBridge.shared.sessionMonitor
+        if approve {
+            monitor.approvePermission(sessionId: session.sessionId)
+        } else {
+            monitor.denyPermission(sessionId: session.sessionId, reason: nil)
+        }
+    }
+
+    /// GW-267: focus the terminal for the session whose chat is in front of you
+    /// (pending or not — pure navigation). No-op if no focused chat.
+    @MainActor
+    private func openTerminalForFocusedSession() {
+        guard let session = focusedChatSession() else { return }
+        Task { await SessionFocusController.shared.focus(session: session) }
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
 
         NotificationCenter.default.addObserver(
@@ -566,6 +720,44 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 self.coordinator.lastSelectedTab = .shelf
                 self.coordinator.requestClipboardHistory = true
             }
+        }
+
+        // GW-286: open the notch directly on a tab. Mirrors openClipboardHistory's
+        // per-display view-model resolution, then routes to the requested tab.
+        // A deliberate hotkey is user-driven surface use, so (like clipboard
+        // history) it becomes the "reopen here" memory for the next no-alert open
+        // (GW-224). No auto-close timer — a hand-triggered open stays put.
+        KeyboardShortcuts.onKeyDown(for: .openNotchAgents) { [weak self] in
+            Task { @MainActor [weak self] in self?.openNotch(onTab: .agents) }
+        }
+        KeyboardShortcuts.onKeyDown(for: .openNotchShelf) { [weak self] in
+            Task { @MainActor [weak self] in self?.openNotch(onTab: .shelf) }
+        }
+        KeyboardShortcuts.onKeyDown(for: .openNotchDashboard) { [weak self] in
+            Task { @MainActor [weak self] in self?.openNotch(onTab: .dashboard) }
+        }
+
+        // GW-286: jump to the next pending approval. Opens the notch on Agents
+        // and drills into the next waiting session's chat (where Allow/Deny
+        // lives). Navigation ONLY — never writes a verdict. No-ops when nothing
+        // is pending (don't pop an empty Agents tab).
+        KeyboardShortcuts.onKeyDown(for: .jumpToNextPendingApproval) { [weak self] in
+            Task { @MainActor [weak self] in self?.jumpToNext(approvalsOnly: false) }
+        }
+
+        // GW-267: keyboard quick-actions on the approval you're looking at.
+        // Each is a no-op unless the notch is open on a pending approval's
+        // focused chat (resolveFocusedApproval / openTerminalForFocusedSession
+        // enforce that gate). Approve/Deny route through the SAME verdict path
+        // as the notch buttons; never a blind/auto-approve.
+        KeyboardShortcuts.onKeyDown(for: .approveFocusedApproval) { [weak self] in
+            Task { @MainActor [weak self] in self?.resolveFocusedApproval(approve: true) }
+        }
+        KeyboardShortcuts.onKeyDown(for: .denyFocusedApproval) { [weak self] in
+            Task { @MainActor [weak self] in self?.resolveFocusedApproval(approve: false) }
+        }
+        KeyboardShortcuts.onKeyDown(for: .openTerminalForFocusedSession) { [weak self] in
+            Task { @MainActor [weak self] in self?.openTerminalForFocusedSession() }
         }
 
         // GW-229: toggle voice capture. Opens the notch as an overlay (the panel

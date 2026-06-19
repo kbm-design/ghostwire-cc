@@ -36,6 +36,11 @@ final class GhostwireSessionBridge: ObservableObject {
     /// reply that should resolve a prior "ready" alert to "responded".
     private var lastUserMessageDates: [String: Date] = [:]
     private var hasSeededUserMessageDates = false
+    /// GW-267: pending "drop the resolved chat down to the compact list" timer.
+    private var dropToListTask: Task<Void, Never>?
+    /// GW-267: session ids that had a pending approval on the previous emission,
+    /// so we can tell when the chat you're viewing just had its approval resolved.
+    private var previousApprovalSessionIds: Set<String> = []
 
     private init() {
         panelViewModel.$contentType
@@ -75,6 +80,20 @@ final class GhostwireSessionBridge: ObservableObject {
             .removeDuplicates()
             .assign(to: &$hasUnactedPendingApproval)
 
+        // GW-267: when the approval whose chat you're VIEWING gets resolved
+        // (keyboard or button), drop that chat down to the compact list ~1s
+        // later — even if OTHER approvals are still pending, so you can see and
+        // handle them instead of being stranded on the one you just answered.
+        // Fully close the notch only when NO approval remains anywhere. Tracks
+        // approval session-ids across emissions to detect "the focused one
+        // resolved" precisely (keying off "all cleared" left a resolved chat
+        // stuck open while others still waited).
+        sessionMonitor.$pendingInstances
+            .sink { [weak self] sessions in
+                self?.reactToApprovalChange(sessions)
+            }
+            .store(in: &cancellables)
+
         sessionMonitor.$instances
             .map { instances in
                 instances.contains { $0.phase.isActive || $0.phase.needsAttention }
@@ -87,6 +106,59 @@ final class GhostwireSessionBridge: ObservableObject {
                 )
             }
             .store(in: &cancellables)
+    }
+
+    /// GW-267: react to a change in pending approvals. If the chat you're VIEWING
+    /// just had its approval resolved (it was pending last emission, isn't now),
+    /// drop that chat to the compact list — regardless of whether other approvals
+    /// remain — and fully close afterward only when none remain.
+    private func reactToApprovalChange(_ sessions: [SessionState]) {
+        let currentIds = Set(sessions.filter { $0.activePermission != nil }.map(\.sessionId))
+        let previousIds = previousApprovalSessionIds
+        previousApprovalSessionIds = currentIds
+
+        guard ghostwireViewModel?.notchState == .open,
+              case .chat(let shown) = panelViewModel.contentType,
+              previousIds.contains(shown.sessionId),   // it WAS a pending approval…
+              !currentIds.contains(shown.sessionId)    // …and now it's resolved
+        else { return }
+
+        GhostwireViewCoordinator.shared.lastSelectedTab = .buddy
+        scheduleDropToList()
+    }
+
+    /// GW-267: ~1s after the focused approval is resolved, drop the (now stale)
+    /// full-height chat down to the compact list so it stops eating the screen.
+    /// You re-open a chat with the keyboard (Jump / double-press) if you want it
+    /// back. Re-checks at fire time: bails if you've jumped onto a fresh approval
+    /// or closed the notch; only fully closes when NO approval remains anywhere
+    /// (otherwise it settles on the list so you can handle the rest).
+    private func scheduleDropToList() {
+        // Don't let a prior actionable close-dwell collapse the notch — we drive
+        // the timing here.
+        NotchRevealController.shared.engaged()
+        dropToListTask?.cancel()
+        dropToListTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(1))
+            guard !Task.isCancelled, let self,
+                  self.ghostwireViewModel?.notchState == .open,
+                  case .chat(let shown) = self.panelViewModel.contentType,
+                  // The shown chat still has nothing pending — i.e. you didn't
+                  // jump onto a fresh approval in the meantime.
+                  self.sessionMonitor.instances
+                      .first(where: { $0.sessionId == shown.sessionId })?.activePermission == nil
+            else { return }
+            self.panelViewModel.exitChat()
+            // Fully close only if no approval remains right now (re-checked here,
+            // so a request that arrived during the 1s keeps the surface up). The
+            // compact list then recedes after the informational dwell (~3s)
+            // unless you hover it; hover pauses the countdown (WCAG).
+            let anyApprovalRemains = self.sessionMonitor.pendingInstances
+                .contains { $0.activePermission != nil }
+            if !anyApprovalRemains {
+                NotchRevealController.shared.reveal(.informational, target: self.ghostwireViewModel)
+            }
+        }
     }
 
     func startMonitoring() {

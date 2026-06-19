@@ -237,6 +237,13 @@ class GhostwireViewModel: NSObject, ObservableObject {
         self.coordinator.sneakPeek.show = false
         self.edgeAutoOpenActive = false
 
+        // GW-265: a closed notch must not retain key focus — the next reveal is
+        // passive until the user clicks in again.
+        GhostwireSkyLightWindow.allowsKeyFocus = false
+        // GW-264: any close clears a pending dwell so a stale timer can't re-close
+        // a freshly reopened notch.
+        NotchRevealController.shared.dismissed()
+
         // GW-203: the default-tab decision lives in one place on the
         // coordinator now (shelf-by-default / agents-first / GW-199 idle),
         // which every open/close path routes through. close() prepares the

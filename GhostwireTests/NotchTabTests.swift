@@ -192,21 +192,20 @@ final class NotchDefaultViewPolicyTests: XCTestCase {
         let savedShelf = Defaults[.shelf]
         let savedOrder = Defaults[.notchTabOrder]
         let coordinator = GhostwireViewCoordinator.shared
-        let savedProvider = coordinator.pendingApprovalProvider
         let savedLast = coordinator.lastSelectedTab
         let savedReveal = coordinator.pendingShelfReveal
+        let savedView = coordinator.currentView
         defer {
             Defaults[.hiddenNotchTabs] = savedHidden
             Defaults[.shelf] = savedShelf
             Defaults[.notchTabOrder] = savedOrder
-            coordinator.pendingApprovalProvider = savedProvider
             coordinator.lastSelectedTab = savedLast
             coordinator.pendingShelfReveal = savedReveal
+            coordinator.currentView = savedView
         }
         Defaults[.hiddenNotchTabs] = []
         Defaults[.shelf] = true
         Defaults[.notchTabOrder] = NotchTab.allCases.map(\.rawValue)
-        coordinator.pendingApprovalProvider = { false }   // deterministic: no live approval
         try body()
     }
 
@@ -219,12 +218,28 @@ final class NotchDefaultViewPolicyTests: XCTestCase {
         }
     }
 
-    func testPendingApprovalForcesAgentsOverLastTab() {
+    func testFreshAlertAutoRevealRoutesToAgents() {
+        // GW-224: the alert ITSELF (auto-reveal) routes to Agents so Allow/Deny
+        // is in front the moment it arrives.
         withAllTabsVisible {
             let coordinator = GhostwireViewCoordinator.shared
             coordinator.lastSelectedTab = .shelf
-            coordinator.pendingApprovalProvider = { true }
-            XCTAssertEqual(coordinator.defaultViewOnOpen(), .buddy, "a pending approval must win over the last tab")
+            coordinator.currentView = .shelf
+            coordinator.showAgentsForApproval()
+            XCTAssertEqual(coordinator.currentView, .buddy, "a fresh alert must land on Agents")
+        }
+    }
+
+    func testApprovalDoesNotForceAgentsOnManualReopen() {
+        // GW-224 (the reported flaw): once you've navigated away from an approval
+        // you're choosing not to answer, a manual reopen must respect your
+        // last-used tab — not keep dragging you back to Agents. The pending row
+        // still waits in the Agents tab regardless.
+        withAllTabsVisible {
+            let coordinator = GhostwireViewCoordinator.shared
+            coordinator.pendingShelfReveal = false
+            coordinator.lastSelectedTab = .shelf
+            XCTAssertEqual(coordinator.defaultViewOnOpen(), .shelf)
         }
     }
 
@@ -243,6 +258,49 @@ final class NotchDefaultViewPolicyTests: XCTestCase {
 
             // …and a subsequent open reverts to the last selected tab.
             XCTAssertEqual(coordinator.defaultViewOnOpen(), .home)
+        }
+    }
+
+    // MARK: - GW-224: no-alert opens must NOT default to Agents
+
+    func testNoAlertDefaultLandsOnShelfNotAgents() {
+        // GW-224: with the last-used memory at its default and no pending
+        // approval, a manual/hover open lands on Shelf (the utility home),
+        // never on Agents. (Restores GW-203's shelf-by-default intent that
+        // GW-226 overcorrected into always-Agents.)
+        withAllTabsVisible {
+            let coordinator = GhostwireViewCoordinator.shared
+            coordinator.pendingShelfReveal = false
+            coordinator.lastSelectedTab = GhostwireViewCoordinator.defaultLastSelectedTab
+            XCTAssertEqual(coordinator.defaultViewOnOpen(), .shelf)
+        }
+    }
+
+    func testDefaultLastSelectedTabIsShelf() {
+        // The "reopen here" baseline is Shelf, not Agents.
+        XCTAssertEqual(GhostwireViewCoordinator.defaultLastSelectedTab, .shelf)
+    }
+
+    func testFallbackPrefersShelfWhenLastTabHidden() {
+        // GW-224: no approval, and the last-selected tab is no longer visible
+        // → fall back to Shelf rather than defaulting to Agents.
+        withAllTabsVisible {
+            let coordinator = GhostwireViewCoordinator.shared
+            coordinator.pendingShelfReveal = false
+            Defaults[.hiddenNotchTabs] = [NotchTab.dashboard.rawValue]  // Home hidden
+            coordinator.lastSelectedTab = .home                         // points at the hidden tab
+            XCTAssertEqual(coordinator.defaultViewOnOpen(), .shelf)
+        }
+    }
+
+    func testRestoresShelfAsLastUsedSurface() {
+        // The voice/clipboard/drop reveal paths record Shelf as the last-used
+        // surface; a later no-alert open must return there.
+        withAllTabsVisible {
+            let coordinator = GhostwireViewCoordinator.shared
+            coordinator.pendingShelfReveal = false
+            coordinator.lastSelectedTab = .shelf
+            XCTAssertEqual(coordinator.defaultViewOnOpen(), .shelf)
         }
     }
 }

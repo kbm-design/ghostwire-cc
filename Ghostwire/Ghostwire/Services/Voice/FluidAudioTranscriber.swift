@@ -70,6 +70,12 @@ final class FluidAudioTranscriber: Transcriber {
     // Loaded engines cached so download + ANE compile happen once.
     private static var streamingManagers: [String: any StreamingAsrManager] = [:]
     private static var batchManagers: [AsrModelVersion: AsrManager] = [:]
+    // In-flight loads so concurrent callers (launch warm + first gesture + Settings
+    // retry) coalesce onto ONE download/load instead of each starting their own.
+    // Stored before the first await, and the static state is @MainActor-isolated, so
+    // the check-then-store critical section is atomic.
+    private static var streamingLoads: [String: Task<any StreamingAsrManager, Error>] = [:]
+    private static var batchLoads: [AsrModelVersion: Task<AsrManager, Error>] = [:]
 
     private let model: VoiceModel
     private var streaming: (any StreamingAsrManager)?
@@ -88,19 +94,43 @@ final class FluidAudioTranscriber: Transcriber {
 
     private static func streamingManager(_ variant: StreamingModelVariant) async throws -> any StreamingAsrManager {
         if let cached = streamingManagers[variant.rawValue] { return cached }
-        let mgr = variant.createManager()
-        try await mgr.loadModels()
-        streamingManagers[variant.rawValue] = mgr
-        return mgr
+        if let inflight = streamingLoads[variant.rawValue] { return try await inflight.value }
+        let task = Task { () async throws -> any StreamingAsrManager in
+            let mgr = variant.createManager()
+            try await mgr.loadModels()
+            return mgr
+        }
+        streamingLoads[variant.rawValue] = task
+        do {
+            let mgr = try await task.value
+            streamingManagers[variant.rawValue] = mgr
+            streamingLoads[variant.rawValue] = nil
+            return mgr
+        } catch {
+            streamingLoads[variant.rawValue] = nil // let a later caller retry
+            throw error
+        }
     }
 
     private static func batchManager(_ version: AsrModelVersion) async throws -> AsrManager {
         if let cached = batchManagers[version] { return cached }
-        let manager = AsrManager()
-        let models = try await AsrModels.downloadAndLoad(version: version)
-        try await manager.loadModels(models)
-        batchManagers[version] = manager
-        return manager
+        if let inflight = batchLoads[version] { return try await inflight.value }
+        let task = Task { () async throws -> AsrManager in
+            let manager = AsrManager()
+            let models = try await AsrModels.downloadAndLoad(version: version)
+            try await manager.loadModels(models)
+            return manager
+        }
+        batchLoads[version] = task
+        do {
+            let manager = try await task.value
+            batchManagers[version] = manager
+            batchLoads[version] = nil
+            return manager
+        } catch {
+            batchLoads[version] = nil // let a later caller retry
+            throw error
+        }
     }
 
     /// Download (if needed) + load the model, updating `VoiceModelStore` so the

@@ -201,7 +201,8 @@ struct UnifiedCardView: View {
 
 // MARK: - Hover action button (own hover highlight + tooltip)
 
-private struct CardActionButton: View {
+/// Shared by the Shelf card hover actions and the GW-259 feed card actions.
+struct CardActionButton: View {
     let systemName: String
     let tint: Color
     let help: String
@@ -273,7 +274,7 @@ private struct CardFooter: View {
 
     private var sourceGlyph: some View {
         Group {
-            if let icon = Self.appIcon(for: card.sourceBundleId) {
+            if let icon = sourceAppIcon(for: card.sourceBundleId) {
                 Image(nsImage: icon).resizable().aspectRatio(contentMode: .fit)
             } else {
                 Image(systemName: kindSymbol)
@@ -298,12 +299,6 @@ private struct CardFooter: View {
         f.unitsStyle = .abbreviated
         return f
     }()
-
-    private static func appIcon(for bundleId: String?) -> NSImage? {
-        guard let bundleId,
-              let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId) else { return nil }
-        return NSWorkspace.shared.icon(forFile: url.path)
-    }
 }
 
 /// Bottom scrim + label used by the flush image/color cards.

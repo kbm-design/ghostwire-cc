@@ -382,6 +382,8 @@ struct ContentView: View {
                         NotchHomeView(albumArtNamespace: albumArtNamespace)
                     case .shelf:
                         ShelfView()
+                    case .feed:
+                        FeedSurfaceView()
                     }
                 }
                 // Fill the panel height (top-aligned) so a short tab — e.g. the

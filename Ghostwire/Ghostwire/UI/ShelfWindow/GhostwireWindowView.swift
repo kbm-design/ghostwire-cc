@@ -22,12 +22,13 @@ import SwiftUI
 // MARK: - Tabs
 
 enum GhostwireWindowTab: String, CaseIterable, Identifiable {
-    case agents, shelf, settings
+    case feed, agents, shelf, settings
 
     var id: String { rawValue }
 
     var label: String {
         switch self {
+        case .feed: return "Feed"
         case .agents: return "Agents"
         case .shelf: return "Shelf"
         case .settings: return "Settings"
@@ -36,6 +37,7 @@ enum GhostwireWindowTab: String, CaseIterable, Identifiable {
 
     var systemImage: String {
         switch self {
+        case .feed: return "arrow.triangle.branch"
         case .agents: return "sparkles"
         case .shelf: return "tray.full"
         case .settings: return "gearshape"
@@ -75,6 +77,10 @@ struct GhostwireWindowView: View {
     private var content: some View {
         Group {
             switch tab {
+            case .feed:
+                // GW-259: cards only — no media controls in the window (they're
+                // not useful here). FeedSurfaceView renders the grid for .window.
+                FeedSurfaceView()
             case .shelf:
                 ShelfWindowView()
             case .agents:

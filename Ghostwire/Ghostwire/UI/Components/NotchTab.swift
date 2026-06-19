@@ -14,6 +14,7 @@ enum NotchTab: String, CaseIterable, Identifiable {
     case agents
     case dashboard
     case shelf
+    case feed
 
     var id: String { rawValue }
 
@@ -22,6 +23,7 @@ enum NotchTab: String, CaseIterable, Identifiable {
         case .agents: return "Agents"
         case .dashboard: return "Dashboard"
         case .shelf: return "Shelf"
+        case .feed: return "Feed"
         }
     }
 
@@ -30,6 +32,9 @@ enum NotchTab: String, CaseIterable, Identifiable {
         case .agents: return "terminal.fill"
         case .dashboard: return "square.grid.2x2"
         case .shelf: return "tray.fill"
+        // GW-259: git-fork/branch glyph — the feed surfaces things pulled from
+        // sources (MCPs etc.), distinct from the media Dashboard.
+        case .feed: return "arrow.triangle.branch"
         }
     }
 
@@ -38,6 +43,7 @@ enum NotchTab: String, CaseIterable, Identifiable {
         case .agents: return .buddy
         case .dashboard: return .home
         case .shelf: return .shelf
+        case .feed: return .feed
         }
     }
 

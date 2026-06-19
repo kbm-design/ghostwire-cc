@@ -17,21 +17,21 @@ final class NotchTabTests: XCTestCase {
     func testSanitizedOrderPreservesValidOrder() {
         XCTAssertEqual(
             NotchTab.sanitizedOrder(["shelf", "agents", "dashboard"]),
-            [.shelf, .agents, .dashboard]
+            [.shelf, .agents, .dashboard, .feed]
         )
     }
 
     func testSanitizedOrderDropsUnknownIds() {
         XCTAssertEqual(
             NotchTab.sanitizedOrder(["agents", "downloads", "dashboard", "shelf"]),
-            [.agents, .dashboard, .shelf]
+            [.agents, .dashboard, .shelf, .feed]
         )
     }
 
     func testSanitizedOrderDeduplicates() {
         XCTAssertEqual(
             NotchTab.sanitizedOrder(["agents", "agents", "shelf", "dashboard", "shelf"]),
-            [.agents, .shelf, .dashboard]
+            [.agents, .shelf, .dashboard, .feed]
         )
     }
 
@@ -40,7 +40,7 @@ final class NotchTabTests: XCTestCase {
         // gets the new tab appended in declaration order.
         XCTAssertEqual(
             NotchTab.sanitizedOrder(["shelf"]),
-            [.shelf, .agents, .dashboard]
+            [.shelf, .agents, .dashboard, .feed]
         )
     }
 
@@ -53,7 +53,7 @@ final class NotchTabTests: XCTestCase {
     func testVisibleTabsFiltersHidden() {
         XCTAssertEqual(
             NotchTab.visibleTabs(order: NotchTab.allCases, hidden: ["dashboard"], shelfEnabled: true),
-            [.agents, .shelf]
+            [.agents, .shelf, .feed]
         )
     }
 
@@ -61,7 +61,7 @@ final class NotchTabTests: XCTestCase {
         // Shelf has no separate visibility key — module off removes the tab.
         XCTAssertEqual(
             NotchTab.visibleTabs(order: NotchTab.allCases, hidden: [], shelfEnabled: false),
-            [.agents, .dashboard]
+            [.agents, .dashboard, .feed]
         )
     }
 
@@ -92,10 +92,10 @@ final class NotchTabTests: XCTestCase {
         XCTAssertEqual(
             NotchTab.visibleTabs(
                 order: NotchTab.allCases,
-                hidden: ["agents", "dashboard"],
+                hidden: ["agents", "dashboard", "feed"],
                 shelfEnabled: false
             ),
-            [.agents, .dashboard]
+            [.agents, .dashboard, .feed]
         )
     }
 
@@ -103,7 +103,7 @@ final class NotchTabTests: XCTestCase {
         // Hide list and module gate agree — shelf stays out, others remain.
         XCTAssertEqual(
             NotchTab.visibleTabs(order: NotchTab.allCases, hidden: ["shelf"], shelfEnabled: false),
-            [.agents, .dashboard]
+            [.agents, .dashboard, .feed]
         )
     }
 }

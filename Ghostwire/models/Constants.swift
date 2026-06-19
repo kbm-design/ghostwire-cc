@@ -323,8 +323,16 @@ extension Defaults.Keys {
     // Media's toggle only hides its settings pane (the player is core);
     // the other modules reuse their feature master keys (see SettingsModule).
     static let mediaModuleEnabled = Key<Bool>("mediaModuleEnabled", default: true)
-    static let notchTabOrder = Key<[String]>("notchTabOrder", default: ["agents", "dashboard", "shelf"])
+    static let notchTabOrder = Key<[String]>("notchTabOrder", default: ["agents", "dashboard", "shelf", "feed"])
     static let hiddenNotchTabs = Key<Set<String>>("hiddenNotchTabs", default: [])
+
+    // MARK: Dashboard feed curation (GW-259)
+    // User-curated order of feed cards, persisted as stable FeedCard ids (same
+    // idiom as notchTabOrder). FeedCardStore applies this to the live card set:
+    // known ids hold position, new ids append, vanished ids drop out.
+    static let feedCardOrder = Key<[String]>("feedCardOrder", default: [])
+    // How many of the ordered cards mirror into the notch's top-N row.
+    static let feedNotchVisibleCount = Key<Int>("feedNotchVisibleCount", default: 8)
 
     // MARK: Ambient context (GW-172) — Tier-0 frontmost-app spine.
     // SILENT: collects + persists which app is frontmost (identity only — no

@@ -560,12 +560,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         HoldToTalkMonitor.shared.reconfigure()
 
-        // GW-229: NB the on-device speech model is NOT *downloaded* at launch —
-        // that would pull ~600MB on a fresh install even if voice is never used.
-        // It downloads on explicit intent: the Settings "Download" button, a
-        // model-picker change, or the first recording (which shows a
-        // "Preparing model…" state via VoiceCaptureViewModel).
-        //
+        // GW-229/GW-270: the on-device speech model is NOT downloaded OR warmed at
+        // launch. Warming has to go through prepare()/ensureLoaded(), which downloads
+        // when the local cache is missing — so a stale "downloaded" flag (cache wiped
+        // but Defaults preserved) could turn launch into a surprise ~600MB pull. The
+        // model is only prepared on explicit intent: onboarding's voice step, the
+        // Settings enable toggle, the model picker, or the first recording (which
+        // shows a "Preparing model…" state via VoiceCaptureViewModel).
+
         // GW-270: normalize a stale/unknown voiceModel rawValue (e.g. a renamed
         // engine from an older build) back to the default — otherwise the Settings
         // engine picker renders blank and the stored value is invalid (recording
@@ -574,18 +576,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if storedVoiceModel != DefaultTranscriberFactory.appleEngineKey,
            VoiceModel(rawValue: storedVoiceModel) == nil {
             Defaults[.voiceModel] = VoiceModel.nemotronEN.rawValue
-        }
-
-        // GW-270: but if the model is ALREADY downloaded, warm it into memory now so
-        // the first hold/toggle of the session isn't a cold load. Gated on
-        // voiceDownloadedModels, so this never triggers a download on a fresh install.
-        if Defaults[.voiceCaptureEnabled] {
-            let selected = Defaults[.voiceModel]
-            if selected != DefaultTranscriberFactory.appleEngineKey,
-               Defaults[.voiceDownloadedModels].contains(selected),
-               let model = VoiceModel(rawValue: selected) {
-                FluidAudioTranscriber.prepare(model)
-            }
         }
 
         if !Defaults[.showOnAllDisplays] {

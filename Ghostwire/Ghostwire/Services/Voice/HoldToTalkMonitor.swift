@@ -382,6 +382,13 @@ final class HoldToTalkMonitor {
     }
 
     private func stop() {
+        // If a gesture is mid-recording (PTT or latched), tearing down the tap +
+        // max-duration timer would strand the VM in `.recording` with nothing left to
+        // stop it (and with voice off, the ⌃⇧Space fallback is gated off too). Discard
+        // it explicitly first. cancel() is a harmless no-op if nothing's recording.
+        if classifier.isEngaged {
+            VoiceCaptureViewModel.shared.cancel()
+        }
         cancelTimers()
         classifier = HoldToTalkClassifier()
         fnRawPresent = false

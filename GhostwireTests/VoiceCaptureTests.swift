@@ -270,7 +270,10 @@ final class VoiceCaptureTests: XCTestCase {
             copyToClipboard: { sink.clipboard.append($0) },
             isFieldFocused: { false },
             pasteIntoField: { sink.pasteCalls += 1; return true },
-            pasteEnabled: { true }
+            pasteEnabled: { true },
+            // Deterministic warm engine: otherwise this reads real Defaults +
+            // FluidAudio load state and the open/close counts go cold-path flaky.
+            isEngineWarm: { true }
         )
         vm.onRevealShelf = { sink.revealed += 1 }
         vm.onRequestOpen = { sink.opened += 1 }

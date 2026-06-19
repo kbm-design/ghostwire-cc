@@ -271,7 +271,7 @@ struct AgentsTabView: View {
     /// tint dimly (identity without implying a level); no fill until
     /// GW-144 ships user-set spend limits to fill against.
     /// Label system: one word naming the measure (Session/Weekly/Spend, same
-    /// register as the Buddi-inherited quota labels); the trailing-7d window
+    /// register as the inherited quota labels); the trailing-7d window
     /// lives in the tooltip + detail view, not the label.
     private func tokenBar(agent: String, tokens: AgentTokenDisplay) -> some View {
         let tint = AgentIdentity.tint(for: agent)

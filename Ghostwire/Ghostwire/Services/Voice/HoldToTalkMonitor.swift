@@ -78,71 +78,121 @@ enum HoldToTalkKey: String, CaseIterable, Defaults.Serializable {
 
 // MARK: - Pure classifier
 
-/// Inputs the classifier consumes. Timestamps aren't needed: the blip-vs-hold split
-/// is realized by WHEN `armingFired` arrives (the real debounce timer), not by
-/// comparing times — a release in `arming` is a blip, a release in `recording` is a
-/// real hold.
+/// Inputs the classifier consumes. Timestamps aren't needed: the blip-vs-hold and
+/// the double-tap splits are realized by WHICH timer fires (the real arm timer and
+/// double-tap window), not by comparing times.
 enum HoldToTalkInput: Equatable {
-    case keyDown          // target modifier pressed
-    case keyUp            // target modifier released
-    case otherKeyDown     // any non-modifier key (combo signal)
-    case armingFired      // the ~150ms arm timer elapsed
-    case maxDurationFired // the safety cap elapsed
+    case keyDown             // target modifier pressed
+    case keyUp               // target modifier released
+    case otherKeyDown        // any non-modifier, non-Esc key (combo signal)
+    case escKeyDown          // Escape — cancels an active recording (discard)
+    case armingFired         // the ~150ms arm timer elapsed
+    case doubleTapWindowFired // the double-tap window expired (single tap → nothing)
+    case maxDurationFired    // the safety cap elapsed
 }
 
 /// Side-effects the shell must perform. Pure data so tests can assert them.
 enum HoldToTalkOutput: Equatable {
     case scheduleArming
     case cancelArming
+    case scheduleDoubleTapWindow
+    case cancelDoubleTapWindow
     case beginRecording
     case scheduleMaxDuration
     case requestStop
-    /// Discard the active recording WITHOUT routing (a combo struck mid-hold).
+    /// Discard the active recording WITHOUT routing (a combo or Esc mid-recording).
     case cancelRecording
     case cancelMaxDuration
 }
 
-/// The push-to-talk phase machine. Pure and `Sendable`; no tap, no timers, no VM.
+/// The push-to-talk + double-tap phase machine. Pure and `Sendable`; no tap, no
+/// timers, no VM. Gesture vocabulary on the configured key:
+///   • hold (past the arm timer) → push-to-talk; release routes.
+///   • quick tap, then quick tap (within the double-tap window) → start CONTINUOUS
+///     (latched) recording; a later single press stops+routes, Esc discards.
+///   • a lone quick tap → nothing.
+///   • a non-modifier key (or Esc) mid-gesture → combo/abort, never routes.
 struct HoldToTalkClassifier {
-    private enum Phase { case idle, arming, recording }
+    private enum Phase {
+        case idle
+        case armingFirst       // first press down, waiting arm timer or release
+        case recording         // push-to-talk active (held)
+        case awaitingSecondTap // first tap released, watching for a second tap
+        case armingSecond      // second press down — quick release = double-tap, hold = PTT
+        case latched           // continuous recording from a double-tap
+    }
     private var phase: Phase = .idle
 
-    /// True while a gesture is engaged (armed or recording) — the shell uses this to
-    /// synthesize a missing key-up from a flags-released recovery event.
+    /// True while a gesture is engaged — the shell uses this to synthesize a missing
+    /// key-up from a flags-released recovery event.
     var isEngaged: Bool { phase != .idle }
 
     mutating func handle(_ input: HoldToTalkInput) -> [HoldToTalkOutput] {
         switch (phase, input) {
         // Idle: a target press arms the debounce; everything else is noise.
         case (.idle, .keyDown):
-            phase = .arming
+            phase = .armingFirst
             return [.scheduleArming]
 
-        // Arming: a real key first means a combo; an early release means a blip.
-        // Either way we disarm without ever recording.
-        case (.arming, .otherKeyDown), (.arming, .keyUp):
+        // First arming: a real key/Esc means a combo; an early release is a tap —
+        // begin watching for a second tap (a lone tap resolves to nothing).
+        case (.armingFirst, .otherKeyDown), (.armingFirst, .escKeyDown):
             phase = .idle
             return [.cancelArming]
-        // Still held when the timer fires → start recording + arm the safety cap.
-        case (.arming, .armingFired):
+        case (.armingFirst, .keyUp):
+            phase = .awaitingSecondTap
+            return [.cancelArming, .scheduleDoubleTapWindow]
+        case (.armingFirst, .armingFired):
             phase = .recording
             return [.beginRecording, .scheduleMaxDuration]
 
-        // Recording: release routes; the safety cap force-stops a dropped up.
+        // Push-to-talk: release routes; a combo/Esc discards; the cap force-stops.
         case (.recording, .keyUp):
             phase = .idle
             return [.requestStop, .cancelMaxDuration]
+        case (.recording, .otherKeyDown), (.recording, .escKeyDown):
+            phase = .idle
+            return [.cancelRecording, .cancelMaxDuration]
         case (.recording, .maxDurationFired):
             phase = .idle
             return [.requestStop]
-        // A non-modifier key while recording means this was a slow combo (held the
-        // modifier past 150ms, THEN pressed a shortcut key) — discard, don't route
-        // accidental ambient audio. Keeps "combos never route" true through release.
-        case (.recording, .otherKeyDown):
+
+        // Between taps: a second press starts the second arm; expiry/other = lone tap.
+        case (.awaitingSecondTap, .keyDown):
+            phase = .armingSecond
+            return [.cancelDoubleTapWindow, .scheduleArming]
+        case (.awaitingSecondTap, .doubleTapWindowFired):
+            phase = .idle
+            return []
+        case (.awaitingSecondTap, .otherKeyDown), (.awaitingSecondTap, .escKeyDown):
+            phase = .idle
+            return [.cancelDoubleTapWindow]
+
+        // Second press: a quick release confirms the double-tap → latched recording;
+        // holding it past the arm timer was really a (delayed) push-to-talk.
+        case (.armingSecond, .keyUp):
+            phase = .latched
+            return [.cancelArming, .beginRecording, .scheduleMaxDuration]
+        case (.armingSecond, .armingFired):
+            phase = .recording
+            return [.beginRecording, .scheduleMaxDuration]
+        case (.armingSecond, .otherKeyDown), (.armingSecond, .escKeyDown):
+            phase = .idle
+            return [.cancelArming]
+
+        // Latched: the next press stops + routes; Esc discards; the cap force-stops.
+        // (The double-tap's own release lands here as a keyUp and is ignored.)
+        case (.latched, .keyDown):
+            phase = .idle
+            return [.requestStop, .cancelMaxDuration]
+        case (.latched, .escKeyDown):
             phase = .idle
             return [.cancelRecording, .cancelMaxDuration]
+        case (.latched, .maxDurationFired):
+            phase = .idle
+            return [.requestStop]
 
-        // Everything else (stale timers, re-downs) is ignored.
+        // Everything else (stale timers, the latched tap's release, re-downs) ignored.
         default:
             return []
         }
@@ -220,8 +270,13 @@ final class HoldToTalkMonitor {
 
     /// Debounce before a held key starts recording — also the combo/blip window.
     private let armingDelay: TimeInterval = 0.15
+    /// Window after a quick tap to catch a second tap (double-tap → latched record).
+    private let doubleTapWindow: TimeInterval = 0.35
     /// Safety cap: force-stop if a release is ever lost so recording can't stick.
     private let maxHoldDuration: TimeInterval = 60
+
+    /// Escape virtual keycode — cancels (discards) an active recording.
+    private let escKeyCode: Int64 = 0x35
 
     /// The currently-armed key. `.off` ⇒ the tap is not running.
     private var targetKey: HoldToTalkKey = .off
@@ -234,6 +289,7 @@ final class HoldToTalkMonitor {
     private var startInFlight = false
 
     private var armingWork: DispatchWorkItem?
+    private var doubleTapWork: DispatchWorkItem?
     private var maxDurationWork: DispatchWorkItem?
 
     /// Raw physical Fn state + whether we armed a bare-Fn hold (Fn keycode is
@@ -361,7 +417,9 @@ final class HoldToTalkMonitor {
         switch type {
         case .keyDown:
             // Any keyDown is a non-modifier key (modifiers arrive via flagsChanged).
-            process(classifier.handle(.otherKeyDown))
+            // Esc cancels an active recording; everything else is a combo signal.
+            let isEsc = event.getIntegerValueField(.keyboardEventKeycode) == escKeyCode
+            process(classifier.handle(isEsc ? .escKeyDown : .otherKeyDown))
             return false
 
         case .flagsChanged:
@@ -401,6 +459,11 @@ final class HoldToTalkMonitor {
             case .cancelArming:
                 armingWork?.cancel()
                 armingWork = nil
+            case .scheduleDoubleTapWindow:
+                scheduleDoubleTapWindow()
+            case .cancelDoubleTapWindow:
+                doubleTapWork?.cancel()
+                doubleTapWork = nil
             case .beginRecording:
                 beginRecording()
             case .scheduleMaxDuration:
@@ -437,6 +500,17 @@ final class HoldToTalkMonitor {
         DispatchQueue.main.asyncAfter(deadline: .now() + armingDelay, execute: work)
     }
 
+    private func scheduleDoubleTapWindow() {
+        doubleTapWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.doubleTapWork = nil
+            self.process(self.classifier.handle(.doubleTapWindowFired))
+        }
+        doubleTapWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + doubleTapWindow, execute: work)
+    }
+
     private func scheduleMaxDuration() {
         maxDurationWork?.cancel()
         let work = DispatchWorkItem { [weak self] in
@@ -452,6 +526,8 @@ final class HoldToTalkMonitor {
     private func cancelTimers() {
         armingWork?.cancel()
         armingWork = nil
+        doubleTapWork?.cancel()
+        doubleTapWork = nil
         maxDurationWork?.cancel()
         maxDurationWork = nil
     }

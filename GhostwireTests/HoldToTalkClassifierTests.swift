@@ -15,13 +15,47 @@ final class HoldToTalkClassifierTests: XCTestCase {
 
     // MARK: - Classifier
 
-    /// A quick tap (release before the arm timer) never records.
-    func testBlipDisarmsWithoutRecording() {
+    /// A lone quick tap opens the double-tap window, then resolves to nothing.
+    func testLoneTapRecordsNothing() {
         var c = HoldToTalkClassifier()
         XCTAssertEqual(c.handle(.keyDown), [.scheduleArming])
-        XCTAssertEqual(c.handle(.keyUp), [.cancelArming])
+        XCTAssertEqual(c.handle(.keyUp), [.cancelArming, .scheduleDoubleTapWindow])
+        XCTAssertEqual(c.handle(.doubleTapWindowFired), []) // window expires → nothing
         XCTAssertFalse(c.isEngaged)
-        XCTAssertEqual(c.handle(.armingFired), []) // stale timer is ignored
+    }
+
+    /// Two quick taps within the window start CONTINUOUS (latched) recording; the
+    /// next single press stops + routes.
+    func testDoubleTapLatchesThenTapStops() {
+        var c = HoldToTalkClassifier()
+        _ = c.handle(.keyDown)                                   // tap 1 down
+        XCTAssertEqual(c.handle(.keyUp), [.cancelArming, .scheduleDoubleTapWindow]) // tap 1 up
+        XCTAssertEqual(c.handle(.keyDown), [.cancelDoubleTapWindow, .scheduleArming]) // tap 2 down
+        XCTAssertEqual(c.handle(.keyUp), [.cancelArming, .beginRecording, .scheduleMaxDuration]) // tap 2 up → latched
+        XCTAssertTrue(c.isEngaged)
+        XCTAssertEqual(c.handle(.keyUp), [])                     // the latched tap's own release is ignored
+        XCTAssertEqual(c.handle(.keyDown), [.requestStop, .cancelMaxDuration]) // next press stops + routes
+        XCTAssertFalse(c.isEngaged)
+    }
+
+    /// Esc discards a latched (continuous) recording without routing.
+    func testLatchedEscDiscards() {
+        var c = HoldToTalkClassifier()
+        _ = c.handle(.keyDown); _ = c.handle(.keyUp)            // tap 1
+        _ = c.handle(.keyDown); _ = c.handle(.keyUp)            // tap 2 → latched
+        XCTAssertEqual(c.handle(.escKeyDown), [.cancelRecording, .cancelMaxDuration])
+        XCTAssertFalse(c.isEngaged)
+    }
+
+    /// Tap-then-HOLD (the second press held past the arm timer) is push-to-talk, not
+    /// a double-tap — it must NOT latch.
+    func testTapThenHoldIsPushToTalk() {
+        var c = HoldToTalkClassifier()
+        _ = c.handle(.keyDown)
+        XCTAssertEqual(c.handle(.keyUp), [.cancelArming, .scheduleDoubleTapWindow]) // tap 1
+        XCTAssertEqual(c.handle(.keyDown), [.cancelDoubleTapWindow, .scheduleArming]) // press 2 down
+        XCTAssertEqual(c.handle(.armingFired), [.beginRecording, .scheduleMaxDuration]) // held → PTT
+        XCTAssertEqual(c.handle(.keyUp), [.requestStop, .cancelMaxDuration])            // release routes
     }
 
     /// A held key past the arm timer records, and release routes + cancels the cap.
@@ -85,6 +119,24 @@ final class HoldToTalkClassifierTests: XCTestCase {
         XCTAssertEqual(c.handle(.otherKeyDown), [.cancelRecording, .cancelMaxDuration])
         XCTAssertFalse(c.isEngaged)
         XCTAssertEqual(c.handle(.keyUp), []) // the eventual real up is now a no-op
+    }
+
+    /// Esc during a push-to-talk hold discards without routing.
+    func testEscDuringRecordingDiscards() {
+        var c = HoldToTalkClassifier()
+        _ = c.handle(.keyDown)
+        _ = c.handle(.armingFired)
+        XCTAssertEqual(c.handle(.escKeyDown), [.cancelRecording, .cancelMaxDuration])
+        XCTAssertFalse(c.isEngaged)
+    }
+
+    /// The safety cap force-stops a latched (continuous) recording too.
+    func testLatchedMaxDurationForceStops() {
+        var c = HoldToTalkClassifier()
+        _ = c.handle(.keyDown); _ = c.handle(.keyUp)   // tap 1
+        _ = c.handle(.keyDown); _ = c.handle(.keyUp)   // tap 2 → latched
+        XCTAssertEqual(c.handle(.maxDurationFired), [.requestStop])
+        XCTAssertFalse(c.isEngaged)
     }
 
     // MARK: - Decoder

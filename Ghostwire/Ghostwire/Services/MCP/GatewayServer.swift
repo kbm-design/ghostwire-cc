@@ -31,7 +31,9 @@ enum GatewayServer {
         )
 
         await server.withMethodHandler(ListTools.self) { _ in
-            let exposure = await core.buildExposure()
+            // GW-184: advertise the bounded working set + search_tools/call_tool,
+            // not the full downstream catalog. Recomputed per ListTools.
+            let exposure = await core.publicExposure()
             return ListTools.Result(tools: exposure.tools)
         }
 

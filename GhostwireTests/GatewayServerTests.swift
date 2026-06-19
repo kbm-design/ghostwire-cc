@@ -48,8 +48,10 @@ final class GatewayServerTests: XCTestCase {
         let client = Client(name: "gw-server-test", version: "0")
         _ = try await client.connect(transport: clientTransport)
 
+        // GW-184: the advertised surface is the working set (here just the one
+        // cold-start tool) plus the search_tools/call_tool fallback.
         let tools = try await client.listTools(cursor: nil)
-        XCTAssertEqual(tools.tools.map(\.name), ["linear_create_issue"])
+        XCTAssertEqual(tools.tools.map(\.name), ["linear_create_issue", "search_tools", "call_tool"])
 
         let context: RequestContext<CallTool.Result> = try await client.callTool(
             name: "linear_create_issue", arguments: ["title": .string("Bug")])

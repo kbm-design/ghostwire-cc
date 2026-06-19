@@ -1508,7 +1508,7 @@ struct Shortcuts: View {
                 Text("Capture")
             } footer: {
                 Text(
-                    "Voice Capture is a toggle (press to start, press again to stop). Hold to Talk records only while the key is held, then routes on release. Right Control is recommended — Right Command / Right Option briefly arm on every shortcut you press with them. Fn suppresses macOS's globe-key behavior while held and isn't on most external keyboards."
+                    "Voice Capture is a toggle (press to start, press again to stop). Hold to Talk records only while the key is held, then routes on release. Right Option (the default) works well — a bare hold does nothing; it only arms briefly when you use ⌥ in a shortcut. Right Command arms on every ⌘ shortcut. Fn suppresses macOS's globe-key behavior while held and isn't on most external keyboards."
                 )
                 .foregroundStyle(.secondary)
                 .font(.caption)

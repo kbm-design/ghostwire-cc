@@ -289,8 +289,10 @@ extension Defaults.Keys {
 
     // MARK: Voice capture (GW-229)
     // Master switch for the voice hotkey (record → clipboard + Shelf, paste into
-    // a focused field). On by default; when off the ⌃⇧Space handler no-ops.
-    static let voiceCaptureEnabled = Key<Bool>("voiceCaptureEnabled", default: true)
+    // a focused field) and the GW-270 hold-to-talk tap. OFF by default (GW-270):
+    // onboarding's voice step turns it on (and downloads/warms the model then), so
+    // the ~600MB model pull happens on explicit intent, not for users who skip it.
+    static let voiceCaptureEnabled = Key<Bool>("voiceCaptureEnabled", default: false)
     // When on, a finished transcript pastes into the focused editable field (if
     // any); otherwise it always goes to the clipboard + Shelf. On by default.
     static let voicePasteIntoFocusedField = Key<Bool>("voicePasteIntoFocusedField", default: true)

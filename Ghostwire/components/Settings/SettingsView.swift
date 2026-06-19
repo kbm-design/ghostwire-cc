@@ -366,9 +366,17 @@ struct GeneralSettings: View {
                 Defaults.Toggle(key: .voiceCaptureEnabled) {
                     Text("Voice capture")
                 }
-                // GW-270: the master switch also gates the hold-to-talk event tap.
-                .onChange(of: voiceCaptureEnabled) { _, _ in
+                // GW-270: the master switch gates the hold-to-talk event tap, and
+                // turning voice ON warms the selected model so the first capture
+                // isn't a cold load. prepare() downloads only if needed — toggling
+                // voice on is explicit intent, like the Download button.
+                .onChange(of: voiceCaptureEnabled) { _, isOn in
                     HoldToTalkMonitor.shared.reconfigure()
+                    if isOn,
+                       voiceModel != DefaultTranscriberFactory.appleEngineKey,
+                       let model = VoiceModel(rawValue: voiceModel) {
+                        FluidAudioTranscriber.prepare(model)
+                    }
                 }
                 Defaults.Toggle(key: .voicePasteIntoFocusedField) {
                     Text("Paste into the focused text field when possible")

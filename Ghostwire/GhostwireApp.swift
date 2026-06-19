@@ -560,14 +560,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         HoldToTalkMonitor.shared.reconfigure()
 
-        // GW-229/GW-270: the on-device speech model is NOT downloaded OR warmed at
-        // launch. Warming has to go through prepare()/ensureLoaded(), which downloads
-        // when the local cache is missing — so a stale "downloaded" flag (cache wiped
-        // but Defaults preserved) could turn launch into a surprise ~600MB pull. The
-        // model is only prepared on explicit intent: onboarding's voice step, the
-        // Settings enable toggle, the model picker, or the first recording (which
-        // shows a "Preparing model…" state via VoiceCaptureViewModel).
-
         // GW-270: normalize a stale/unknown voiceModel rawValue (e.g. a renamed
         // engine from an older build) back to the default — otherwise the Settings
         // engine picker renders blank and the stored value is invalid (recording
@@ -576,6 +568,22 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if storedVoiceModel != DefaultTranscriberFactory.appleEngineKey,
            VoiceModel(rawValue: storedVoiceModel) == nil {
             Defaults[.voiceModel] = VoiceModel.nemotronEN.rawValue
+        }
+
+        // GW-270: voice is OPT-IN (off by default), so if it's ON the user explicitly
+        // asked for it — make sure the model is present + warm every launch so the
+        // first gesture is never a cold "Preparing…" / empty miss (which a user might
+        // read as "it didn't work", and that may be the only time they try it).
+        // prepare() → ensureLoaded() downloads ONLY when the on-disk cache is actually
+        // missing (fresh enable, disk wipe), then loads; it no-ops once loaded. Users
+        // who never turned voice on pay nothing. (This is intended for opt-in voice —
+        // not the GW-229 "never pull at launch" world where voice was on by default.)
+        if Defaults[.voiceCaptureEnabled] {
+            let selected = Defaults[.voiceModel]
+            if selected != DefaultTranscriberFactory.appleEngineKey,
+               let model = VoiceModel(rawValue: selected) {
+                FluidAudioTranscriber.prepare(model)
+            }
         }
 
         if !Defaults[.showOnAllDisplays] {

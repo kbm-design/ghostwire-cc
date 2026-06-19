@@ -69,6 +69,22 @@ struct GhostwireApp: App {
 
 final class FirstMouseHostingView<Content: View>: NSHostingView<Content> {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    /// GW-265/GW-264: a real click into the notch is the ONLY thing that grants
+    /// the panel key focus (so a passive reveal can never steal it) and marks the
+    /// reveal as user-engaged (so the dwell timer stops trying to auto-collapse
+    /// it). We grant key here and make the panel key explicitly — AppKit decides
+    /// key-ness around the click, so flipping the gate inside mouseDown wouldn't
+    /// take effect until the next click. Always forward to super so SwiftUI keeps
+    /// its hit-testing / gestures.
+    override func mouseDown(with event: NSEvent) {
+        GhostwireSkyLightWindow.allowsKeyFocus = true
+        if let panel = window, panel.canBecomeKey, !panel.isKeyWindow {
+            panel.makeKey()
+        }
+        NotchRevealController.shared.engaged()
+        super.mouseDown(with: event)
+    }
 }
 
 class AppDelegate: NSObject, NSApplicationDelegate {
@@ -498,6 +514,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 NotchTab.setHidden(.shelf, false)
                 self.coordinator.currentView = .shelf
                 NotchTab.ensureCurrentViewVisible()
+                // GW-224: opening clipboard history is a user-driven surface use,
+                // so it becomes the "reopen here" memory for the next no-alert open.
+                self.coordinator.lastSelectedTab = .shelf
                 self.coordinator.requestClipboardHistory = true
             }
         }
@@ -532,11 +551,24 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 let voice = VoiceCaptureViewModel.shared
                 voice.onRevealShelf = { [weak viewModel] in
                     guard let viewModel else { return }
+                    // GW-264: only the case where this reveal actually auto-opens a
+                    // CLOSED notch should arm the dwell timer — otherwise we'd
+                    // auto-close a notch the user already had open manually.
+                    let wasClosed = viewModel.notchState == .closed
                     viewModel.open()
                     NotchTab.setHidden(.shelf, false)
                     GhostwireViewCoordinator.shared.currentView = .shelf
                     NotchTab.ensureCurrentViewVisible()
                     GhostwireViewCoordinator.shared.pendingShelfReveal = true
+                    // GW-224: a finished voice capture landing in the Shelf is a
+                    // user-driven surface use — record it so the next no-alert
+                    // open returns to the Shelf, not Agents.
+                    GhostwireViewCoordinator.shared.lastSelectedTab = .shelf
+                    // GW-264: this is an INFORMATIONAL reveal — auto-collapse after
+                    // the info dwell unless the user engages it.
+                    if wasClosed {
+                        NotchRevealController.shared.reveal(.informational, target: viewModel)
+                    }
                 }
                 voice.onRequestOpen = { [weak viewModel] in viewModel?.open() }
                 voice.onRequestClose = { [weak viewModel] in viewModel?.close() }

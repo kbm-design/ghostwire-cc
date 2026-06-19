@@ -21,6 +21,12 @@ final class GhostwireSessionBridge: ObservableObject {
     /// edge-glow color so it reflects WHICH agent needs you (GW-138).
     @Published var passiveAlertTint: Color = AgentIdentity.claude
 
+    /// GW-138/GW-264: true while at least one approval is still pending and unacted.
+    /// Drives the PERSISTENT passive glow that an actionable reveal recedes to when
+    /// its dwell expires — the cue stays up (and the row stays in the Agents tab)
+    /// until the user acts, so collapsing the panel never hides a blocked agent.
+    @Published var hasUnactedPendingApproval: Bool = false
+
     private var cancellables = Set<AnyCancellable>()
     private var knownWaitingForInputSessionIDs = Set<String>()
     private var hasSeededWaitingForInputSessions = false
@@ -60,6 +66,14 @@ final class GhostwireSessionBridge: ObservableObject {
                 self?.handlePendingPermissionSessions(pendingInstances)
             }
             .store(in: &cancellables)
+
+        // GW-138/GW-264: keep the persistent-glow flag in lockstep with live
+        // pending state — set when an approval is waiting, cleared the moment the
+        // last one is acted on (so the glow recedes exactly when the work is done).
+        sessionMonitor.$pendingInstances
+            .map { !$0.isEmpty }
+            .removeDuplicates()
+            .assign(to: &$hasUnactedPendingApproval)
 
         sessionMonitor.$instances
             .map { instances in
@@ -239,11 +253,19 @@ final class GhostwireSessionBridge: ObservableObject {
             // (The ambient live-activity pill subscriber is separate,
             // pre-existing behavior and intentionally not gated by this rule.)
             //
-            // GW-226: re-run the default-view policy right before opening so this
-            // event-driven open lands on Agents (hasPendingApproval is true now),
-            // overriding the passive last-tab / shelf-reveal rules.
-            GhostwireViewCoordinator.shared.applyDefaultViewOnOpen()
+            // GW-224: route THIS auto-reveal to Agents (where Allow/Deny lives) —
+            // but only here, at the moment the alert arrives. Manual reopens go
+            // through defaultViewOnOpen and respect your last-used tab, so an
+            // approval you're deliberately leaving unanswered never keeps
+            // re-hijacking the notch onto Agents.
+            GhostwireViewCoordinator.shared.showAgentsForApproval()
             ghostwireViewModel?.open()
+            // GW-264: an approval is an ACTIONABLE reveal — auto-collapse after the
+            // actionable dwell unless the user engages. On expiry the panel closes
+            // but the request is NOT dropped: it recedes to the persistent passive
+            // glow and stays in the Agents tab until acted on. (decision.open is
+            // only true when the notch was closed, so this always auto-opened.)
+            NotchRevealController.shared.reveal(.actionable, target: ghostwireViewModel)
         }
     }
 

@@ -297,8 +297,10 @@ extension Defaults.Keys {
 
     // MARK: Voice capture (GW-229)
     // Master switch for the voice hotkey (record → clipboard + Shelf, paste into
-    // a focused field). On by default; when off the ⌃⇧Space handler no-ops.
-    static let voiceCaptureEnabled = Key<Bool>("voiceCaptureEnabled", default: true)
+    // a focused field) and the GW-270 hold-to-talk tap. OFF by default (GW-270):
+    // onboarding's voice step turns it on (and downloads/warms the model then), so
+    // the ~600MB model pull happens on explicit intent, not for users who skip it.
+    static let voiceCaptureEnabled = Key<Bool>("voiceCaptureEnabled", default: false)
     // When on, a finished transcript pastes into the focused editable field (if
     // any); otherwise it always goes to the clipboard + Shelf. On by default.
     static let voicePasteIntoFocusedField = Key<Bool>("voicePasteIntoFocusedField", default: true)
@@ -308,6 +310,12 @@ extension Defaults.Keys {
     // VoiceModel rawValues whose on-device model has been downloaded (so the
     // Settings UI can show "Downloaded ✓" across launches without re-checking).
     static let voiceDownloadedModels = Key<[String]>("voiceDownloadedModels", default: [])
+    // GW-270: push-to-talk (hold-to-talk) modifier key, a HoldToTalkKey rawValue.
+    // Default Right Option — it exists on every Apple keyboard (unlike Right Control,
+    // which Apple omits), a bare hold triggers no macOS behavior, and it needs no
+    // event suppression. "off" disables the hold gesture; the ⌃⇧Space toggle is
+    // independent and always available.
+    static let voiceHoldToTalkKey = Key<String>("voiceHoldToTalkKey", default: HoldToTalkKey.rightOption.rawValue)
     // GW-218: what a double-click on a unified card does. Default: copy.
     static let cardDoubleClickAction = Key<CardDoubleClickAction>("cardDoubleClickAction", default: .copy)
 

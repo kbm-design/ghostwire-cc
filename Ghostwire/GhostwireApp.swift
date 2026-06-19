@@ -353,6 +353,53 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
 
 
+    /// Wire the voice-capture reveal/open/close callbacks to the notch under the
+    /// mouse, mirroring the per-display resolution the ⌃⇧Space toggle uses. Both the
+    /// toggle handler and the hold-to-talk monitor call this at gesture start, so the
+    /// hold path routes onto the right notch instead of dead `{}` closures (GW-270).
+    @MainActor
+    func wireVoiceCallbacks(forScreenUnder mouseLocation: NSPoint) {
+        var viewModel = self.vm
+        if Defaults[.showOnAllDisplays] {
+            for screen in NSScreen.screens where screen.frame.contains(mouseLocation) {
+                if let uuid = screen.displayUUID, let screenViewModel = self.viewModels[uuid] {
+                    viewModel = screenViewModel
+                    break
+                }
+            }
+        }
+
+        self.closeNotchTask?.cancel()
+        self.closeNotchTask = nil
+
+        // Recording shows an ambient indicator in the CLOSED notch. A finished
+        // transcript either pastes into the focused field (notch stays closed) or
+        // pops the Shelf open on the right per-display notch. onRequestOpen/Close are
+        // only for errors.
+        let voice = VoiceCaptureViewModel.shared
+        voice.onRevealShelf = { [weak viewModel] in
+            guard let viewModel else { return }
+            // GW-264: only arm the dwell timer when this reveal actually auto-opens a
+            // CLOSED notch — otherwise we'd auto-close one the user opened manually.
+            let wasClosed = viewModel.notchState == .closed
+            viewModel.open()
+            NotchTab.setHidden(.shelf, false)
+            GhostwireViewCoordinator.shared.currentView = .shelf
+            NotchTab.ensureCurrentViewVisible()
+            GhostwireViewCoordinator.shared.pendingShelfReveal = true
+            // GW-224: a finished voice capture landing in the Shelf is a user-driven
+            // surface use — record it so the next no-alert open returns to the Shelf.
+            GhostwireViewCoordinator.shared.lastSelectedTab = .shelf
+            // GW-264: INFORMATIONAL reveal — auto-collapse after the info dwell unless
+            // the user engages it.
+            if wasClosed {
+                NotchRevealController.shared.reveal(.informational, target: viewModel)
+            }
+        }
+        voice.onRequestOpen = { [weak viewModel] in viewModel?.open() }
+        voice.onRequestClose = { [weak viewModel] in viewModel?.close() }
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
 
         NotificationCenter.default.addObserver(
@@ -529,58 +576,45 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             Task { @MainActor [weak self] in
                 guard let self = self else { return }
                 guard Defaults[.voiceCaptureEnabled] else { return }
-
-                let mouseLocation = NSEvent.mouseLocation
-                var viewModel = self.vm
-                if Defaults[.showOnAllDisplays] {
-                    for screen in NSScreen.screens where screen.frame.contains(mouseLocation) {
-                        if let uuid = screen.displayUUID, let screenViewModel = self.viewModels[uuid] {
-                            viewModel = screenViewModel
-                            break
-                        }
-                    }
-                }
-
-                self.closeNotchTask?.cancel()
-                self.closeNotchTask = nil
-
-                // Recording shows an ambient indicator in the CLOSED notch. A
-                // finished transcript either pastes into the focused field
-                // (notch stays closed) or pops the Shelf open on the right
-                // per-display notch. onRequestOpen/Close are only for errors.
-                let voice = VoiceCaptureViewModel.shared
-                voice.onRevealShelf = { [weak viewModel] in
-                    guard let viewModel else { return }
-                    // GW-264: only the case where this reveal actually auto-opens a
-                    // CLOSED notch should arm the dwell timer — otherwise we'd
-                    // auto-close a notch the user already had open manually.
-                    let wasClosed = viewModel.notchState == .closed
-                    viewModel.open()
-                    NotchTab.setHidden(.shelf, false)
-                    GhostwireViewCoordinator.shared.currentView = .shelf
-                    NotchTab.ensureCurrentViewVisible()
-                    GhostwireViewCoordinator.shared.pendingShelfReveal = true
-                    // GW-224: a finished voice capture landing in the Shelf is a
-                    // user-driven surface use — record it so the next no-alert
-                    // open returns to the Shelf, not Agents.
-                    GhostwireViewCoordinator.shared.lastSelectedTab = .shelf
-                    // GW-264: this is an INFORMATIONAL reveal — auto-collapse after
-                    // the info dwell unless the user engages it.
-                    if wasClosed {
-                        NotchRevealController.shared.reveal(.informational, target: viewModel)
-                    }
-                }
-                voice.onRequestOpen = { [weak viewModel] in viewModel?.open() }
-                voice.onRequestClose = { [weak viewModel] in viewModel?.close() }
-                await voice.toggle()
+                self.wireVoiceCallbacks(forScreenUnder: NSEvent.mouseLocation)
+                await VoiceCaptureViewModel.shared.toggle()
             }
         }
 
-        // GW-229: NB the on-device speech model is NOT prefetched at launch —
-        // that would pull ~600MB on a fresh install even if voice is never used.
-        // It downloads on explicit intent: the Settings "Download" button, a
-        // model-picker change, or the first recording (which shows a
-        // "Preparing model…" state via VoiceCaptureViewModel).
+        // GW-270: hold-to-talk (push-to-talk). The monitor owns the CGEventTap for
+        // the held modifier; at gesture start it wires the same per-display callbacks
+        // as the toggle so begin()/release route onto the notch under the mouse. It
+        // self-gates on Defaults (voice off or key == .off ⇒ tap not running).
+        HoldToTalkMonitor.shared.prepareForGesture = { [weak self] in
+            self?.wireVoiceCallbacks(forScreenUnder: NSEvent.mouseLocation)
+        }
+        HoldToTalkMonitor.shared.reconfigure()
+
+        // GW-270: normalize a stale/unknown voiceModel rawValue (e.g. a renamed
+        // engine from an older build) back to the default — otherwise the Settings
+        // engine picker renders blank and the stored value is invalid (recording
+        // still falls back to Nemotron, but the UI looks broken).
+        let storedVoiceModel = Defaults[.voiceModel]
+        if storedVoiceModel != DefaultTranscriberFactory.appleEngineKey,
+           VoiceModel(rawValue: storedVoiceModel) == nil {
+            Defaults[.voiceModel] = VoiceModel.nemotronEN.rawValue
+        }
+
+        // GW-270: voice is OPT-IN (off by default), so if it's ON the user explicitly
+        // asked for it — make sure the model is present + warm every launch so the
+        // first gesture is never a cold "Preparing…" / empty miss (which a user might
+        // read as "it didn't work", and that may be the only time they try it).
+        // prepare() → ensureLoaded() downloads ONLY when the on-disk cache is actually
+        // missing (fresh enable, disk wipe), then loads; it no-ops once loaded. Users
+        // who never turned voice on pay nothing. (This is intended for opt-in voice —
+        // not the GW-229 "never pull at launch" world where voice was on by default.)
+        if Defaults[.voiceCaptureEnabled] {
+            let selected = Defaults[.voiceModel]
+            if selected != DefaultTranscriberFactory.appleEngineKey,
+               let model = VoiceModel(rawValue: selected) {
+                FluidAudioTranscriber.prepare(model)
+            }
+        }
 
         if !Defaults[.showOnAllDisplays] {
             let viewModel = self.vm

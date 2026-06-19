@@ -16,6 +16,7 @@ enum OnboardingStep {
     case remindersPermission
     case accessibilityPermission
     case musicPermission
+    case voiceCapture
     case finished
 }
 
@@ -138,6 +139,34 @@ struct OnboardingView: View {
                     onContinue: {
                         withAnimation(.easeInOut(duration: 0.6)) {
                             GhostwireViewCoordinator.shared.firstLaunch = false
+                            step = .voiceCapture
+                        }
+                    }
+                )
+                .transition(.opacity)
+
+            case .voiceCapture:
+                PermissionRequestView(
+                    icon: Image(systemName: "mic.fill"),
+                    title: "Turn On Voice Capture",
+                    description: "Dictate a thought and Ghostwire drops it into whatever field you're in — or saves it to the Shelf. Hold a key to talk (push-to-talk), or press ⌃⇧Space to toggle. You can change the keys anytime in Settings ▸ Shortcuts.",
+                    privacyNote: "Speech is transcribed entirely on-device — audio never leaves your Mac. Turning this on downloads a one-time speech model (~600 MB) so the first capture is ready to go.",
+                    onAllow: {
+                        Defaults[.voiceCaptureEnabled] = true
+                        HoldToTalkMonitor.shared.reconfigure()
+                        // Warm the model now (explicit intent) so the first capture
+                        // isn't a cold load.
+                        let selected = Defaults[.voiceModel]
+                        if selected != DefaultTranscriberFactory.appleEngineKey,
+                           let model = VoiceModel(rawValue: selected) {
+                            FluidAudioTranscriber.prepare(model)
+                        }
+                        withAnimation(.easeInOut(duration: 0.6)) {
+                            step = .finished
+                        }
+                    },
+                    onSkip: {
+                        withAnimation(.easeInOut(duration: 0.6)) {
                             step = .finished
                         }
                     }

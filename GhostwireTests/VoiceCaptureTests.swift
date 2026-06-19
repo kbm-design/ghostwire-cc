@@ -35,9 +35,15 @@ final class VoiceCaptureTests: XCTestCase {
         var manualFinish = false
         private var finishCont: CheckedContinuation<String, Never>?
 
+        /// GW-270: gate start() so begin() can be suspended mid-prepare and a
+        /// release/cancel injected during the await (the release-during-prepare race).
+        var manualStart = false
+        private var startCont: CheckedContinuation<Void, Error>?
+
         func start(onResult: @escaping @MainActor (TranscriptionResult) -> Void) async throws {
             if let startError { throw startError }
             self.onResult = onResult
+            if manualStart { try await withCheckedThrowingContinuation { startCont = $0 } }
             started = true
         }
         func append(_ buffer: AVAudioPCMBuffer) { appended += 1 }
@@ -53,6 +59,10 @@ final class VoiceCaptureTests: XCTestCase {
         @MainActor func completeFinish(_ text: String) {
             finishCont?.resume(returning: text); finishCont = nil
         }
+        @MainActor func completeStart() { startCont?.resume(); startCont = nil }
+        @MainActor func failStart(_ error: TranscriberError) {
+            startCont?.resume(throwing: error); startCont = nil
+        }
     }
 
     private final class MockAudio: AudioCapturing, @unchecked Sendable {
@@ -62,6 +72,7 @@ final class VoiceCaptureTests: XCTestCase {
         func start(onBuffer: @escaping (AVAudioPCMBuffer) -> Void) throws {
             if let startError { throw startError }
             started = true
+            stopped = false // a fresh session is live; detect a later stray stop()
         }
         func stop() { stopped = true }
     }
@@ -84,7 +95,8 @@ final class VoiceCaptureTests: XCTestCase {
         sink: Sink,
         fieldFocused: Bool,
         pasteEnabled: Bool = true,
-        pasteSucceeds: Bool = true
+        pasteSucceeds: Bool = true,
+        engineWarm: Bool = true
     ) -> VoiceCaptureViewModel {
         let vm = VoiceCaptureViewModel(
             makeTranscriber: { transcriber },
@@ -93,7 +105,8 @@ final class VoiceCaptureTests: XCTestCase {
             copyToClipboard: { sink.clipboard.append($0) },
             isFieldFocused: { fieldFocused },
             pasteIntoField: { sink.pasteCalls += 1; return pasteSucceeds },
-            pasteEnabled: { pasteEnabled }
+            pasteEnabled: { pasteEnabled },
+            isEngineWarm: { engineWarm }
         )
         vm.onRevealShelf = { sink.revealed += 1 }
         vm.onRequestOpen = { sink.opened += 1 }
@@ -257,7 +270,10 @@ final class VoiceCaptureTests: XCTestCase {
             copyToClipboard: { sink.clipboard.append($0) },
             isFieldFocused: { false },
             pasteIntoField: { sink.pasteCalls += 1; return true },
-            pasteEnabled: { true }
+            pasteEnabled: { true },
+            // Deterministic warm engine: otherwise this reads real Defaults +
+            // FluidAudio load state and the open/close counts go cold-path flaky.
+            isEngineWarm: { true }
         )
         vm.onRevealShelf = { sink.revealed += 1 }
         vm.onRequestOpen = { sink.opened += 1 }
@@ -273,5 +289,181 @@ final class VoiceCaptureTests: XCTestCase {
         XCTAssertEqual(sink.closed, 1) // collapsed the error notch before recording
 
         vm.cancel()
+    }
+
+    // MARK: - GW-270 push-to-talk: requestStop() + release-during-prepare race
+
+    /// A release that lands while begin() is still preparing defers the stop, and
+    /// begin()'s tail routes the moment recording is live.
+    func testRequestStopWhilePreparingRoutesWhenReady() async {
+        let t = MockTranscriber()
+        t.manualStart = true
+        let sink = Sink()
+        let vm = makeVM(transcriber: t, sink: sink, fieldFocused: false, engineWarm: false)
+
+        let beginTask = Task { await vm.begin() }
+        try? await Task.sleep(for: .milliseconds(20))
+        XCTAssertTrue(vm.preparing)            // cold engine → preparing surface
+        XCTAssertEqual(vm.stage, .idle)
+
+        await vm.requestStop()                 // release during prepare → deferred
+        t.finishText = "deferred capture"
+        t.completeStart()                      // start resolves; recording goes live
+        await beginTask.value
+
+        XCTAssertEqual(vm.stage, .idle)        // routed + reset
+        XCTAssertEqual(sink.shelf, ["deferred capture"])
+        XCTAssertEqual(sink.clipboard, ["deferred capture"])
+        XCTAssertEqual(sink.revealed, 1)
+    }
+
+    /// The bug this hardening fixes: a cancel() during the cold-model await must not
+    /// be clobbered into a stuck `.recording`, and the VM must be usable afterward.
+    func testCancelDuringPrepareDoesNotStrandRecording() async {
+        let t = MockTranscriber()
+        t.manualStart = true
+        let sink = Sink()
+        let vm = makeVM(transcriber: t, sink: sink, fieldFocused: false, engineWarm: false)
+
+        let beginTask = Task { await vm.begin() }
+        try? await Task.sleep(for: .milliseconds(20))
+        vm.cancel()                            // lands mid-prepare
+        t.completeStart()                      // start resolves AFTER the cancel
+        await beginTask.value
+
+        XCTAssertEqual(vm.stage, .idle)        // NOT stuck in .recording
+        XCTAssertTrue(t.cancelled)
+        XCTAssertTrue(sink.shelf.isEmpty)
+        XCTAssertEqual(sink.revealed, 0)
+
+        // Proves isBusy/preparing/stopWhenReady were all cleared: a fresh begin works.
+        t.manualStart = false
+        await vm.begin()
+        XCTAssertEqual(vm.stage, .recording)
+        vm.cancel()
+    }
+
+    /// P1: if start() throws after a release was deferred, the stale stopWhenReady
+    /// must be cleared so the NEXT recording isn't phantom-stopped.
+    func testStartErrorClearsDeferredStop() async {
+        let t = MockTranscriber()
+        t.manualStart = true
+        let sink = Sink()
+        let vm = makeVM(transcriber: t, sink: sink, fieldFocused: false, engineWarm: false)
+
+        let beginTask = Task { await vm.begin() }
+        try? await Task.sleep(for: .milliseconds(20))
+        await vm.requestStop()                 // deferred
+        t.failStart(.engineFailure("boom"))    // start throws
+        await beginTask.value
+
+        XCTAssertEqual(vm.stage, .idle)
+        XCTAssertNotNil(vm.errorMessage)
+
+        // A fresh, warm recording must NOT auto-stop from the stale deferred flag.
+        t.manualStart = false
+        t.startError = nil
+        await vm.begin()
+        XCTAssertEqual(vm.stage, .recording)
+        t.finishText = "fresh"
+        await vm.stopRecording()
+        XCTAssertEqual(sink.shelf, ["fresh"])
+    }
+
+    /// A stale cold-start that resumes AFTER a cancel + a newer begin must tear down
+    /// only its own engine — never the shared audio/busy state of the newer session.
+    func testStaleBeginDoesNotStopNewerRecording() async {
+        let engineA = MockTranscriber(); engineA.manualStart = true
+        let engineB = MockTranscriber()
+        var calls = 0
+        let audio = MockAudio()
+        let sink = Sink()
+        let vm = VoiceCaptureViewModel(
+            makeTranscriber: { calls += 1; return calls == 1 ? engineA : engineB },
+            audio: audio,
+            saveToShelf: { sink.shelf.append($0) },
+            copyToClipboard: { sink.clipboard.append($0) },
+            isFieldFocused: { false },
+            pasteIntoField: { sink.pasteCalls += 1; return true },
+            pasteEnabled: { true },
+            isEngineWarm: { false }
+        )
+        vm.onRevealShelf = { sink.revealed += 1 }
+        vm.onRequestOpen = { sink.opened += 1 }
+        vm.onRequestClose = { sink.closed += 1 }
+
+        let beginA = Task { await vm.begin() }     // suspends in engineA.start
+        try? await Task.sleep(for: .milliseconds(20))
+        vm.cancel()                                 // A is now stale
+        await vm.begin()                            // begin B starts fresh + records
+        XCTAssertEqual(vm.stage, .recording)
+        XCTAssertTrue(audio.started)
+
+        engineA.completeStart()                     // A resumes stale
+        await beginA.value
+
+        XCTAssertEqual(vm.stage, .recording)        // B still live
+        XCTAssertFalse(audio.stopped)               // A did NOT stop B's capture
+        XCTAssertTrue(engineA.cancelled)            // A tore down its own engine
+        XCTAssertFalse(engineB.cancelled)           // B untouched
+
+        engineB.finishText = "the real one"
+        await vm.stopRecording()
+        XCTAssertEqual(sink.shelf, ["the real one"])
+    }
+
+    /// requestStop() with no live or pending session is a strict no-op (a stray
+    /// up-event can't strand a deferred stop).
+    func testRequestStopWhenIdleIsNoOp() async {
+        let t = MockTranscriber()
+        let sink = Sink()
+        let vm = makeVM(transcriber: t, sink: sink, fieldFocused: false)
+
+        await vm.requestStop()
+        XCTAssertEqual(vm.stage, .idle)
+        XCTAssertTrue(sink.shelf.isEmpty)
+
+        // No lingering stopWhenReady: a normal record/stop still works.
+        await vm.begin()
+        XCTAssertEqual(vm.stage, .recording)
+        t.finishText = "after no-op"
+        await vm.stopRecording()
+        XCTAssertEqual(sink.shelf, ["after no-op"])
+    }
+
+    /// Warm path: release while recording stops + routes exactly once.
+    func testRequestStopWhileRecordingRoutesOnce() async {
+        let t = MockTranscriber()
+        let sink = Sink()
+        let vm = makeVM(transcriber: t, sink: sink, fieldFocused: false)
+
+        await vm.begin()
+        XCTAssertEqual(vm.stage, .recording)
+        t.finishText = "held and released"
+        await vm.requestStop()
+
+        XCTAssertEqual(vm.stage, .idle)
+        XCTAssertEqual(sink.shelf, ["held and released"])
+        XCTAssertEqual(sink.clipboard, ["held and released"])
+    }
+
+    /// A second stop arriving while the first is finalizing must not double-route
+    /// (e.g. a duplicated up-event or the recovery path firing).
+    func testSecondStopWhileFinalizingRoutesOnce() async {
+        let t = MockTranscriber()
+        t.manualFinish = true
+        let sink = Sink()
+        let vm = makeVM(transcriber: t, sink: sink, fieldFocused: false)
+
+        await vm.begin()
+        let stopTask = Task { await vm.stopRecording() }
+        try? await Task.sleep(for: .milliseconds(20))
+        await vm.requestStop()                 // arrives mid-finalize → harmless
+        t.completeFinish("only once")
+        await stopTask.value
+
+        XCTAssertEqual(sink.shelf, ["only once"])
+        XCTAssertEqual(sink.clipboard, ["only once"])
+        XCTAssertEqual(vm.stage, .idle)
     }
 }

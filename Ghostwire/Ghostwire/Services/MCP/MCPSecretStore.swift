@@ -14,6 +14,10 @@ import Security
 enum MCPSecretAccount {
     static func env(serverID: UUID, key: String) -> String { "env.\(serverID.uuidString).\(key)" }
     static func oauthToken(serverID: UUID) -> String { "oauth.\(serverID.uuidString)" }
+    /// GW-292: static API-key / bearer token for an `.http` server.
+    static func httpAuthToken(serverID: UUID) -> String { "http.token.\(serverID.uuidString)" }
+    /// GW-291: pre-registered OAuth `client_secret` (confidential clients).
+    static func oauthClientSecret(serverID: UUID) -> String { "oauth.clientSecret.\(serverID.uuidString)" }
     /// GW-253: the gateway's HTTP bearer token — one stable value across
     /// launches so a registered agent keeps working.
     static let gatewayToken = "gateway.token"
@@ -34,6 +38,8 @@ extension MCPSecretStore {
             delete(account: MCPSecretAccount.env(serverID: serverID, key: key))
         }
         delete(account: MCPSecretAccount.oauthToken(serverID: serverID))
+        delete(account: MCPSecretAccount.httpAuthToken(serverID: serverID))
+        delete(account: MCPSecretAccount.oauthClientSecret(serverID: serverID))
     }
 }
 

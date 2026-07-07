@@ -1495,6 +1495,38 @@ struct Shortcuts: View {
                 Text("Notch")
             }
             Section {
+                // GW-286: open the notch directly on a tab. All unbound by
+                // default — the user assigns whichever they want.
+                KeyboardShortcuts.Recorder("Open on Agents:", name: .openNotchAgents)
+                KeyboardShortcuts.Recorder("Open on Shelf:", name: .openNotchShelf)
+                KeyboardShortcuts.Recorder("Open on Dashboard:", name: .openNotchDashboard)
+            } header: {
+                Text("Open Notch")
+            } footer: {
+                Text("Each opens the notch straight to that tab, unhiding it first if it was hidden.")
+                    .foregroundStyle(.secondary)
+                    .font(.caption)
+                    .leadingFooter()
+            }
+            Section {
+                // GW-286/GW-267: navigation only — cycles every session needing
+                // you (approvals + questions). Never approves or denies.
+                KeyboardShortcuts.Recorder("Jump to Next Pending:", name: .jumpToNextPendingApproval)
+                // GW-267: act on the approval you're looking at, from anywhere.
+                // Approve/Deny only fire when an approval's chat is open in front
+                // of you; otherwise they do nothing.
+                KeyboardShortcuts.Recorder("Approve:", name: .approveFocusedApproval)
+                KeyboardShortcuts.Recorder("Deny:", name: .denyFocusedApproval)
+                KeyboardShortcuts.Recorder("Open Terminal:", name: .openTerminalForFocusedSession)
+            } header: {
+                Text("Approvals")
+            } footer: {
+                Text("Jump cycles every session that needs you — approvals and questions — and drills into its chat. Approve / Deny act on the request whose chat is in front of you; if none is, the first press just reveals the next approval (so press twice from the list: once to open it, again to confirm). They never act on something you can't see, so a stray press is safe. Open Terminal focuses the focused session's terminal. None auto-answer on your behalf.")
+                    .foregroundStyle(.secondary)
+                    .font(.caption)
+                    .leadingFooter()
+            }
+            Section {
                 // GW-210: unbound by default — opens the notch on the Shelf tab
                 // and lands on clipboard history.
                 KeyboardShortcuts.Recorder("Open Clipboard History:", name: .openClipboardHistory)

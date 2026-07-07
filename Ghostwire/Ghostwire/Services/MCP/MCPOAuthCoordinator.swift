@@ -85,10 +85,22 @@ final class MCPOAuthCoordinator: NSObject, @unchecked Sendable {
     static func redirectURI(for config: MCPServerConfig) -> URL {
         if case .oauthClient(_, let port, let path) = config.httpAuth {
             let resolvedPort = port ?? loopbackPort(for: config.id)
-            let resolvedPath = path ?? "/callback"
-            return URL(string: "http://127.0.0.1:\(resolvedPort)\(resolvedPath)")!
+            let resolvedPath = normalizedLoopbackPath(path)
+            // Normalized path is always well-formed, but never force-unwrap a
+            // parsed URL — fall back to the hash default if it somehow fails.
+            return URL(string: "http://127.0.0.1:\(resolvedPort)\(resolvedPath)")
+                ?? redirectURI(for: config.id)
         }
         return redirectURI(for: config.id)
+    }
+
+    /// Normalize a user-entered pinned callback path: trim it, default to
+    /// `/callback` when empty, and guarantee a leading slash so the redirect
+    /// URL is always well-formed (a bare `callback` would corrupt the port).
+    static func normalizedLoopbackPath(_ path: String?) -> String {
+        let trimmed = path?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !trimmed.isEmpty else { return "/callback" }
+        return trimmed.hasPrefix("/") ? trimmed : "/" + trimmed
     }
 
     /// GW-291: which token-endpoint auth the SDK should use for this server.

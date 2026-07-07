@@ -232,8 +232,8 @@ struct MCPAddServerSheet: View {
                             .font(.caption.monospaced())
                     }
                     if let port = UInt16(oauthPort.trimmingCharacters(in: .whitespaces)) {
-                        let path = oauthPath.trimmingCharacters(in: .whitespaces)
-                        Text("Register this callback: http://127.0.0.1:\(port)\(path.isEmpty ? "/callback" : path)")
+                        let path = MCPOAuthCoordinator.normalizedLoopbackPath(oauthPath)
+                        Text("Register this callback: http://127.0.0.1:\(port)\(path)")
                             .font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
                     }
                 }

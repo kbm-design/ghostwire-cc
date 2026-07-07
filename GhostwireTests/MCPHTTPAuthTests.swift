@@ -123,6 +123,22 @@ final class MCPHTTPAuthTests: XCTestCase {
         XCTAssertEqual(uri.path, "/callback")
     }
 
+    func testRedirectURINormalizesPathMissingLeadingSlash() {
+        // Codex P2: a pinned path like "callback" (no leading slash) must not
+        // build "…:<port>callback" and force-unwrap-crash.
+        let config = httpConfig(auth: .oauthClient(clientID: "x", loopbackPort: 51777, loopbackPath: "callback"))
+        let uri = MCPOAuthCoordinator.redirectURI(for: config)
+        XCTAssertEqual(uri.absoluteString, "http://127.0.0.1:51777/callback")
+    }
+
+    func testNormalizedLoopbackPathAddsLeadingSlashAndDefaults() {
+        XCTAssertEqual(MCPOAuthCoordinator.normalizedLoopbackPath("callback"), "/callback")
+        XCTAssertEqual(MCPOAuthCoordinator.normalizedLoopbackPath("/callback/"), "/callback/")
+        XCTAssertEqual(MCPOAuthCoordinator.normalizedLoopbackPath(nil), "/callback")
+        XCTAssertEqual(MCPOAuthCoordinator.normalizedLoopbackPath(""), "/callback")
+        XCTAssertEqual(MCPOAuthCoordinator.normalizedLoopbackPath("  "), "/callback")
+    }
+
     func testRedirectURIForDCRConfigUsesHashFallback() {
         let id = UUID(uuidString: "A1B2C3D4-E5F6-7890-ABCD-EF1234567890")!
         let config = httpConfig(id: id, auth: nil)

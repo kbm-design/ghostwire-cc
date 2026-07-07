@@ -116,14 +116,30 @@ struct MCPAddServerSheet: View {
         var value = ""
     }
 
+    /// GW-291/292: how a hosted (.http) server authenticates.
+    private enum HTTPAuthMode: String, CaseIterable, Identifiable {
+        case auto = "Automatic"
+        case apiKey = "API key / token"
+        case oauth = "OAuth app"
+        var id: String { rawValue }
+    }
     @State private var name = ""
     @State private var input = ""  // URL or command line — transport auto-detected
     @State private var envRows: [EnvRow] = []
     @State private var errorMessage: String?
     @State private var isConnecting = false
 
+    // GW-291/292 auth fields (only used for the .http transport).
+    @State private var authMode: HTTPAuthMode = .auto
+    @State private var customHeaderName = ""
+    @State private var apiKeyToken = ""
+    @State private var oauthClientID = ""
+    @State private var oauthClientSecret = ""
+    @State private var oauthPort = ""
+    @State private var oauthPath = ""
+
     private var detectedTransport: String {
-        input.hasPrefix("http://") || input.hasPrefix("https://") ? "http" : "stdio"
+        detectMCPTransportKind(from: input) == .http ? "http" : "stdio"
     }
 
     var body: some View {
@@ -139,6 +155,9 @@ struct MCPAddServerSheet: View {
                     systemImage: "exclamationmark.shield"
                 )
                 .font(.caption).foregroundStyle(.orange)
+            }
+            if detectedTransport == "http" && !input.isEmpty {
+                httpAuthSection
             }
             if let errorMessage {
                 Text(errorMessage).font(.caption).foregroundStyle(.red)
@@ -181,6 +200,48 @@ struct MCPAddServerSheet: View {
         }
     }
 
+    private var httpAuthSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Picker("Authentication", selection: $authMode) {
+                ForEach(HTTPAuthMode.allCases) { Text($0.rawValue).tag($0) }
+            }
+            .pickerStyle(.segmented)
+
+            switch authMode {
+            case .auto:
+                Text("Signs in automatically (dynamic registration). Works for servers that support it.")
+                    .font(.caption).foregroundStyle(.secondary)
+            case .apiKey:
+                SecureField("API key / token (stored in Keychain)", text: $apiKeyToken)
+                    .font(.caption.monospaced())
+                DisclosureGroup("Advanced") {
+                    TextField("Custom header name (default: Authorization: Bearer)",
+                              text: $customHeaderName)
+                        .font(.caption.monospaced())
+                }
+                .font(.caption)
+            case .oauth:
+                TextField("Client ID", text: $oauthClientID).font(.caption.monospaced())
+                SecureField("Client secret — optional (stored in Keychain)", text: $oauthClientSecret)
+                    .font(.caption.monospaced())
+                DisclosureGroup("Advanced — pinned callback") {
+                    HStack {
+                        TextField("Loopback port (optional)", text: $oauthPort)
+                            .font(.caption.monospaced()).frame(width: 160)
+                        TextField("Callback path (default /callback)", text: $oauthPath)
+                            .font(.caption.monospaced())
+                    }
+                    if let port = UInt16(oauthPort.trimmingCharacters(in: .whitespaces)) {
+                        let path = oauthPath.trimmingCharacters(in: .whitespaces)
+                        Text("Register this callback: http://127.0.0.1:\(port)\(path.isEmpty ? "/callback" : path)")
+                            .font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+                    }
+                }
+                .font(.caption)
+            }
+        }
+    }
+
     @MainActor
     private func addAndConnect() async {
         isConnecting = true
@@ -194,8 +255,49 @@ struct MCPAddServerSheet: View {
                 return
             }
             config = MCPServerConfig(id: UUID(), name: name, transport: .http(endpoint: url))
+            switch authMode {
+            case .auto:
+                break  // httpAuth stays nil → dynamic client registration
+            case .apiKey:
+                let token = apiKeyToken.trimmingCharacters(in: .whitespaces)
+                guard !token.isEmpty else {
+                    errorMessage = "Enter the API key / token."
+                    return
+                }
+                // Blank custom header (the default) → Authorization: Bearer.
+                let header = customHeaderName.trimmingCharacters(in: .whitespaces)
+                config.httpAuth = header.isEmpty ? .bearer : .header(name: header)
+                KeychainMCPSecretStore.shared.setString(
+                    token, account: MCPSecretAccount.httpAuthToken(serverID: config.id))
+            case .oauth:
+                let clientID = oauthClientID.trimmingCharacters(in: .whitespaces)
+                guard !clientID.isEmpty else {
+                    errorMessage = "Enter the OAuth client ID."
+                    return
+                }
+                let portText = oauthPort.trimmingCharacters(in: .whitespaces)
+                let port: UInt16?
+                if portText.isEmpty {
+                    port = nil
+                } else if let parsed = UInt16(portText) {
+                    port = parsed
+                } else {
+                    errorMessage = "Loopback port must be a number (1–65535)."
+                    return
+                }
+                let path = oauthPath.trimmingCharacters(in: .whitespaces)
+                config.httpAuth = .oauthClient(
+                    clientID: clientID, loopbackPort: port,
+                    loopbackPath: path.isEmpty ? nil : path)
+                let secret = oauthClientSecret.trimmingCharacters(in: .whitespaces)
+                if !secret.isEmpty {
+                    KeychainMCPSecretStore.shared.setString(
+                        secret, account: MCPSecretAccount.oauthClientSecret(serverID: config.id))
+                }
+            }
         } else {
-            let parts = input.split(separator: " ").map(String.init)
+            let trimmedCommand = input.trimmingCharacters(in: .whitespacesAndNewlines)
+            let parts = trimmedCommand.split(separator: " ").map(String.init)
             guard let command = parts.first else { return }
             let arguments = Array(parts.dropFirst())
             let keys = envRows.map(\.key).filter { !$0.isEmpty }

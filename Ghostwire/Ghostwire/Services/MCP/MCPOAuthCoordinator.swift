@@ -78,18 +78,64 @@ final class MCPOAuthCoordinator: NSObject, @unchecked Sendable {
         URL(string: "http://127.0.0.1:\(loopbackPort(for: serverID))/callback")!
     }
 
+    /// GW-291: redirect URI honoring a pinned loopback port/path when the
+    /// server carries a pre-registered OAuth client that requires an exact
+    /// registered callback (Slack/Asana). Falls back to the UUID-hash port
+    /// and `/callback` otherwise.
+    static func redirectURI(for config: MCPServerConfig) -> URL {
+        if case .oauthClient(_, let port, let path) = config.httpAuth {
+            let resolvedPort = port ?? loopbackPort(for: config.id)
+            let resolvedPath = normalizedLoopbackPath(path)
+            // Normalized path is always well-formed, but never force-unwrap a
+            // parsed URL — fall back to the hash default if it somehow fails.
+            return URL(string: "http://127.0.0.1:\(resolvedPort)\(resolvedPath)")
+                ?? redirectURI(for: config.id)
+        }
+        return redirectURI(for: config.id)
+    }
+
+    /// Normalize a user-entered pinned callback path: trim it, default to
+    /// `/callback` when empty, and guarantee a leading slash so the redirect
+    /// URL is always well-formed (a bare `callback` would corrupt the port).
+    static func normalizedLoopbackPath(_ path: String?) -> String {
+        let trimmed = path?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !trimmed.isEmpty else { return "/callback" }
+        return trimmed.hasPrefix("/") ? trimmed : "/" + trimmed
+    }
+
+    /// GW-291: which token-endpoint auth the SDK should use for this server.
+    /// - no `httpAuth`        → `.none("ghostwire")`, leaving DCR to run.
+    /// - `.oauthClient` only  → `.none(clientID)`, a pinned public/PKCE client.
+    /// - `.oauthClient` + secret in Keychain → `.clientSecretPost` (confidential).
+    /// (`.bearer`/`.header` never build an authorizer — they inject a header.)
+    static func authentication(
+        for config: MCPServerConfig,
+        secretStore: MCPSecretStore = KeychainMCPSecretStore.shared
+    ) -> OAuthConfiguration.TokenEndpointAuthentication {
+        guard case .oauthClient(let clientID, _, _) = config.httpAuth else {
+            return .none(clientID: "ghostwire")
+        }
+        if let secret = secretStore.string(
+            account: MCPSecretAccount.oauthClientSecret(serverID: config.id)), !secret.isEmpty {
+            return .clientSecretPost(clientID: clientID, clientSecret: secret)
+        }
+        return .none(clientID: clientID)
+    }
+
     /// One authorizer per server config; per-server Keychain token storage.
-    func authorizer(for config: MCPServerConfig) -> OAuthAuthorizer {
+    func authorizer(
+        for config: MCPServerConfig,
+        secretStore: MCPSecretStore = KeychainMCPSecretStore.shared
+    ) -> OAuthAuthorizer {
         OAuthAuthorizer(
             configuration: OAuthConfiguration(
                 grantType: .authorizationCode,
-                // DCR replaces this when the AS supports RFC 7591.
-                authentication: .none(clientID: "ghostwire"),
-                authorizationRedirectURI: Self.redirectURI(for: config.id),
+                authentication: Self.authentication(for: config, secretStore: secretStore),
+                authorizationRedirectURI: Self.redirectURI(for: config),
                 clientName: "Ghostwire",
                 authorizationDelegate: self
             ),
-            tokenStorage: KeychainTokenStorage(serverID: config.id)
+            tokenStorage: KeychainTokenStorage(serverID: config.id, secretStore: secretStore)
         )
     }
 }

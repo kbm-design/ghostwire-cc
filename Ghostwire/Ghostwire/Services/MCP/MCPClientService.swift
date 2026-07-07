@@ -267,11 +267,27 @@ final class MCPClientService: ObservableObject {
     private func establish(_ connection: MCPConnection, config: MCPServerConfig) async throws {
         switch config.transport {
         case .http(let endpoint):
-            let transport = HTTPClientTransport(
-                endpoint: endpoint,
-                streaming: true,
-                authorizer: MCPOAuthCoordinator.shared.authorizer(for: config)
-            )
+            let transport: HTTPClientTransport
+            switch config.httpAuth {
+            case .some(.bearer), .some(.header):
+                // GW-292: static API-key / bearer — stamp the header per request.
+                // The token rides in the Keychain, read here and never persisted.
+                let token = secretStore.string(
+                    account: MCPSecretAccount.httpAuthToken(serverID: config.id))
+                transport = HTTPClientTransport(
+                    endpoint: endpoint,
+                    streaming: true,
+                    requestModifier: config.httpAuth?.requestModifier(token: token) ?? { $0 }
+                )
+            case .some(.oauthClient), .none:
+                // GW-291: pre-registered OAuth client, or (nil) the DCR default.
+                transport = HTTPClientTransport(
+                    endpoint: endpoint,
+                    streaming: true,
+                    authorizer: MCPOAuthCoordinator.shared.authorizer(
+                        for: config, secretStore: secretStore)
+                )
+            }
             try await connection.connect(transport: transport)
         case .stdio(let command, let arguments, let environmentKeys):
             let resolver = LoginShellPATHResolver.shared

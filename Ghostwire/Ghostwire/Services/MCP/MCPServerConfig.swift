@@ -25,6 +25,62 @@ enum MCPTransportConfig: Codable, Equatable {
     }
 }
 
+/// GW-291/292: how Ghostwire authenticates outbound to an `.http` server.
+/// `nil` on the config = the default: dynamic client registration (RFC 7591)
+/// handled by the SDK, no user setup. Only meaningful for `.http` transport.
+///
+/// Secret VALUES never live here — `client_id` and header names are public,
+/// but the API-key/bearer token and any OAuth `client_secret` live in the
+/// Keychain (see `MCPSecretAccount.httpAuthToken` / `oauthClientSecret`).
+enum MCPHTTPAuth: Codable, Equatable {
+    /// Static credential sent as `Authorization: Bearer <token>`.
+    case bearer
+    /// Static credential sent as `<name>: <token>` (e.g. `x-api-key`).
+    case header(name: String)
+    /// Pre-registered OAuth client. `loopbackPort`/`loopbackPath` pin an exact
+    /// redirect URI for servers that require one (else the UUID-hash port and
+    /// `/callback` are used). A `client_secret` in the Keychain makes it a
+    /// confidential client; absent = public/PKCE-only.
+    case oauthClient(clientID: String, loopbackPort: UInt16?, loopbackPath: String?)
+
+    /// Builds the per-request header injector for the static-token cases.
+    /// Returns the identity transform for the OAuth case (the SDK authorizer
+    /// supplies the header) or when no token is available.
+    func requestModifier(token: String?) -> (URLRequest) -> URLRequest {
+        guard let token, !token.isEmpty else { return { $0 } }
+        switch self {
+        case .bearer:
+            return { request in
+                var request = request
+                request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+                return request
+            }
+        case .header(let name):
+            return { request in
+                var request = request
+                request.setValue(token, forHTTPHeaderField: name)
+                return request
+            }
+        case .oauthClient:
+            return { $0 }
+        }
+    }
+}
+
+/// Which transport an add-sheet input string denotes.
+enum MCPTransportKind: Equatable {
+    case http
+    case stdio
+}
+
+/// Pure transport detection for the add-server sheet. Trims leading/trailing
+/// whitespace (and is case-insensitive) FIRST — a stray leading space from a
+/// paste must not misroute an `https://` URL to the stdio (local-command) path.
+func detectMCPTransportKind(from rawInput: String) -> MCPTransportKind {
+    let trimmed = rawInput.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    return trimmed.hasPrefix("http://") || trimmed.hasPrefix("https://") ? .http : .stdio
+}
+
 struct MCPProbeRecord: Codable, Equatable {
     var date: Date
     var toolCount: Int
@@ -41,6 +97,9 @@ struct MCPServerConfig: Codable, Equatable, Identifiable {
     var transport: MCPTransportConfig
     /// Per-TOOL read-only allowlist. Default empty = default-deny.
     var allowedTools: Set<String> = []
+    /// GW-291/292: outbound auth for `.http` servers. nil = dynamic client
+    /// registration (the pre-GW-291 default; legacy configs decode to nil).
+    var httpAuth: MCPHTTPAuth?
     var isEnabled: Bool = true
     /// Trust gate for stdio (spawning = code execution). Holds the exact
     /// command signature the user approved; nil or mismatch = won't spawn.

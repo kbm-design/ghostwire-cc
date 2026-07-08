@@ -195,12 +195,15 @@ def _extract_tool(data):
     name = data.get("tool_name")
     tool_input = data.get("tool_input", {})
     if not name:
-        if data.get("command") is not None:
+        # Check url before command: beforeMCPExecution carries BOTH, and
+        # classifying it as Shell would drop the URL from the approval UI
+        # (Codex P2, 2026-07-08).
+        if data.get("url"):
+            name = "MCP"
+            tool_input = {"url": data.get("url"), "command": data.get("command")}
+        elif data.get("command") is not None:
             name = "Shell"
             tool_input = {"command": data.get("command"), "cwd": data.get("cwd")}
-        elif data.get("url"):
-            name = "MCP"
-            tool_input = {"url": data.get("url")}
     return name, tool_input
 
 

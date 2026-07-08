@@ -44,6 +44,10 @@ def main():
     assert name == "Edit" and inp == {"path": "a"}
     name, inp = m._extract_tool({"url": "https://x"})
     assert name == "MCP" and inp["url"] == "https://x"
+    # beforeMCPExecution carries BOTH url and command — must classify as MCP,
+    # not Shell (Codex P2, 2026-07-08).
+    name, inp = m._extract_tool({"url": "https://mcp.example", "command": "tools/call"})
+    assert name == "MCP" and inp["url"] == "https://mcp.example" and inp["command"] == "tools/call", (name, inp)
 
     # --- allow output shapes ---
     assert m._allow_output("cursor") == {"permission": "allow"}

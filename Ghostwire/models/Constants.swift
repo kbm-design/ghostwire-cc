@@ -249,6 +249,14 @@ extension Defaults.Keys {
     // uninstall from the Agents tab sticks across relaunches.
     static let claudeHooksEnabled = Key<Bool>("claudeHooksEnabled", default: true)
     static let codexHooksEnabled = Key<Bool>("codexHooksEnabled", default: true)
+    // GW-175: third-party agent cluster. Enabled by default, but install is
+    // also gated on the CLI actually being present (isDetected), so nothing is
+    // written for an agent the user doesn't have.
+    static let cursorHooksEnabled = Key<Bool>("cursorHooksEnabled", default: true)
+    static let copilotHooksEnabled = Key<Bool>("copilotHooksEnabled", default: true)
+    static let factoryHooksEnabled = Key<Bool>("factoryHooksEnabled", default: true)
+    static let qoderHooksEnabled = Key<Bool>("qoderHooksEnabled", default: true)
+    static let codebuddyHooksEnabled = Key<Bool>("codebuddyHooksEnabled", default: true)
     // GW-173: consent gate for the MCP context-hub server (pull side). When
     // off, the `mcp-serve` subcommand serves an empty Shelf even if an agent
     // is registered. Default off — exposing held context to agents is opt-in.

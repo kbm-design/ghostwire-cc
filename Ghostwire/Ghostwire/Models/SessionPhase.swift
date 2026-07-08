@@ -162,6 +162,10 @@ enum SessionPhase: Sendable {
         // WaitingForInput transitions
         case (.waitingForInput, .processing):
             return true
+        case (.waitingForInput, .waitingForApproval):
+            return true  // Gate with no observed turn-start: a held PermissionRequest
+                         // means the agent is provably blocked. Cursor GUI sessions hit
+                         // this (stop -> next turn's gate, no prompt-submit between) — GW-175
         case (.waitingForInput, .idle):
             return true  // Can become idle
         case (.waitingForInput, .compacting):

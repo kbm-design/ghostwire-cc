@@ -74,6 +74,10 @@ enum GenericHookInstaller {
             ("beforeShellExecution", true),
             ("beforeMCPExecution", true),
             ("postToolUse", false),
+            // Turn-start reset: without it a session sits in waitingForInput after
+            // stop and the next turn's gate arrives with no processing event between
+            // (Claude parity comes from UserPromptSubmit) — GW-175 live-drive finding.
+            ("beforeSubmitPrompt", false),
             ("stop", false),
             ("sessionStart", false),
             ("sessionEnd", false),

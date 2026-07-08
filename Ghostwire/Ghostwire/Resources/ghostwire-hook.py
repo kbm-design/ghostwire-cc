@@ -219,7 +219,16 @@ def _allow_output(source):
 def _emit_third_party_decision(source, decision, reason):
     """Denormalise the notch decision into the agent's native contract."""
     if decision == "deny":
-        # Universal block lever across all third-party agents.
+        if source == "cursor":
+            # Cursor's documented contract is a JSON permission response
+            # ({"permission": "deny"}); exit-2 semantics are undocumented
+            # for it, so speak the documented protocol.
+            print(json.dumps({
+                "permission": "deny",
+                "agent_message": reason or "Denied by user via Ghostwire",
+            }))
+            sys.exit(0)
+        # Universal block lever across the other third-party agents.
         sys.stderr.write(reason or "Denied by user via Ghostwire")
         sys.exit(2)
     if decision == "allow":
@@ -274,7 +283,9 @@ def main():
     except json.JSONDecodeError:
         sys.exit(1)
 
-    session_id = data.get("session_id", "unknown")
+    # Claude/Codex send session_id; Cursor sends conversation_id (its stable
+    # per-conversation id, verified against Cursor's hooks docs 2026-07).
+    session_id = data.get("session_id") or data.get("conversation_id") or "unknown"
     event = data.get("hook_event_name", "")
     cwd = data.get("cwd", "")
     # Authoritative transcript location. cwd can lag behind for worktree sessions

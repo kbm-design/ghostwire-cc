@@ -6,7 +6,10 @@ Run: python3 GhostwireTests/test_ghostwire_hook.py
 (Standalone — not part of the XCTest target; the Swift side is covered by
 GenericHookInstallerTests. This guards the normalise-in / denormalise-out logic.)
 """
+import contextlib
 import importlib.util
+import io
+import json
 import os
 import sys
 
@@ -50,7 +53,16 @@ def main():
     assert m._allow_output("codebuddy")["hookSpecificOutput"]["permissionDecision"] == "allow"
 
     # --- decision denormalisation ---
-    assert exit_code(lambda: m._emit_third_party_decision("cursor", "deny", "x")) == 2
+    # Cursor deny speaks its documented JSON contract ({"permission": "deny"}),
+    # not the exit-2 lever (exit-2 semantics are undocumented for Cursor).
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        rc = exit_code(lambda: m._emit_third_party_decision("cursor", "deny", "x"))
+    assert rc == 0, rc
+    out = json.loads(buf.getvalue())
+    assert out == {"permission": "deny", "agent_message": "x"}, out
+    # Other third-party agents keep the universal exit-2 block lever.
+    assert exit_code(lambda: m._emit_third_party_decision("factory", "deny", "x")) == 2
     assert exit_code(lambda: m._emit_third_party_decision("factory", "allow", "")) == 0
     assert exit_code(lambda: m._emit_third_party_decision("qoder", "ask", "")) == 0
 

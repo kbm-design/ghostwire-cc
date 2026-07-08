@@ -210,6 +210,7 @@ struct ChatView: View {
             )
         }
         .buttonStyle(.plain)
+        .help("Back to agents")
         .onHover { isHeaderHovered = $0 }
         .padding(.horizontal, 5)
         .padding(.vertical, 4)
@@ -449,6 +450,7 @@ struct ChatView: View {
             }
             .buttonStyle(.plain)
             .disabled(!canSendMessages || inputText.isEmpty)
+            .help("Send message")
         }
     }
 
@@ -1146,6 +1148,7 @@ struct ChatInteractivePromptBar: View {
                 .clipShape(Capsule())
             }
             .buttonStyle(.plain)
+            .help("Answer in the terminal")
             .opacity(showButton ? 1 : 0)
             .scaleEffect(showButton ? 1 : 0.8)
         }
@@ -1237,6 +1240,7 @@ struct ChatApprovalBar: View {
                     .clipShape(Capsule())
             }
             .buttonStyle(.plain)
+            .help("Deny this request")
             .opacity(showDenyButton ? 1 : 0)
             .scaleEffect(showDenyButton ? 1 : 0.8)
 

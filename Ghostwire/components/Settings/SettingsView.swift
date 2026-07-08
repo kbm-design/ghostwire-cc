@@ -1286,7 +1286,8 @@ struct Advanced: View {
                                     AccentCircleButton(
                                         isSelected: selectedPresetColor == preset,
                                         color: preset.color,
-                                        isMulticolor: false
+                                        isMulticolor: false,
+                                        help: "\(preset.rawValue) accent"
                                     ) {
                                         selectedPresetColor = preset
                                         customAccentColor = preset.color
@@ -1441,21 +1442,26 @@ struct AccentCircleButton: View {
     let color: Color
     var isSystemDefault: Bool = false
     var isMulticolor: Bool = false
+    var help: String? = nil
     let action: () -> Void
-    
+
+    private var tooltip: String? {
+        help ?? (isSystemDefault ? "Use your macOS system accent color" : nil)
+    }
+
     var body: some View {
-        Button(action: action) {
+        let button = Button(action: action) {
             ZStack {
                 // Color circle
                 Circle()
                     .fill(color)
                     .frame(width: 32, height: 32)
-                
+
                 // Subtle border
                 Circle()
                     .strokeBorder(Color.primary.opacity(0.15), lineWidth: 1)
                     .frame(width: 32, height: 32)
-                
+
                 // Apple-style highlight ring around the middle when selected
                 if isSelected {
                     Circle()
@@ -1468,7 +1474,14 @@ struct AccentCircleButton: View {
             }
         }
         .buttonStyle(.plain)
-        .help(isSystemDefault ? "Use your macOS system accent color" : "")
+
+        // Only attach a tooltip when one is provided — .help("") shows a
+        // blank tooltip bubble.
+        if let tooltip {
+            button.help(tooltip)
+        } else {
+            button
+        }
     }
 }
 

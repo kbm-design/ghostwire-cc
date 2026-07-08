@@ -82,12 +82,12 @@ struct GhostwireHeader: View {
                             }
                         }
                         if Defaults[.showMirror] {
-                            NotchHeaderIconButton(systemName: "web.camera") {
+                            NotchHeaderIconButton(systemName: "web.camera", help: "Toggle camera preview") {
                                 vm.toggleCameraPreview()
                             }
                         }
                         if Defaults[.settingsIconInNotch] {
-                            NotchHeaderIconButton(systemName: "gear") {
+                            NotchHeaderIconButton(systemName: "gear", help: "Open Settings") {
                                 DispatchQueue.main.async {
                                     SettingsWindowController.shared.showWindow()
                                 }
@@ -139,7 +139,7 @@ private struct NotchHeaderIconButton: View {
     @State private var hovering = false
 
     var body: some View {
-        Button(action: action) {
+        let button = Button(action: action) {
             Capsule()
                 .fill(.black)
                 .frame(width: 30, height: 30)
@@ -153,7 +153,14 @@ private struct NotchHeaderIconButton: View {
         .buttonStyle(PlainButtonStyle())
         .onHover { hovering = $0 }
         .animation(.easeOut(duration: 0.12), value: hovering)
-        .help(help ?? "")
+
+        // Only attach a tooltip when one is provided — .help("") shows a
+        // blank tooltip bubble.
+        if let help {
+            button.help(help)
+        } else {
+            button
+        }
     }
 }
 

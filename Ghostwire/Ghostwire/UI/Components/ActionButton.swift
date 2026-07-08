@@ -11,12 +11,13 @@ struct ActionButton: View {
     let title: String
     let icon: String
     let color: Color
+    var help: String? = nil
     let action: () -> Void
 
     @State private var isHovered = false
 
     var body: some View {
-        Button(action: action) {
+        let button = Button(action: action) {
             HStack(spacing: 5) {
                 Image(systemName: icon)
                     .font(.system(size: 9, weight: .bold))
@@ -37,5 +38,13 @@ struct ActionButton: View {
         }
         .buttonStyle(.plain)
         .onHover { isHovered = $0 }
+
+        // Only attach a tooltip when one is provided — .help("") shows a
+        // blank tooltip bubble.
+        if let help {
+            button.help(help)
+        } else {
+            button
+        }
     }
 }

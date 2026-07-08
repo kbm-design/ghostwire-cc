@@ -250,7 +250,7 @@ struct InstanceRow: View {
             if isWaitingForApproval && isInteractiveTool {
                 // Interactive tools like AskUserQuestion - show chat + terminal buttons
                 HStack(spacing: 8) {
-                    IconButton(icon: "bubble.left") {
+                    IconButton(icon: "bubble.left", help: "Open chat") {
                         onChat()
                     }
 
@@ -273,14 +273,14 @@ struct InstanceRow: View {
                 HStack(spacing: 8) {
                     // GW-162: addressable pane -> focusable, no yabai gate
                     if MultiplexerTargetResolver.resolve(session: session).isResolvable {
-                        IconButton(icon: "eye") {
+                        IconButton(icon: "eye", help: "Go to this session's terminal") {
                             onFocus()
                         }
                     }
 
                     // Archive button - only for idle or completed sessions
                     if session.phase == .idle || session.phase == .waitingForInput {
-                        IconButton(icon: "archivebox") {
+                        IconButton(icon: "archivebox", help: "Archive session") {
                             onArchive()
                         }
                     }
@@ -348,7 +348,7 @@ struct InlineApprovalButtons: View {
     var body: some View {
         HStack(spacing: 6) {
             // Chat button
-            IconButton(icon: "bubble.left") {
+            IconButton(icon: "bubble.left", help: "Open chat") {
                 onChat()
             }
             .opacity(showChatButton ? 1 : 0)
@@ -402,12 +402,13 @@ struct InlineApprovalButtons: View {
 
 struct IconButton: View {
     let icon: String
+    var help: String? = nil
     let action: () -> Void
 
     @State private var isHovered = false
 
     var body: some View {
-        Button {
+        let button = Button {
             action()
         } label: {
             Image(systemName: icon)
@@ -421,6 +422,14 @@ struct IconButton: View {
         }
         .buttonStyle(.plain)
         .onHover { isHovered = $0 }
+
+        // Only attach a tooltip when one is provided — .help("") shows a
+        // blank tooltip bubble.
+        if let help {
+            button.help(help)
+        } else {
+            button
+        }
     }
 }
 
@@ -449,6 +458,7 @@ struct CompactTerminalButton: View {
             .clipShape(Capsule())
         }
         .buttonStyle(.plain)
+        .help("Go to this session's terminal")
     }
 }
 
@@ -477,5 +487,6 @@ struct TerminalButton: View {
             .clipShape(Capsule())
         }
         .buttonStyle(.plain)
+        .help("Go to this session's terminal")
     }
 }

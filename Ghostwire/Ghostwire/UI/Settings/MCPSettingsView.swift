@@ -170,6 +170,7 @@ struct MCPAddServerSheet: View {
                         Image(systemName: "minus.circle")
                     }
                     .buttonStyle(.plain)
+                    .help("Remove variable")
                 }
             }
             Button {

@@ -84,6 +84,7 @@ struct ClipboardHistoryView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .help("Back to Shelf")
 
             Spacer()
 

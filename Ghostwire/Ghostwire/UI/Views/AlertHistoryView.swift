@@ -64,6 +64,7 @@ struct AlertHistoryView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .help("Back to Agents")
 
             Spacer()
 

@@ -69,6 +69,20 @@ enum UsageFormat {
         return tokenCount(total) + " tok"
     }
 
+    /// GW-314: one rounding rule for quota percentages. Int() truncation
+    /// (33.9 → "33%") read one point under Claude Code's own /usage rounding.
+    static func percent(_ utilization: Double) -> String {
+        "\(Int(utilization.rounded()))%"
+    }
+
+    /// GW-314: staleness caption for the usage detail - "updated 25m ago"
+    static func updatedAgo(_ date: Date) -> String {
+        let elapsed = -date.timeIntervalSinceNow
+        if elapsed < 3600 { return "updated \(max(1, Int(elapsed) / 60))m ago" }
+        if elapsed < 24 * 3600 { return "updated \(Int(elapsed) / 3600)h ago" }
+        return "updated \(Int(elapsed) / 86400)d ago"
+    }
+
     /// Which quota window a dual-mode bar shows. Session (5H) normally;
     /// switches to Weekly when 7D >=90% - the binding constraint - so the
     /// label always names the window on screen (label = timeframe rule).

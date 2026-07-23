@@ -76,7 +76,10 @@ struct AgentsTabView: View {
                 // `display` directly (same path for any agent / GW-200 Codex).
                 AgentUsageDetailView(
                     agent: agent,
-                    display: display
+                    display: display,
+                    // GW-314: the words behind the summary row's stale dimming
+                    staleDate: agent == "claude" && usageService.isStale
+                        ? usageService.lastSuccessfulFetch : nil
                 ) {
                     withAnimation(.easeInOut(duration: 0.2)) { usageDetailAgent = nil }
                 }
@@ -197,7 +200,7 @@ struct AgentsTabView: View {
                         UsageBar(
                             label: "Session",
                             percent: fh.utilization / 100,
-                            detail: "\(Int(fh.utilization))%",
+                            detail: UsageFormat.percent(fh.utilization),
                             color: thresholdColor(fh.utilization, base: tint)
                         )
                     }
@@ -208,13 +211,16 @@ struct AgentsTabView: View {
                         UsageBar(
                             label: "Weekly",
                             percent: sd.utilization / 100,
-                            detail: "\(Int(sd.utilization))%",
+                            detail: UsageFormat.percent(sd.utilization),
                             color: thresholdColor(sd.utilization, base: tint)
                         )
                     }
                     .help(Self.quotaHelp(own: sd, ownVerbose: false, sibling: nil))
                 }
             }
+            // GW-314: stale server data renders dimmed - failed polls used to
+            // coast on the last snapshot indistinguishably from live numbers
+            .opacity(staleOpacity(for: agent))
             .padding(.horizontal, 8)
         case .tokens(let tokens):
             tokenBar(agent: agent, tokens: tokens)
@@ -234,10 +240,12 @@ struct AgentsTabView: View {
                     UsageBar(
                         label: selection.label,
                         percent: selection.period.utilization / 100,
-                        detail: "\(Int(selection.period.utilization))%",
+                        detail: UsageFormat.percent(selection.period.utilization),
                         color: thresholdColor(selection.period.utilization, base: AgentIdentity.tint(for: agent))
                     )
                 }
+                // GW-314: same stale-dimming as the single-agent row
+                .opacity(staleOpacity(for: agent))
                 // Dual mode hides the other window's bar - the tooltip
                 // carries it as the sibling (e.g. "2h 45m · 41% Tue")
                 .help(Self.quotaHelp(
@@ -262,13 +270,21 @@ struct AgentsTabView: View {
             parts.append(ownVerbose ? UsageFormat.resetTime(resetsAt) : UsageFormat.resetTimeCompact(resetsAt))
         }
         if let sibling {
-            var part = "\(Int(sibling.utilization))%"
+            var part = UsageFormat.percent(sibling.utilization)
             if let resetsAt = sibling.resetsAt {
                 part += " \(UsageFormat.resetTimeCompact(resetsAt))"
             }
             parts.append(part)
         }
         return parts.joined(separator: " · ")
+    }
+
+    /// GW-314: Claude's quota meter dims while the server snapshot is stale
+    /// (glyph/tint-over-text rule - the glance signal; the detail view carries
+    /// the "updated Xm ago" words). Codex/token meters are locally derived,
+    /// staleness doesn't apply.
+    private func staleOpacity(for agent: String) -> Double {
+        agent == "claude" && usageService.isStale ? 0.45 : 1
     }
 
     /// API auth: disabled-button treatment - the track carries the agent

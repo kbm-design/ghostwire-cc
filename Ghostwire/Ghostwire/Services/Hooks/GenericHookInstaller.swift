@@ -78,6 +78,9 @@ enum GenericHookInstaller {
             // stop and the next turn's gate arrives with no processing event between
             // (Claude parity comes from UserPromptSubmit) — GW-175 live-drive finding.
             ("beforeSubmitPrompt", false),
+            // GW-311: carries the assistant's reply text. Cursor's transcript is
+            // written lazily, so this is how the notch chat gets prose.
+            ("afterAgentResponse", false),
             ("stop", false),
             ("sessionStart", false),
             ("sessionEnd", false),

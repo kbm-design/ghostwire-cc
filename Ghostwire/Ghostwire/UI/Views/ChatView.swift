@@ -200,6 +200,20 @@ struct ChatView: View {
                     .foregroundColor(.white.opacity(isHeaderHovered ? 1.0 : 0.85))
                     .lineLimit(1)
 
+                // GW-311: with several agents running you cannot tell whose
+                // approval you are about to allow or deny from the title alone —
+                // and keyboard approval (GW-267) is gated to the focused chat.
+                // Same badge treatment as the agents list, so the drill-in reads
+                // as the same session you clicked.
+                if let agentLabel = session.agentLabel {
+                    Text(agentLabel)
+                        .font(.system(size: 9, weight: .bold))
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(agentTint.opacity(0.18), in: Capsule())
+                        .foregroundStyle(agentTint)
+                }
+
                 Spacer()
             }
             .padding(.horizontal, 12)
@@ -267,6 +281,13 @@ struct ChatView: View {
             Text("No messages yet")
                 .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(.secondary)
+            // GW-311: an IDE session mirrors from the agent's own transcript, so
+            // the wait is on the agent, not on the user doing something here.
+            if isIDEAgent {
+                Text("Messages appear as \(agentName) works")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.tertiary)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -361,23 +382,45 @@ struct ChatView: View {
         targetResolution.isResolvable
     }
 
-    /// Placeholder names the gap when input is disabled
+    /// GW-311: agents that also run inside an IDE have no terminal pane to
+    /// address when launched that way, so telling the user to "open it in
+    /// tmux/cmux" is a dead end — the session is already running, just not
+    /// somewhere we can type into.
+    private var isIDEAgent: Bool {
+        guard let agent = session.agent?.lowercased() else { return false }
+        return GenericHookInstaller.all.contains { $0.agentId == agent }
+    }
+
+    /// Placeholder names the gap when input is disabled. For an unaddressable
+    /// IDE session it says what this surface *does* do rather than prescribing
+    /// something the user cannot act on.
     private var inputPlaceholder: String {
         switch targetResolution {
         case .cmux, .tmuxTty:
             return "Message \(agentName)..."
         case .unresolvable(.cmuxRefsMissing):
-            return "Waiting for \(agentName)'s pane identity (hooks)..."
+            return isIDEAgent
+                ? "Following along — reply in \(agentName)"
+                : "Waiting for \(agentName)'s pane identity (hooks)..."
         case .unresolvable(.ttyMissing):
-            return "No tty recorded for this session"
+            return isIDEAgent
+                ? "Following along — reply in \(agentName)"
+                : "No tty recorded for this session"
         case .unresolvable(.notInMultiplexer):
-            return "Open \(agentName) in tmux/cmux to enable messaging"
+            return isIDEAgent
+                ? "Following along — reply in \(agentName)"
+                : "Open \(agentName) in tmux/cmux to enable messaging"
         }
     }
 
     /// Display name for this session's agent ("Claude" / "Codex"); neutral fallback if untagged
     private var agentName: String {
         session.agentLabel ?? "Agent"
+    }
+
+    /// Per-agent tint — single source via AgentIdentity (GW-138).
+    private var agentTint: Color {
+        AgentIdentity.tint(for: session.agent)
     }
 
     private var inputBar: some View {

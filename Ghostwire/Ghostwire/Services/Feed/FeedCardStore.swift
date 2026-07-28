@@ -31,16 +31,23 @@ final class FeedCardStore {
     /// Exactly the cards the notch shows — the top-N of the ordered list.
     var notchCards: [FeedCard] { Array(orderedCards.prefix(notchVisibleCount)) }
 
-    init(cards: [FeedCard] = FeedCardStore.sampleCards) {
+    init(cards: [FeedCard] = []) {
+        Self.migrateRacedOrderIfNeeded()
         orderedCards = Self.reconcile(cards: cards, order: Defaults[.feedCardOrder])
-        persistOrder()
     }
 
-    /// Replace the live card set (later: called by Sources as they refresh;
-    /// for now seeded with samples). Re-applies the persisted order.
+    /// Replace the live card set — called by `FeedSourceCoordinator` as Sources
+    /// refresh (GW-261). Applies the user's saved order but deliberately does
+    /// NOT write one back.
+    ///
+    /// Writing here is what caused the first-run ordering bug: sources refresh
+    /// concurrently, so the first `setCards` lands with only the fastest
+    /// source's cards. Persisting that partial set froze the winner of a network
+    /// race at the top, and every later source appended behind it — permanently,
+    /// since `reconcile` honours saved positions on every subsequent launch.
+    /// Only an explicit `move` is a choice worth persisting.
     func setCards(_ cards: [FeedCard]) {
         orderedCards = Self.reconcile(cards: cards, order: Defaults[.feedCardOrder])
-        persistOrder()
     }
 
     /// Drag-reorder from the window list. Persists the new id order so the notch
@@ -52,6 +59,18 @@ final class FeedCardStore {
 
     private func persistOrder() {
         Defaults[.feedCardOrder] = orderedCards.map(\.id)
+    }
+
+    /// One-time cleanup (GW-261). Every `feedCardOrder` written before this
+    /// build came from `setCards` persisting whatever partial card set happened
+    /// to refresh first — plus, on older installs, the ids of the deleted
+    /// `sampleCards`. No shipped build ever exposed a way to reorder cards
+    /// (GW-290 is still open, `move` has no caller), so there is no
+    /// user-authored order that this can destroy.
+    nonisolated static func migrateRacedOrderIfNeeded() {
+        guard !Defaults[.feedCardOrderMigrated] else { return }
+        Defaults[.feedCardOrder] = []
+        Defaults[.feedCardOrderMigrated] = true
     }
 
     /// Pure: apply a persisted id order to a live card set. Known ids keep their
@@ -74,33 +93,3 @@ final class FeedCardStore {
     }
 }
 
-// MARK: - Temporary sample seed (GW-259)
-
-extension FeedCardStore {
-    /// TEMPORARY: hand-built sample cards so the feed has content before real
-    /// `Source`s (the GW-259 data side) exist. Replace with Source output later.
-    nonisolated static var sampleCards: [FeedCard] {
-        let now = Date()
-        return [
-            FeedCard(id: "sample.text", sourceId: "demo.text", sourceApp: "com.apple.finder",
-                     kind: .text(title: "Release note", body: "v0.1.7 ships hold-to-talk and opt-in voice capture."),
-                     updatedAt: now),
-            FeedCard(id: "sample.btc", sourceId: "demo.data", sourceApp: nil,
-                     kind: .data(label: "BTC", value: "$64,210", delta: "+2.4%"),
-                     updatedAt: now),
-            FeedCard(id: "sample.prs", sourceId: "demo.data", sourceApp: nil,
-                     kind: .data(label: "Open PRs", value: "12", delta: "-3"),
-                     updatedAt: now.addingTimeInterval(-3600)),
-            FeedCard(id: "sample.assigned", sourceId: "demo.list", sourceApp: nil,
-                     kind: .list(title: "Assigned to you", items: ["GW-259 Tabbed surface", "GW-261 Stats widget", "GW-285 Card refresh", "GW-214 MCP client"]),
-                     updatedAt: now),
-            FeedCard(id: "sample.ticket", sourceId: "demo.ticket", sourceApp: nil,
-                     kind: .generic(title: "Tabbed surface primitive", subtitle: "In Progress · GW-259", value: nil),
-                     updatedAt: now,
-                     link: URL(string: "https://linear.app/ghostwire/issue/GW-259")),
-            FeedCard(id: "sample.generic", sourceId: "demo.generic", sourceApp: nil,
-                     kind: .generic(title: "Untemplated source", subtitle: "Falls back to the generic card", value: "42"),
-                     updatedAt: now),
-        ]
-    }
-}

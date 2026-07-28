@@ -339,8 +339,31 @@ extension Defaults.Keys {
     // idiom as notchTabOrder). FeedCardStore applies this to the live card set:
     // known ids hold position, new ids append, vanished ids drop out.
     static let feedCardOrder = Key<[String]>("feedCardOrder", default: [])
+    // GW-261: marks the one-time clear of orders that were never user-authored
+    // (written by setCards from a partial, race-ordered card set).
+    static let feedCardOrderMigrated = Key<Bool>("feedCardOrderMigrated", default: false)
     // How many of the ordered cards mirror into the notch's top-N row.
     static let feedNotchVisibleCount = Key<Int>("feedNotchVisibleCount", default: 8)
+
+    // MARK: Built-in feed sources (GW-261)
+    // Module master key (SettingsModule.feed): off = no built-in source polls
+    // and the feed falls back to whatever other Sources provide.
+    static let feedSourcesEnabled = Key<Bool>("feedSourcesEnabled", default: true)
+    // The keyless catalog: all default ON because none needs an account, a
+    // token, or a TCC permission — they're what makes a fresh install show a
+    // real feed instead of placeholders.
+    // Ghostwire's own numbers (quota, live agents) — local reads, no network.
+    static let feedLocalStatsSourceEnabled = Key<Bool>("feedLocalStatsSourceEnabled", default: true)
+    static let feedCryptoSourceEnabled = Key<Bool>("feedCryptoSourceEnabled", default: true)
+    static let feedCryptoSymbols = Key<[String]>("feedCryptoSymbols", default: ["BTC", "ETH", "SOL"])
+    static let feedRSSSourceEnabled = Key<Bool>("feedRSSSourceEnabled", default: true)
+    static let feedRSSURLs = Key<[String]>(
+        "feedRSSURLs",
+        default: [
+            "https://news.ycombinator.com/rss",
+            "https://github.com/anthropics/claude-code/releases.atom",
+        ]
+    )
 
     // MARK: Ambient context (GW-172) — Tier-0 frontmost-app spine.
     // SILENT: collects + persists which app is frontmost (identity only — no

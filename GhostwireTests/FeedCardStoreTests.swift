@@ -51,17 +51,67 @@ final class FeedCardStoreTests: XCTestCase {
     // MARK: - store + notch slice (Defaults-backed, MainActor)
 
     @MainActor
-    func testStoreAppliesAndPersistsReconciledOrder() {
+    func testStoreAppliesSavedOrderWithoutRewritingIt() {
         let savedOrder = Defaults[.feedCardOrder]
-        defer { Defaults[.feedCardOrder] = savedOrder }
+        let savedMigrated = Defaults[.feedCardOrderMigrated]
+        defer {
+            Defaults[.feedCardOrder] = savedOrder
+            Defaults[.feedCardOrderMigrated] = savedMigrated
+        }
 
-        // Saved order references a vanished id 'gone' — should be dropped, and
-        // the persisted order rewritten to only live ids.
+        Defaults[.feedCardOrderMigrated] = true  // past the one-time clear
         Defaults[.feedCardOrder] = ["b", "gone", "a"]
         let store = FeedCardStore(cards: [card("a"), card("b"), card("c")])
 
+        // Applied: 'gone' drops out, 'c' appends.
         XCTAssertEqual(ids(store.orderedCards), ["b", "a", "c"])
-        XCTAssertEqual(Defaults[.feedCardOrder], ["b", "a", "c"])  // 'gone' pruned, 'c' appended
+        // But NOT written back — only an explicit move persists (GW-261).
+        XCTAssertEqual(Defaults[.feedCardOrder], ["b", "gone", "a"])
+    }
+
+    /// The first-run ordering bug: sources refresh concurrently, so an early
+    /// setCards carries only the fastest source's cards. Persisting that would
+    /// pin the race winner at the top forever.
+    @MainActor
+    func testPartialRefreshDoesNotPersistARaceOrder() {
+        let savedOrder = Defaults[.feedCardOrder]
+        let savedMigrated = Defaults[.feedCardOrderMigrated]
+        defer {
+            Defaults[.feedCardOrder] = savedOrder
+            Defaults[.feedCardOrderMigrated] = savedMigrated
+        }
+
+        Defaults[.feedCardOrderMigrated] = true
+        Defaults[.feedCardOrder] = []
+        let store = FeedCardStore(cards: [])
+
+        store.setCards([card("slow.b")])              // one source lands first
+        store.setCards([card("fast.a"), card("slow.b")])  // full set arrives
+
+        XCTAssertEqual(ids(store.orderedCards), ["fast.a", "slow.b"])  // registration order wins
+        XCTAssertEqual(Defaults[.feedCardOrder], [])                   // nothing persisted
+    }
+
+    @MainActor
+    func testMigrationClearsUnauthoredOrderExactlyOnce() {
+        let savedOrder = Defaults[.feedCardOrder]
+        let savedMigrated = Defaults[.feedCardOrderMigrated]
+        defer {
+            Defaults[.feedCardOrder] = savedOrder
+            Defaults[.feedCardOrderMigrated] = savedMigrated
+        }
+
+        // An install carrying a raced order (or the old sample-card ids).
+        Defaults[.feedCardOrderMigrated] = false
+        Defaults[.feedCardOrder] = ["sample.btc", "api.rss.x"]
+        FeedCardStore.migrateRacedOrderIfNeeded()
+        XCTAssertEqual(Defaults[.feedCardOrder], [])
+        XCTAssertTrue(Defaults[.feedCardOrderMigrated])
+
+        // A real order the user later authors must survive a second call.
+        Defaults[.feedCardOrder] = ["chosen.a", "chosen.b"]
+        FeedCardStore.migrateRacedOrderIfNeeded()
+        XCTAssertEqual(Defaults[.feedCardOrder], ["chosen.a", "chosen.b"])
     }
 
     @MainActor

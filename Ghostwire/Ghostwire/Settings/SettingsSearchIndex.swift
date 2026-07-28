@@ -94,6 +94,10 @@ enum SettingsSearchIndex {
             "activity", "context", "ambient", "capture", "frontmost",
             "retention", "denylist", "excluded apps", "privacy", "history",
         ],
+        "Feed": [
+            "feed", "cards", "sources", "crypto", "price", "bitcoin", "btc",
+            "hyperliquid", "rss", "atom", "news", "releases", "dashboard",
+        ],
     ]
 
     /// Pane ids matching a query (case-insensitive substring over label +

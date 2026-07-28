@@ -83,7 +83,15 @@ struct SettingsModule: Identifiable {
         disabledHint: "Quietly records which app is frontmost so Ghostwire can surface the right thing later. App names only — no window titles or content. Stays on this Mac."
     )
 
-    static let all: [SettingsModule] = [media, calendar, huds, battery, shelf, mirror, ambient]
+    static let feed = SettingsModule(
+        id: "Feed",
+        label: "Feed",
+        icon: "square.grid.2x2",
+        enabledKey: .feedSourcesEnabled,
+        disabledHint: "Shows live cards from built-in public sources — crypto prices and RSS/Atom feeds. Keyless: no account or token to set up."
+    )
+
+    static let all: [SettingsModule] = [media, calendar, huds, battery, shelf, mirror, ambient, feed]
 }
 
 extension View {

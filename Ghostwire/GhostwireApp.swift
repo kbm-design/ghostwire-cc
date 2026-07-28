@@ -858,6 +858,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         GatewayHTTPService.startIfEnabled()  // GW-253: localhost MCP gateway (opt-in)
         UsageService.shared.startPolling()
         CodexUsageService.shared.startPolling()
+        FeedSourceCoordinator.shared.start()  // GW-261: built-in keyless feed sources (crypto + RSS)
 
 
 

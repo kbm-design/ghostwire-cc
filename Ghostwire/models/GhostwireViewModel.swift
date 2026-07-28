@@ -224,6 +224,10 @@ class GhostwireViewModel: NSObject, ObservableObject {
 
         self.notchState = .open
         MusicManager.shared.forceUpdate()
+        // GW-261: top up any feed source whose cards went stale while the notch
+        // was shut (or the machine asleep), so an opened feed isn't showing a
+        // price from an hour ago. No-op when everything is already fresh.
+        FeedSourceCoordinator.shared.refreshStaleSources()
     }
 
     func close() {

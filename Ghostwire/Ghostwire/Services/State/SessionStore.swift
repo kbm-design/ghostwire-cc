@@ -148,11 +148,15 @@ actor SessionStore {
         if let tty = event.tty {
             session.tty = tty.replacingOccurrences(of: "/dev/", with: "")
         }
+        if let path = event.transcriptPath, !path.isEmpty {
+            session.transcriptPath = path
+        }
         session.lastActivity = Date()
 
         if event.status == "ended" {
             sessions.removeValue(forKey: sessionId)
             cancelPendingSync(sessionId: sessionId)
+            releaseCursorParserState(sessionId: sessionId, agent: session.agent)
             dismissedSessionIds.insert(sessionId)
             return
         }
@@ -170,6 +174,11 @@ actor SessionStore {
         } else {
             Self.logger.debug("Invalid transition: \(String(describing: session.phase), privacy: .public) -> \(String(describing: newPhase), privacy: .public), ignoring")
         }
+
+        // GW-311: Cursor's chat is built from the hook stream (its transcript is
+        // written lazily/incompletely). This runs before the gate status update
+        // below so the tool row already exists when a PermissionRequest lands.
+        applyCursorHookChat(event: event, session: &session)
 
         if event.event == "PermissionRequest", let toolUseId = event.toolUseId {
             Self.logger.debug("Setting tool \(toolUseId.prefix(12), privacy: .public) status to waitingForApproval")
@@ -225,11 +234,13 @@ actor SessionStore {
         SessionState(
             sessionId: event.sessionId,
             cwd: event.cwd,
-            projectName: URL(fileURLWithPath: event.cwd).lastPathComponent,
+            // nil → SessionState derives it, including the empty-cwd guard
+            projectName: nil,
             pid: event.pid,
             tty: event.tty?.replacingOccurrences(of: "/dev/", with: ""),
             isInTmux: false,  // Will be updated
             agent: event.source,
+            transcriptPath: event.transcriptPath,
             phase: .idle
         )
     }
@@ -245,6 +256,7 @@ actor SessionStore {
                 sessionId: session.sessionId,
                 cwd: event.cwd,
                 agent: session.agent,
+                transcriptPath: session.transcriptPath,
                 phase: session.phase,
                 chatItems: session.chatItems,
                 toolTracker: session.toolTracker,
@@ -856,6 +868,90 @@ actor SessionStore {
         }
     }
 
+    // MARK: - Cursor Hook-Sourced Chat (GW-311)
+
+    /// Builds Cursor chat items from the hook event stream. Cursor's transcript
+    /// is written lazily and often incompletely, so unlike Claude/Codex (which
+    /// mirror a JSONL file) each Cursor turn is reconstructed from the hooks:
+    /// the prompt, each tool call + its output, and the assistant's reply all
+    /// arrive as discrete events. No-op for every other agent.
+    ///
+    /// Runs before the gate's status update in `processHookEvent`, so a tool row
+    /// already exists when its PermissionRequest lands. Ids are stable
+    /// (tool_use_id for tools, a per-session sequence for prose), keeping the
+    /// append idempotent if an event is delivered twice.
+    private func applyCursorHookChat(event: HookEvent, session: inout SessionState) {
+        guard session.agent == "cursor" else { return }
+
+        switch event.event {
+        case "UserPromptSubmit":
+            appendCursorProse(role: .user, text: event.message, session: &session)
+
+        case "AgentMessage":
+            appendCursorProse(role: .assistant, text: event.message, session: &session)
+
+        case "PermissionRequest":
+            guard let toolId = event.toolUseId, let name = event.tool else { return }
+            upsertCursorTool(in: &session, id: toolId, name: name,
+                             input: event.toolInput, status: .waitingForApproval, result: nil)
+
+        case "PostToolUse":
+            guard let toolId = event.toolUseId else { return }
+            // tool_output rides in on `message` (forwarded by the hook script).
+            upsertCursorTool(in: &session, id: toolId, name: event.tool ?? "Tool",
+                             input: event.toolInput, status: .success, result: event.message)
+
+        default:
+            break
+        }
+    }
+
+    private enum CursorProseRole { case user, assistant }
+
+    private func appendCursorProse(role: CursorProseRole, text: String?, session: inout SessionState) {
+        guard let text = text?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else { return }
+        session.cursorHookSeq += 1
+        let id = "cursor-msg-\(session.sessionId)-\(session.cursorHookSeq)"
+        let type: ChatHistoryItemType = role == .user ? .user(text) : .assistant(text)
+        session.chatItems.append(ChatHistoryItem(id: id, type: type, timestamp: Date()))
+    }
+
+    /// Creates a tool row keyed by tool_use_id, or advances an existing one.
+    /// Never regresses a settled tool back to pending, and only fills a result
+    /// once — so a duplicate PostToolUse can't clobber the first output.
+    private func upsertCursorTool(in session: inout SessionState, id: String, name: String,
+                                  input rawInput: [String: AnyCodable]?, status: ToolStatus, result: String?) {
+        if let idx = session.chatItems.firstIndex(where: { $0.id == id }),
+           case .toolCall(var tool) = session.chatItems[idx].type {
+            if tool.status == .success || tool.status == .error || tool.status == .interrupted { return }
+            tool.status = status
+            if let result, !result.isEmpty, tool.result == nil { tool.result = result }
+            session.chatItems[idx] = ChatHistoryItem(
+                id: id, type: .toolCall(tool), timestamp: session.chatItems[idx].timestamp
+            )
+        } else {
+            let tool = ToolCallItem(
+                name: name, input: Self.stringInput(rawInput), status: status,
+                result: result, structuredResult: nil, subagentTools: []
+            )
+            session.chatItems.append(ChatHistoryItem(id: id, type: .toolCall(tool), timestamp: Date()))
+        }
+    }
+
+    /// Flattens a hook `tool_input` (untyped JSON) to the `[String: String]` the
+    /// chat models use. Cursor's keys (`path`, `command`) are already understood
+    /// by `ToolCallItem.inputPreview`, so no key remap is needed here.
+    private static func stringInput(_ raw: [String: AnyCodable]?) -> [String: String] {
+        guard let raw else { return [:] }
+        var out: [String: String] = [:]
+        for (key, value) in raw {
+            if let s = value.value as? String { out[key] = s }
+            else if let i = value.value as? Int { out[key] = String(i) }
+            else if let b = value.value as? Bool { out[key] = b ? "true" : "false" }
+        }
+        return out
+    }
+
     private func updateToolStatus(in session: inout SessionState, toolId: String, status: ToolStatus) {
         var found = false
         for i in 0..<session.chatItems.count {
@@ -975,6 +1071,11 @@ actor SessionStore {
         let info: ConversationInfo
         if agent == "codex" {
             info = await CodexTranscriptParser.shared.parse(sessionId: sessionId)
+        } else if agent == "cursor" {
+            // GW-311: Cursor has no cwd-derivable transcript and writes no
+            // summary/ai-title line, so the title comes from its first prompt.
+            guard let path = sessions[sessionId]?.transcriptPath, !path.isEmpty else { return }
+            info = await CursorTranscriptParser.shared.parse(sessionId: sessionId, transcriptPath: path)
         } else {
             info = await ConversationParser.shared.parse(sessionId: sessionId, cwd: cwd)
         }
@@ -998,9 +1099,19 @@ actor SessionStore {
     // MARK: - Session End Processing
 
     private func processSessionEnd(sessionId: String) async {
+        let agent = sessions[sessionId]?.agent
         sessions.removeValue(forKey: sessionId)
         cancelPendingSync(sessionId: sessionId)
+        releaseCursorParserState(sessionId: sessionId, agent: agent)
         dismissedSessionIds.insert(sessionId)
+    }
+
+    /// The Cursor parser caches every parsed message per session to serve
+    /// incremental reads; drop it when the session goes away so ended sessions
+    /// don't accumulate transcripts in memory.
+    private func releaseCursorParserState(sessionId: String, agent: String?) {
+        guard agent == "cursor" else { return }
+        Task { await CursorTranscriptParser.shared.resetState(for: sessionId) }
     }
 
     // MARK: - History Loading
@@ -1095,6 +1206,12 @@ actor SessionStore {
         cancelPendingSync(sessionId: sessionId)
 
         let agent = sessions[sessionId]?.agent
+
+        // GW-311: Cursor writes its transcript lazily and often incompletely, so
+        // its chat is built from the hook event stream (see applyCursorHookChat),
+        // not a file mirror. Nothing to sync from disk. CursorTranscriptParser is
+        // kept as a candidate for later history backfill.
+        if agent == "cursor" { return }
 
         // Schedule new debounced sync
         pendingSyncs[sessionId] = Task { [weak self, syncDebounceNs] in

@@ -183,7 +183,23 @@ _TELEMETRY_EVENTS = {
     "stop": ("Stop", "waiting_for_input"),
     "sessionstart": ("SessionStart", "waiting_for_input"),
     "sessionend": ("SessionEnd", "ended"),
+    # GW-311: Cursor's transcript is written lazily/incompletely, so the notch
+    # chat is sourced from the hook stream instead. afterAgentResponse carries
+    # the assistant's natural-language reply for that turn.
+    "afteragentresponse": ("AgentMessage", "processing"),
 }
+
+
+def _stringify(value):
+    """Flatten a hook field that may be a string or structured JSON to text."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    try:
+        return json.dumps(value)
+    except (TypeError, ValueError):
+        return str(value)
 
 
 def _extract_tool(data):
@@ -271,10 +287,30 @@ def _handle_third_party(data, source, state):
     mapped = _TELEMETRY_EVENTS.get(raw)
     if mapped:
         state["event"], state["status"] = mapped
-        if state["status"] == "processing" and raw in ("posttooluse", "aftershellexecution"):
+        if raw == "beforesubmitprompt":
+            # GW-311: carry the prompt text so the notch mirrors the user's turn.
+            prompt = data.get("prompt")
+            if prompt:
+                state["message"] = _stringify(prompt)
+        elif raw in ("posttooluse", "aftershellexecution"):
             name, tool_input = _extract_tool(data)
             state["tool"] = name
             state["tool_input"] = tool_input
+            # Correlate with the tool row created at gate time (GW-311).
+            tool_use_id = data.get("tool_use_id")
+            if tool_use_id:
+                state["tool_use_id"] = tool_use_id
+            # Cursor's transcript rarely carries results in real time, so the
+            # tool output only reliably arrives here — forward it for the chat.
+            output = data.get("tool_output")
+            if output is not None:
+                state["message"] = _stringify(output)
+        elif raw == "afteragentresponse":
+            # Field spelling varies by version; take the first populated one.
+            text = (data.get("response") or data.get("text")
+                    or data.get("message") or data.get("content"))
+            if text:
+                state["message"] = _stringify(text)
     else:
         state["status"] = "unknown"
     send_event(state)
@@ -291,6 +327,13 @@ def main():
     session_id = data.get("session_id") or data.get("conversation_id") or "unknown"
     event = data.get("hook_event_name", "")
     cwd = data.get("cwd", "")
+    # GW-311: some payloads carry no cwd (Cursor's beforeSubmitPrompt/stop), which
+    # left sessions titled "/" — the lastPathComponent of an empty path. Every
+    # Cursor payload also carries workspace_roots; use the first as the fallback.
+    if not cwd:
+        roots = data.get("workspace_roots") or []
+        if isinstance(roots, list) and roots and isinstance(roots[0], str):
+            cwd = roots[0]
     # Authoritative transcript location. cwd can lag behind for worktree sessions
     # (Claude keys the projects dir by launch cwd), so forward the hook's own
     # transcript_path and let Swift prefer it over cwd-derivation (GW-205).

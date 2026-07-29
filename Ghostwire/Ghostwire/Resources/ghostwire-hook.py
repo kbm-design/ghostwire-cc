@@ -223,6 +223,51 @@ def _extract_tool(data):
     return name, tool_input
 
 
+# GW-341: GHOSTWIRE_AGENT says which CONFIG FILE this hook lives in, not which
+# agent is running. cursor-agent also executes ~/.claude/settings.json hooks, so
+# a single Cursor turn fires BOTH configs: the Cursor copy reports source=cursor
+# and the Claude copy reports the same event again as source=claude. Whichever
+# landed last owned the session's identity — which is why every Cursor session in
+# the notch wore a Claude tag.
+#
+# The payload doesn't lie: Cursor stamps `cursor_version` on every event it
+# sends. Verified live 2026-07-29 against cursor-agent 2026.07.01 — present on
+# sessionStart/preToolUse/postToolUse/beforeShellExecution/beforeMCPExecution/
+# sessionEnd, and absent from every Claude Code payload.
+_AGENT_FINGERPRINTS = (
+    ("cursor", "cursor_version"),
+)
+
+# Where each agent's own hook lives, so we can tell "its hook already reported
+# this" from "we're the only hook that will".
+_AGENT_CONFIG_DIRS = {
+    "cursor": ".cursor",
+    "copilot": ".copilot",
+    "factory": ".factory",
+    "qoder": ".qoder",
+    "codebuddy": ".codebuddy",
+}
+
+
+def _detect_agent(data, declared):
+    """The agent that actually produced this payload, or `declared` if unsure."""
+    for agent, marker in _AGENT_FINGERPRINTS:
+        if marker in data:
+            return agent
+    return declared
+
+
+def _agent_has_own_hook(agent):
+    """Whether `agent`'s own ghostwire hook is installed. Uninstall removes the
+    script, so its presence tracks installation."""
+    config_dir = _AGENT_CONFIG_DIRS.get(agent)
+    if not config_dir:
+        return False
+    return os.path.isfile(
+        os.path.expanduser(os.path.join("~", config_dir, "hooks", "ghostwire-hook.py"))
+    )
+
+
 def _allow_output(source):
     """Native allow decision so the agent doesn't re-prompt after a notch allow.
     None -> just exit 0 (exit-code-only agents)."""
@@ -355,6 +400,18 @@ def main():
         # Which agent installed this hook (set by the installer); defaults to claude
         "source": os.environ.get("GHOSTWIRE_AGENT", "claude"),
     }
+
+    # GW-341: trust the payload over the config file we happen to live in.
+    actual = _detect_agent(data, state["source"])
+    if actual != state["source"]:
+        if _agent_has_own_hook(actual):
+            # That agent's own hook is installed and reports this same event.
+            # Sending it twice re-stamps the session's identity and, for a gate,
+            # raises a second approval for one tool call. Stay quiet.
+            sys.exit(0)
+        # We're the only hook that will see this turn — report it, but under the
+        # agent that actually ran, never under the one whose config we're in.
+        state["source"] = actual
 
     # Forward the transcript path when the agent provides one (GW-205).
     if transcript_path:

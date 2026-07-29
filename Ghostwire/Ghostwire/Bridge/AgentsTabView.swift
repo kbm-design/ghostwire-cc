@@ -131,7 +131,9 @@ struct AgentsTabView: View {
         case .quota:
             return true
         case .tokens(let tokens):
-            if sessions.contains(where: { ($0.agent ?? "claude") == "claude" }) { return true }
+            // GW-341: an unknown agent is unknown, not Claude. Defaulting nil to
+            // a vendor is how a non-Claude session ends up wearing Claude's identity.
+            if sessions.contains(where: { $0.agent == "claude" }) { return true }
             return tokens.hasRecentActivity
         }
     }

@@ -105,6 +105,38 @@ def main():
         {"hook_event_name": "postToolUse", "tool_name": "Read"}, "copilot", st))
     assert r is None and st["event"] == "PostToolUse" and st["status"] == "processing", (r, st)
 
+    # --- GW-341: agent identity comes from the payload, not the config file ---
+    # cursor-agent executes ~/.claude/settings.json hooks as well as its own, so
+    # the Claude copy of this script receives Cursor payloads. Before the fix it
+    # reported them as source=claude and every Cursor session wore a Claude tag.
+    cursor_payload = {"hook_event_name": "preToolUse", "cursor_version": "2026.07.01",
+                      "conversation_id": "c-1", "session_id": "s-1"}
+    claude_payload = {"hook_event_name": "PreToolUse", "session_id": "s-1",
+                      "transcript_path": "/x.jsonl"}
+
+    assert m._detect_agent(cursor_payload, "claude") == "cursor"
+    assert m._detect_agent(cursor_payload, "cursor") == "cursor"
+    # Nothing to go on -> keep what the installer declared. Never guess a vendor.
+    assert m._detect_agent(claude_payload, "claude") == "claude"
+    assert m._detect_agent(claude_payload, "codex") == "codex"
+    assert m._detect_agent({}, "codex") == "codex"
+
+    # Suppression is conditional on the real agent having its own hook: with one
+    # installed we'd otherwise double-report (two approvals for one tool call);
+    # with none we are the only hook that will see the turn, so report it — under
+    # the agent that actually ran.
+    real_isfile = os.path.isfile
+    try:
+        os.path.isfile = lambda p: p.endswith(os.path.join(".cursor", "hooks", "ghostwire-hook.py"))
+        assert m._agent_has_own_hook("cursor") is True
+        os.path.isfile = lambda p: False
+        assert m._agent_has_own_hook("cursor") is False
+        # Agents with no third-party config dir (claude/codex) are never suppressed.
+        assert m._agent_has_own_hook("claude") is False
+        assert m._agent_has_own_hook("codex") is False
+    finally:
+        os.path.isfile = real_isfile
+
     print("test_ghostwire_hook: all adapter tests passed")
 
 

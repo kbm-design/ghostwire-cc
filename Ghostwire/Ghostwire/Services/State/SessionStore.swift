@@ -131,8 +131,30 @@ actor SessionStore {
         let isNewSession = sessions[sessionId] == nil
         var session = sessions[sessionId] ?? createSession(from: event)
         let wasProvisional = session.isProvisional
+        if isNewSession {
+            // GW-341: identity at birth, so a wrong tag can be traced to the
+            // event that caused it instead of guessed at from the UI.
+            Self.logger.info(
+                "New session \(sessionId.prefix(8), privacy: .public) agent=\(event.source ?? "<none>", privacy: .public) via \(event.event, privacy: .public)"
+            )
+        }
         if wasProvisional {
             session = Self.upgradedFromProvisional(session, event: event)
+        }
+
+        // GW-341: the hook's `source` is stamped by the installer that wrote the
+        // hook (GHOSTWIRE_AGENT=cursor|codex|…), so it is authoritative for
+        // identity — more so than discovery, which infers the agent from which
+        // directory a transcript sits in. Agent used to be set once at creation,
+        // so a session adopted through any other path kept that path's guess for
+        // its whole life. Re-stamp on every event that carries a source.
+        if let source = event.source, !source.isEmpty, session.agent != source {
+            if let previous = session.agent {
+                Self.logger.info(
+                    "Session \(sessionId.prefix(8), privacy: .public) agent corrected: \(previous, privacy: .public) -> \(source, privacy: .public)"
+                )
+            }
+            session.agent = source
         }
 
         session.pid = event.pid

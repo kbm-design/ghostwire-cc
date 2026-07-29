@@ -67,6 +67,59 @@ struct HookEvent: Codable, Sendable {
         self.transcriptPath = transcriptPath
     }
 
+    /// GW-341: hand-rolled so ONE odd optional field can't drop a whole event.
+    ///
+    /// The synthesized decoder is all-or-nothing, and Cursor's
+    /// `beforeMCPExecution` sends `tool_input` JSON-encoded as a *string*
+    /// ("tool_input": "{\"nodeId\":\"1-0\"}"). That threw a typeMismatch, the
+    /// event was discarded, and because these events are PermissionRequests the
+    /// socket closed with no verdict — the hook fails open and the tool runs
+    /// with the human never seeing it. Cursor's hook stream is also its only
+    /// source of truth (GW-311), so the session lost its identity too.
+    ///
+    /// So: the four fields that make an event usable at all still throw;
+    /// everything else is best-effort and degrades to nil.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+
+        sessionId = try c.decode(String.self, forKey: .sessionId)
+        cwd = try c.decode(String.self, forKey: .cwd)
+        event = try c.decode(String.self, forKey: .event)
+        status = try c.decode(String.self, forKey: .status)
+
+        pid = try? c.decodeIfPresent(Int.self, forKey: .pid)
+        tty = try? c.decodeIfPresent(String.self, forKey: .tty)
+        tool = try? c.decodeIfPresent(String.self, forKey: .tool)
+        toolUseId = try? c.decodeIfPresent(String.self, forKey: .toolUseId)
+        notificationType = try? c.decodeIfPresent(String.self, forKey: .notificationType)
+        message = try? c.decodeIfPresent(String.self, forKey: .message)
+        cmuxWorkspace = try? c.decodeIfPresent(String.self, forKey: .cmuxWorkspace)
+        cmuxSurface = try? c.decodeIfPresent(String.self, forKey: .cmuxSurface)
+        source = try? c.decodeIfPresent(String.self, forKey: .source)
+        transcriptPath = try? c.decodeIfPresent(String.self, forKey: .transcriptPath)
+        toolInput = Self.decodeToolInput(from: c)
+    }
+
+    /// Accepts `tool_input` as an object (Claude, Codex, Cursor's shell gate) or
+    /// as a JSON-encoded string (Cursor's MCP gate). A string that isn't JSON is
+    /// kept under `input` rather than dropped — GW-139 says the human approves
+    /// what they can see, so losing the payload is worse than labelling it.
+    private static func decodeToolInput(
+        from c: KeyedDecodingContainer<CodingKeys>
+    ) -> [String: AnyCodable]? {
+        if let object = try? c.decodeIfPresent([String: AnyCodable].self, forKey: .toolInput) {
+            return object
+        }
+        guard let encoded = try? c.decodeIfPresent(String.self, forKey: .toolInput),
+              !encoded.isEmpty else { return nil }
+        if let decoded = try? JSONDecoder().decode(
+            [String: AnyCodable].self, from: Data(encoded.utf8)
+        ) {
+            return decoded
+        }
+        return ["input": AnyCodable(encoded)]
+    }
+
     var sessionPhase: SessionPhase {
         if event == "PreCompact" {
             return .compacting
@@ -143,6 +196,28 @@ class HookSocketServer {
     private let cacheLock = NSLock()
 
     private init() {}
+
+    /// GW-341: turn a DecodingError into "which field, and what was wrong with
+    /// it" — the detail the old warning omitted. `localizedDescription` on a
+    /// DecodingError is famously "The data couldn't be read…", which is what
+    /// let a systematic drop hide in plain sight.
+    static func describe(_ error: Error) -> String {
+        func path(_ keys: [CodingKey]) -> String {
+            keys.isEmpty ? "<root>" : keys.map(\.stringValue).joined(separator: ".")
+        }
+        switch error {
+        case let DecodingError.typeMismatch(type, ctx):
+            return "field '\(path(ctx.codingPath))' had the wrong type (expected \(type)): \(ctx.debugDescription)"
+        case let DecodingError.valueNotFound(type, ctx):
+            return "field '\(path(ctx.codingPath))' was null but \(type) is required"
+        case let DecodingError.keyNotFound(key, ctx):
+            return "required field '\(key.stringValue)' missing at '\(path(ctx.codingPath))'"
+        case let DecodingError.dataCorrupted(ctx):
+            return "malformed JSON at '\(path(ctx.codingPath))': \(ctx.debugDescription)"
+        default:
+            return "\(error)"
+        }
+    }
 
     /// Start the socket server
     func start(onEvent: @escaping HookEventHandler, onPermissionFailure: PermissionFailureHandler? = nil) {
@@ -467,13 +542,29 @@ class HookSocketServer {
 
         let data = allData
 
-        guard let event = try? JSONDecoder().decode(HookEvent.self, from: data) else {
-            logger.warning("Failed to parse event: \(String(data: data, encoding: .utf8) ?? "?", privacy: .public)")
+        let event: HookEvent
+        do {
+            event = try JSONDecoder().decode(HookEvent.self, from: data)
+        } catch {
+            // GW-341: the old message said an event failed but not which field
+            // or why, so a systematic Cursor drop went unnoticed for weeks.
+            // Name the field and the reason — and say out loud that a dropped
+            // PermissionRequest means the hook fails open.
+            let raw = String(data: data, encoding: .utf8) ?? "<non-utf8>"
+            let cost = raw.contains("waiting_for_approval")
+                ? "APPROVAL LOST (hook fails open — the tool runs unseen)"
+                : "telemetry lost"
+            logger.error(
+                "Dropped hook event: \(cost, privacy: .public) — \(Self.describe(error), privacy: .public) | raw: \(raw, privacy: .public)"
+            )
             close(clientSocket)
             return
         }
 
-        logger.debug("Received: \(event.event, privacy: .public) for \(event.sessionId.prefix(8), privacy: .public)")
+        // GW-341: source belongs in this line. Identity bugs are per-event —
+        // one mis-sourced event in a stream re-stamps the whole session — and
+        // without it there was no way to tell which event did it.
+        logger.debug("Received: \(event.event, privacy: .public) for \(event.sessionId.prefix(8), privacy: .public) source=\(event.source ?? "<none>", privacy: .public)")
 
         if event.event == "PreToolUse" {
             cacheToolUseId(event: event)

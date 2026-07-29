@@ -25,6 +25,11 @@ struct HyperliquidFeedSource: FeedSource {
     let displayName = "Crypto prices"
     let refreshInterval: TimeInterval = 60
 
+    /// GW-182. Prices earn the notch when the user is already looking at
+    /// markets; everywhere else they're ambient texture and should sit where the
+    /// user put them.
+    let affinity: [AppCategory: Double] = [.finance: 1.0]
+
     /// Which assets to surface, in card order. Uppercase Hyperliquid symbols.
     var symbols: [String]
 

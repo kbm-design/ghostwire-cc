@@ -23,6 +23,7 @@ struct FeedSettings: View {
     @Default(.feedNotchVisibleCount) private var notchVisibleCount
     @Default(.feedMCPSourcesEnabled) private var mcpEnabled
     @Default(.feedMCPRefreshSeconds) private var mcpRefreshSeconds
+    @Default(.feedRankingMode) private var rankingMode
 
     @State private var newSymbol = ""
     @State private var newFeedURL = ""
@@ -158,11 +159,20 @@ struct FeedSettings: View {
             Section {
                 Stepper("Cards in the notch: \(notchVisibleCount)",
                         value: $notchVisibleCount, in: 0...20)
+
+                Picker("Let cards move when", selection: $rankingMode) {
+                    ForEach(FeedRankingMode.allCases) { mode in
+                        Text(mode.rawValue).tag(mode)
+                    }
+                }
             } footer: {
-                Text("How many of the ordered cards mirror into the notch's row. The detached window always shows all of them.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .leadingFooter()
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("How many of the ordered cards mirror into the notch's row. The detached window always shows all of them, in your order — nothing below ever reorders it.")
+                    Text(rankingMode.explanation)
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .leadingFooter()
             }
         }
         .formStyle(.grouped)

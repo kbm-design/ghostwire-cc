@@ -150,6 +150,13 @@ final class FeedSourceCoordinator {
         loops.removeAll()
     }
 
+    /// GW-182 — sourceId → declared `AppCategory` affinity, for `FeedRanker`.
+    /// Only running sources appear, so a disabled Source can't influence ranking
+    /// through cards that outlived it.
+    var affinities: [String: [AppCategory: Double]] {
+        Dictionary(sources.map { ($0.id, $0.affinity) }, uniquingKeysWith: { first, _ in first })
+    }
+
     /// Refresh any source whose cards have gone stale. Called when a surface
     /// opens so the user isn't looking at a value from before the laptop slept.
     func refreshStaleSources(now: Date = Date()) {

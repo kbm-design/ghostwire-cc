@@ -23,6 +23,10 @@ struct LocalStatsFeedSource: FeedSource {
     /// Local reads are free, but the values only move as fast as the agents do.
     let refreshInterval: TimeInterval = 30
 
+    /// GW-182. Quota and agent status are about work in progress — they matter
+    /// in an editor or a terminal and are noise in a music player.
+    let affinity: [AppCategory: Double] = [.coding: 1.0]
+
     func fetch() async throws -> [FeedCard] {
         let now = Date()
         var cards: [FeedCard] = []
@@ -46,9 +50,15 @@ struct LocalStatsFeedSource: FeedSource {
                 value: "\(Int(fiveHour.utilization.rounded()))%",
                 delta: fiveHour.resetsAt.map { "resets \(Self.relative.localizedString(for: $0, relativeTo: now))" }
             ),
-            updatedAt: now
+            updatedAt: now,
+            // GW-182: near the ceiling, the number stops being trivia and starts
+            // governing whether the user can keep working — worth the notch.
+            urgency: fiveHour.utilization >= Self.quotaAttentionThreshold ? .attention : .info
         )
     }
+
+    /// Percent of the 5-hour window at which quota becomes worth surfacing.
+    static let quotaAttentionThreshold: Double = 90
 
     /// Live agent sessions, with the count that actually demands action —
     /// how many are blocked waiting for an approval — as the secondary line.
@@ -67,7 +77,11 @@ struct LocalStatsFeedSource: FeedSource {
                 // Unsigned, so the card renders it neutral rather than red/green.
                 delta: waiting > 0 ? "\(waiting) waiting on you" : nil
             ),
-            updatedAt: now
+            updatedAt: now,
+            // GW-182: a blocked agent is the one thing in the feed that is
+            // literally waiting on the user. This is the Tier-A signal the
+            // ranker leans on hardest, and it needs no ambient capture at all.
+            urgency: waiting > 0 ? .attention : .info
         )
     }
 

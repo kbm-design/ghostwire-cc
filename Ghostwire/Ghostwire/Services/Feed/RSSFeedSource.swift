@@ -28,6 +28,12 @@ struct RSSFeedSource: FeedSource {
     /// inside "fresh" for news and releases, and stays polite to the hosts.
     let refreshInterval: TimeInterval = 900
 
+    /// GW-182. Headlines are for reading time, not mid-build. Note that browsers
+    /// don't declare a usable category (Safari says "productivity", Chrome
+    /// declares nothing), so in practice this matches news/reference apps rather
+    /// than the browser itself — see `AppCategoryMap`.
+    let affinity: [AppCategory: Double] = [.research: 1.0]
+
     /// Feed URLs, in card order.
     var feeds: [URL]
 

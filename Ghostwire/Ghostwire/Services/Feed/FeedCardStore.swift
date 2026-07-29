@@ -25,6 +25,12 @@ final class FeedCardStore {
     /// All cards in user order (persisted order applied to the live set).
     private(set) var orderedCards: [FeedCard]
 
+    /// GW-182 — cardId → when its CONTENT last changed. Distinct from
+    /// `FeedCard.updatedAt`, which every Source stamps on every refresh whether
+    /// or not the value moved: `updatedAt` measures polling, this measures news.
+    /// In-memory only; "new since you last looked" is a within-session question.
+    private(set) var contentChangedAt: [String: Date] = [:]
+
     /// The first N cards mirror into the notch. Tunable via Defaults.
     var notchVisibleCount: Int { max(0, Defaults[.feedNotchVisibleCount]) }
 
@@ -46,7 +52,10 @@ final class FeedCardStore {
     /// race at the top, and every later source appended behind it — permanently,
     /// since `reconcile` honours saved positions on every subsequent launch.
     /// Only an explicit `move` is a choice worth persisting.
-    func setCards(_ cards: [FeedCard]) {
+    func setCards(_ cards: [FeedCard], now: Date = Date()) {
+        contentChangedAt = FeedNovelty.tracking(
+            previous: contentChangedAt, oldCards: orderedCards, newCards: cards, now: now
+        )
         orderedCards = Self.reconcile(cards: cards, order: Defaults[.feedCardOrder])
     }
 

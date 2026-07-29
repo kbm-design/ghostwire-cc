@@ -228,6 +228,10 @@ class GhostwireViewModel: NSObject, ObservableObject {
         // was shut (or the machine asleep), so an opened feed isn't showing a
         // price from an hour ago. No-op when everything is already fresh.
         FeedSourceCoordinator.shared.refreshStaleSources()
+        // GW-182 deliberately does NOT mark the feed as seen here: `open()`
+        // fires for every tab, so opening Agents or Shelf would clear feed
+        // novelty for cards the user never looked at. `FeedSurfaceView` owns
+        // that call, on its own appearance.
     }
 
     func close() {

@@ -15,6 +15,31 @@
 
 import Foundation
 
+/// How much this card is asking for. The Source knows (it read the data); the
+/// ranker does not (it would have to sniff rendered strings to guess). This is
+/// the architecture's `baseUrgency` (§5.1) — an input the producer declares, not
+/// a ranking output, so the "no order/score field" rule below still holds.
+enum FeedCardUrgency: Int, Comparable, Sendable {
+    /// Background texture — true by definition, interesting to nobody right now.
+    case ambient = 0
+    /// The default: worth a glance, asking for nothing.
+    case info = 1
+    /// Something is waiting on the user.
+    case attention = 2
+    /// Acting late has a cost.
+    case critical = 3
+
+    static func < (lhs: Self, rhs: Self) -> Bool { lhs.rawValue < rhs.rawValue }
+
+    /// 0…1 for scoring.
+    var score: Double { Double(rawValue) / Double(FeedCardUrgency.critical.rawValue) }
+
+    /// How far above the resting level this sits. `.info` is the floor, so an
+    /// ordinary card contributes no urgency signal at all — only a card that
+    /// actually escalated can pull the feed away from the user's own order.
+    var escalation: Double { self <= .info ? 0 : score }
+}
+
 /// One rendered item in a feed. Ranking-agnostic: no order/score field, so GW-182
 /// context ranking can sort a `[FeedCard]` later with no model change.
 struct FeedCard: Identifiable, Equatable, Sendable {
@@ -32,6 +57,10 @@ struct FeedCard: Identifiable, Equatable, Sendable {
     /// (e.g. a ticket card opens its Linear URL). Click is the only non-copy/send
     /// action this layer exposes; there is no app-control here.
     let link: URL?
+    /// How much this card is asking for (GW-182). Declared by the Source, read
+    /// by `FeedRanker`. `.info` — asking for nothing — is the default, so a
+    /// Source opts into being surfaced rather than out of it.
+    let urgency: FeedCardUrgency
 
     init(
         id: String,
@@ -39,7 +68,8 @@ struct FeedCard: Identifiable, Equatable, Sendable {
         sourceApp: String? = nil,
         kind: FeedCardKind,
         updatedAt: Date,
-        link: URL? = nil
+        link: URL? = nil,
+        urgency: FeedCardUrgency = .info
     ) {
         self.id = id
         self.sourceId = sourceId
@@ -47,6 +77,7 @@ struct FeedCard: Identifiable, Equatable, Sendable {
         self.kind = kind
         self.updatedAt = updatedAt
         self.link = link
+        self.urgency = urgency
     }
 }
 

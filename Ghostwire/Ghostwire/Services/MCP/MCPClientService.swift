@@ -108,7 +108,35 @@ final class MCPClientService: ObservableObject {
             config.allowedTools.insert(tool)
         } else {
             config.allowedTools.remove(tool)
+            // Disallowing implies unbinding (GW-214): a binding left behind would
+            // sit in Settings looking active while failing closed on every poll.
+            config.feedTools?.removeAll { $0.tool == tool }
         }
+        store.update(config)
+        objectWillChange.send()
+    }
+
+    /// GW-214: bind/unbind a tool as an ambient feed card. Independent of the
+    /// allowlist — binding never grants a call, it only schedules one that the
+    /// allowlist has already permitted.
+    func setFeedTool(serverID: UUID, tool: String, bound: Bool) {
+        guard var config = store.server(id: serverID) else { return }
+        var bindings = config.feedTools ?? []
+        bindings.removeAll { $0.tool == tool }
+        if bound { bindings.append(MCPFeedToolBinding(tool: tool)) }
+        config.feedTools = bindings
+        store.update(config)
+        objectWillChange.send()
+    }
+
+    /// Edit a binding's call arguments (Settings). No-op for an unbound tool.
+    func setFeedToolArguments(serverID: UUID, tool: String, argumentsJSON: String) {
+        guard var config = store.server(id: serverID),
+            var bindings = config.feedTools,
+            let index = bindings.firstIndex(where: { $0.tool == tool })
+        else { return }
+        bindings[index].argumentsJSON = argumentsJSON
+        config.feedTools = bindings
         store.update(config)
         objectWillChange.send()
     }

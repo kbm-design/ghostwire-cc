@@ -112,43 +112,113 @@ struct MCPServerDetailView: View {
         if let runtime, !runtime.tools.isEmpty, let config {
             Text("Tools — allow individually (read-only glances)").font(.subheadline)
             List(runtime.tools) { tool in
-                HStack(spacing: 6) {
-                    VStack(alignment: .leading, spacing: 1) {
-                        HStack(spacing: 4) {
-                            Text(tool.name).font(.body.monospaced())
-                            if tool.isReadOnlyHinted == true { badge("read-only", .green) }
-                            if tool.isDestructiveHinted == true { badge("destructive", .red) }
-                            if tool.hasOutputSchema { badge("schema", .blue) }
-                        }
-                        if let description = tool.description {
-                            Text(description).font(.caption).foregroundStyle(.secondary)
-                                .lineLimit(1)
-                        }
-                    }
-                    Spacer()
-                    if config.allowedTools.contains(tool.name) {
-                        Button(runningTool == tool.name ? "Running…" : "Run") {
-                            Task { await run(tool: tool.name) }
-                        }
-                        .font(.caption)
-                        .disabled(runningTool != nil)
-                    }
-                    Toggle(
-                        "",
-                        isOn: Binding(
-                            get: { config.allowedTools.contains(tool.name) },
-                            set: {
-                                service.setToolAllowed(
-                                    serverID: serverID, tool: tool.name, allowed: $0)
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 6) {
+                        VStack(alignment: .leading, spacing: 1) {
+                            HStack(spacing: 4) {
+                                Text(tool.name).font(.body.monospaced())
+                                if tool.isReadOnlyHinted == true { badge("read-only", .green) }
+                                if tool.isDestructiveHinted == true { badge("destructive", .red) }
+                                if tool.hasOutputSchema { badge("schema", .blue) }
                             }
+                            if let description = tool.description {
+                                Text(description).font(.caption).foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
+                        }
+                        Spacer()
+                        if config.allowedTools.contains(tool.name) {
+                            feedToggle(config: config, tool: tool.name)
+                            Button(runningTool == tool.name ? "Running…" : "Run") {
+                                Task { await run(tool: tool.name) }
+                            }
+                            .font(.caption)
+                            .disabled(runningTool != nil)
+                        }
+                        Toggle(
+                            "",
+                            isOn: Binding(
+                                get: { config.allowedTools.contains(tool.name) },
+                                set: {
+                                    service.setToolAllowed(
+                                        serverID: serverID, tool: tool.name, allowed: $0)
+                                    restartFeed()
+                                }
+                            )
                         )
-                    )
-                    .toggleStyle(.switch)
-                    .controlSize(.mini)
+                        .toggleStyle(.switch)
+                        .controlSize(.mini)
+                        .help("Allow Ghostwire to call this tool")
+                    }
+                    if let binding = config.feedTools?.first(where: { $0.tool == tool.name }) {
+                        feedArgumentsField(binding: binding)
+                    }
                 }
             }
             .frame(minHeight: 140)
         }
+    }
+
+    // MARK: - GW-214: bind a tool as a feed card
+
+    /// A SECOND opt-in on top of the allowlist. Allowing says "you may call
+    /// this"; binding says "call it on a timer and show me the answer". Only
+    /// offered for already-allowed tools, because the feed goes through
+    /// `callAllowedTool` and a binding without the allowlist would fail closed.
+    private func feedToggle(config: MCPServerConfig, tool: String) -> some View {
+        let isBound = config.feedTools?.contains { $0.tool == tool } ?? false
+        return Button {
+            service.setFeedTool(serverID: serverID, tool: tool, bound: !isBound)
+            restartFeed()
+        } label: {
+            Image(systemName: isBound ? "square.grid.2x2.fill" : "square.grid.2x2")
+                .foregroundStyle(isBound ? Color.effectiveAccent : .secondary)
+        }
+        .buttonStyle(.plain)
+        .help(isBound ? "Showing in the Feed — click to stop" : "Show this tool's result in the Feed")
+    }
+
+    /// Arguments for the scheduled call. Most read tools need none, so this
+    /// starts at `{}` — an empty object rather than nothing, because strict
+    /// servers reject a missing `arguments` field outright.
+    private func feedArgumentsField(binding: MCPFeedToolBinding) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 6) {
+                Text("Feed arguments").font(.caption2).foregroundStyle(.secondary)
+                TextField(
+                    "{}",
+                    text: Binding(
+                        get: { binding.argumentsJSON },
+                        set: {
+                            service.setFeedToolArguments(
+                                serverID: serverID, tool: binding.tool, argumentsJSON: $0)
+                        }
+                    )
+                )
+                .textFieldStyle(.roundedBorder)
+                .font(.caption.monospaced())
+                .onSubmit { restartFeed() }
+            }
+            if !binding.hasValidArguments {
+                Text("Not a JSON object — the tool will be called with no arguments.")
+                    .font(.caption2).foregroundStyle(.orange)
+            } else if !binding.argumentsJSON.trimmingCharacters(in: .whitespaces).isEmpty,
+                binding.argumentsJSON.trimmingCharacters(in: .whitespaces) != "{}" {
+                // These are stored in ~/.ghostwire/mcp-servers.json, which is
+                // otherwise guaranteed secret-free (env values and tokens live
+                // in the Keychain). Say so rather than let a token land there
+                // silently.
+                Text("Saved in plain text — put credentials in the server's auth settings, not here.")
+                    .font(.caption2).foregroundStyle(.secondary)
+            }
+        }
+        .padding(.leading, 4)
+    }
+
+    /// Rebuild the Source list now rather than at the next poll, so a binding
+    /// shows up in the Feed while the user is still looking at this sheet.
+    private func restartFeed() {
+        FeedSourceCoordinator.shared.start()
     }
 
     private func badge(_ text: String, _ color: Color) -> some View {

@@ -64,10 +64,35 @@ final class FeedSourceCoordinator {
         return built
     }
 
+    /// GW-214: one Source per MCP server that has at least one tool bound to the
+    /// feed. Not "built-in" — these depend entirely on what the user connected
+    /// and opted in, which is the point: this is the half of the feed that shows
+    /// the user's OWN authenticated data rather than public numbers.
+    ///
+    /// A server with no bindings produces no Source at all, so a connected-but-
+    /// unbound server never causes a background poll or a spawned subprocess.
+    static func mcpSources(service: MCPClientService = .shared) -> [any FeedSource] {
+        guard Defaults[.feedSourcesEnabled], Defaults[.feedMCPSourcesEnabled] else { return [] }
+        let interval = TimeInterval(max(30, Defaults[.feedMCPRefreshSeconds]))
+        return service.store.servers.compactMap { config -> (any FeedSource)? in
+            guard config.isEnabled else { return nil }
+            let bindings = config.feedBindings
+            guard !bindings.isEmpty else { return nil }
+            return MCPFeedSource(
+                serverID: config.id,
+                serverName: config.name,
+                bindings: bindings,
+                refreshInterval: interval,
+                backend: service
+            )
+        }
+    }
+
     /// Start (or restart) every enabled source. Safe to call again after a
     /// settings change — existing loops are cancelled first.
-    /// `nil` resolves the built-in catalog — it can't be a default argument
-    /// because that expression would be evaluated outside the actor.
+    /// `nil` resolves the built-in catalog plus the user's bound MCP servers —
+    /// it can't be a default argument because that expression would be evaluated
+    /// outside the actor.
     ///
     /// Also (re)binds the module master toggle, so flipping Feed off in the
     /// settings sidebar stops the loops immediately instead of at the next poll.
@@ -79,7 +104,7 @@ final class FeedSourceCoordinator {
                 }
         }
         stop()
-        let sources = sources ?? Self.builtInSources()
+        let sources = sources ?? (Self.builtInSources() + Self.mcpSources())
         self.sources = sources
         // Nothing enabled: drop the cards too, or the feed would keep showing
         // the values from just before the user switched the module off.

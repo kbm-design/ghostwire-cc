@@ -21,6 +21,8 @@ struct FeedSettings: View {
     @Default(.feedRSSSourceEnabled) private var rssEnabled
     @Default(.feedRSSURLs) private var feedURLs
     @Default(.feedNotchVisibleCount) private var notchVisibleCount
+    @Default(.feedMCPSourcesEnabled) private var mcpEnabled
+    @Default(.feedMCPRefreshSeconds) private var mcpRefreshSeconds
 
     @State private var newSymbol = ""
     @State private var newFeedURL = ""
@@ -123,6 +125,35 @@ struct FeedSettings: View {
                     .leadingFooter()
             }
 
+            // MCP servers (GW-214) ---------------------------------------------
+            Section {
+                Toggle("MCP servers", isOn: $mcpEnabled)
+                    .tint(.effectiveAccent)
+
+                if mcpEnabled {
+                    if boundTools.isEmpty {
+                        Text("No tools bound yet.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(boundTools, id: \.self) { label in
+                            Text(label).font(.caption.monospaced()).lineLimit(1)
+                        }
+                    }
+                    Stepper(
+                        "Refresh every \(mcpRefreshSeconds / 60) min",
+                        value: $mcpRefreshSeconds, in: 60...3600, step: 60
+                    )
+                }
+            } header: {
+                Text("Connected servers")
+            } footer: {
+                Text("Your own data — issues, builds, balances — from the MCP servers you've connected. Bind a tool in Settings › MCP: open a server, allow a read-only tool, then press the grid icon. Nothing polls until you do, and Ghostwire only ever calls tools you've allowed.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .leadingFooter()
+            }
+
             // Notch row --------------------------------------------------------
             Section {
                 Stepper("Cards in the notch: \(notchVisibleCount)",
@@ -143,6 +174,17 @@ struct FeedSettings: View {
         .onChange(of: symbols) { restart() }
         .onChange(of: rssEnabled) { restart() }
         .onChange(of: feedURLs) { restart() }
+        .onChange(of: mcpEnabled) { restart() }
+        .onChange(of: mcpRefreshSeconds) { restart() }
+    }
+
+    /// Read-only mirror of what's bound over in Settings › MCP. Bindings are
+    /// edited there (next to the allowlist they depend on); this pane just makes
+    /// them visible from the place the user goes to ask "what's in my feed?".
+    private var boundTools: [String] {
+        MCPClientService.shared.store.servers.flatMap { config in
+            config.feedBindings.map { "\(config.name) · \($0.tool)" }
+        }
     }
 
     private var normalizedSymbol: String {

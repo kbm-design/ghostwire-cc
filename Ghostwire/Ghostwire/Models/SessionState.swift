@@ -203,6 +203,17 @@ struct SessionState: Equatable, Identifiable, Sendable {
         activePermission?.commandSummary
     }
 
+    /// GW-321 (State B): the pending gate parsed as a Choice, when the tool the
+    /// agent is blocked on is `AskUserQuestion`. Nil for every other tool, and
+    /// nil if the payload doesn't parse cleanly — callers fall back to the
+    /// "answer in the terminal" bar rather than rendering a partial question.
+    var pendingChoice: AskUserQuestionRequest? {
+        guard let permission = activePermission,
+              permission.toolName == "AskUserQuestion",
+              let input = permission.toolInput else { return nil }
+        return AskUserQuestionRequest(toolInput: input)
+    }
+
     /// GW-207: project dir last path component, for alert-history rows.
     var folderName: String {
         URL(fileURLWithPath: cwd).lastPathComponent

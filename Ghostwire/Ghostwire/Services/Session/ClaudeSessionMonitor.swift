@@ -122,10 +122,15 @@ class ClaudeSessionMonitor: ObservableObject {
         }
     }
 
-    func denyPermission(sessionId: String, reason: String?) {
+    /// GW-321: `delivered` reports whether the verdict actually reached the held
+    /// hook socket, so a Choice answer can show sent/failed rather than assuming
+    /// it landed. A stale socket means the agent never got it.
+    func denyPermission(sessionId: String, reason: String?,
+                        delivered: (@Sendable (Bool) -> Void)? = nil) {
         Task {
             guard let session = await SessionStore.shared.session(for: sessionId),
                   let permission = session.activePermission else {
+                delivered?(false)
                 return
             }
 
@@ -144,6 +149,7 @@ class ClaudeSessionMonitor: ObservableObject {
                         outcome: wasDelivered ? "denied" : "timedOut"
                     )
                 }
+                delivered?(wasDelivered)
             }
 
             await SessionStore.shared.process(

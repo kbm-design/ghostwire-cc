@@ -47,4 +47,25 @@ class AgentPanelViewModel: ObservableObject {
             currentChatSession = session
         }
     }
+
+    // MARK: - Composer drafts (GW-320)
+
+    /// Unsent reply text, per session. `ChatView`'s `inputText` is view state, so
+    /// it dies every time the view is torn down — backing out to the session list,
+    /// or the notch auto-dismissing on dwell (GW-264). Losing a half-typed reply
+    /// to an incidental dismiss is a real loss when the whole point of the surface
+    /// is catching you mid-context, so drafts live here instead and outlive the view.
+    private var drafts: [String: String] = [:]
+
+    func draft(for sessionId: String) -> String {
+        drafts[sessionId] ?? ""
+    }
+
+    func setDraft(_ text: String, for sessionId: String) {
+        if text.isEmpty {
+            drafts.removeValue(forKey: sessionId)
+        } else {
+            drafts[sessionId] = text
+        }
+    }
 }

@@ -379,8 +379,16 @@ final class MCPClientService: ObservableObject {
         }
     }
 
+    /// Telemetry writes RE-READ the config instead of using the caller's copy.
+    ///
+    /// The caller captured that copy BEFORE an await (a connect or a tool call
+    /// lasting hundreds of ms), so writing it back would silently revert
+    /// anything the user changed meanwhile — binding a tool, unbinding it, or
+    /// editing its feed arguments. A race, so edits stuck sometimes and not
+    /// others. Re-reading also means a server removed mid-call is not
+    /// resurrected by its own trailing telemetry. (Codex P2, 2026-07-29.)
     private func recordProbe(config: MCPServerConfig, tools: [MCPToolInfo]) {
-        var updated = config
+        guard var updated = store.server(id: config.id) else { return }
         var probe = updated.lastProbe
             ?? MCPProbeRecord(date: Date(), toolCount: 0, toolsWithOutputSchema: [])
         probe.date = Date()
@@ -390,8 +398,10 @@ final class MCPClientService: ObservableObject {
         store.update(updated)
     }
 
+    /// Same re-read as `recordProbe` — this one runs after the tool call, which
+    /// is the longer await and so the likelier window to clobber a feed edit.
     private func recordRun(config: MCPServerConfig, tool: String, output: MCPToolCallOutput) {
-        var updated = config
+        guard var updated = store.server(id: config.id) else { return }
         var probe = updated.lastProbe
             ?? MCPProbeRecord(date: Date(), toolCount: 0, toolsWithOutputSchema: [])
         probe.lastRunTool = tool

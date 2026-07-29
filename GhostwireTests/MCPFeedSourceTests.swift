@@ -514,7 +514,14 @@ final class MCPToolFeedCandidacyTests: XCTestCase {
     /// would silently hide legitimate read tools.
     func testMissingAnnotationsStillQualify() {
         XCTAssertTrue(info(required: [], readOnly: nil, destructive: nil).isFeedCandidate)
-        XCTAssertTrue(info(required: [], readOnly: false, destructive: false).isFeedCandidate)
+    }
+
+    /// An EXPLICIT `readOnlyHint: false` is a server declaring that calling it
+    /// mutates something. Putting that on a timer turns a deliberate one-off
+    /// action into a repeated background write. (Codex round 3.)
+    func testExplicitlyNonReadOnlyToolIsNotACandidate() {
+        XCTAssertFalse(info(required: [], readOnly: false, destructive: nil).isFeedCandidate)
+        XCTAssertFalse(info(required: [], readOnly: false, destructive: false).isFeedCandidate)
     }
 
     func testRequiredInputsAreReadOffTheJSONSchema() {
@@ -636,6 +643,93 @@ private final class NeverConnection: MCPConnecting {
     }
     func ping() async throws {}
     func disconnect() async {}
+}
+
+/// Runs a closure in the middle of a tool call — the window where the caller's
+/// pre-await config snapshot goes stale.
+private final class InterleavingConnection: MCPConnecting {
+    var duringCall: (@Sendable () async -> Void)?
+    func listTools() async throws -> [MCPToolInfo] { [] }
+    func listFullTools() async throws -> [Tool] { [] }
+    func callTool(name: String, arguments: [String: Value]?) async throws -> MCPToolCallOutput {
+        await duringCall?()
+        return MCPToolCallOutput(result: CallTool.Result(content: [], isError: false))
+    }
+    func ping() async throws {}
+    func disconnect() async {}
+}
+
+/// Codex round 3 P2: telemetry written after an await must not resurrect the
+/// config as it was BEFORE the await.
+@MainActor
+final class MCPTelemetryClobberTests: XCTestCase {
+    func testFeedEditDuringAToolCallSurvivesTheTelemetryWrite() async throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mcp-clobber-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let connection = InterleavingConnection()
+        let service = MCPClientService(
+            store: MCPServerConfigStore(fileURL: url),
+            secretStore: InMemoryMCPSecretStore(),
+            connectionFactory: { _ in connection })
+
+        var config = MCPServerConfig(
+            id: UUID(), name: "Exa",
+            transport: .http(endpoint: URL(string: "https://example.com/mcp")!))
+        config.allowedTools = ["web_search_exa"]
+        config.feedTools = [MCPFeedToolBinding(tool: "web_search_exa", argumentsJSON: "{}")]
+        service.addServer(config)
+        await service.connect(id: config.id)
+
+        // The user edits feed arguments WHILE the scheduled call is in flight.
+        let serverID = config.id
+        connection.duringCall = { @Sendable in
+            await MainActor.run {
+                service.setFeedToolArguments(
+                    serverID: serverID, tool: "web_search_exa",
+                    argumentsJSON: #"{"query": "macos"}"#)
+            }
+        }
+        _ = try await service.callAllowedTool(
+            serverID: config.id, name: "web_search_exa", arguments: [:])
+
+        // recordRun runs after the await — it must not write back the snapshot
+        // it captured before it.
+        XCTAssertEqual(
+            service.store.server(id: config.id)?.feedBindings.first?.argumentsJSON,
+            #"{"query": "macos"}"#,
+            "telemetry clobbered the user's feed edit")
+    }
+
+    /// A server removed mid-call must not be resurrected by its own trailing
+    /// telemetry write.
+    func testServerRemovedDuringACallIsNotResurrected() async throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mcp-clobber2-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let connection = InterleavingConnection()
+        let service = MCPClientService(
+            store: MCPServerConfigStore(fileURL: url),
+            secretStore: InMemoryMCPSecretStore(),
+            connectionFactory: { _ in connection })
+
+        var config = MCPServerConfig(
+            id: UUID(), name: "Exa",
+            transport: .http(endpoint: URL(string: "https://example.com/mcp")!))
+        config.allowedTools = ["t"]
+        service.addServer(config)
+        await service.connect(id: config.id)
+
+        let serverID = config.id
+        connection.duringCall = { @Sendable in
+            await MainActor.run { service.removeServer(id: serverID) }
+        }
+        _ = try? await service.callAllowedTool(serverID: serverID, name: "t", arguments: [:])
+
+        XCTAssertNil(service.store.server(id: serverID))
+    }
 }
 
 // MARK: - Config persistence

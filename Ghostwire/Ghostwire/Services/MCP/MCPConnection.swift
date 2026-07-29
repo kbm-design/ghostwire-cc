@@ -60,12 +60,14 @@ struct MCPToolInfo: Equatable, Identifiable {
     ///    `restart()` would otherwise look like a perfect one-click card and
     ///    then fire on every refresh forever.
     ///
-    /// Deliberately does NOT require `isReadOnlyHinted == true`. Annotations are
-    /// optional and many servers omit them entirely, so demanding the positive
-    /// hint would silently hide legitimate read tools; refusing the explicit
-    /// negative is the part that carries real signal.
+    /// Note the `!=` comparisons: an ABSENT annotation stays permissive, an
+    /// explicit one is believed. Annotations are optional and many servers omit
+    /// them entirely, so requiring `readOnlyHint == true` would silently hide
+    /// legitimate read tools — but a server that says `readOnlyHint: false` has
+    /// declared that calling it mutates something, and putting that on a timer
+    /// turns a deliberate one-off action into a repeated background write.
     var isFeedCandidate: Bool {
-        requiredInputs.isEmpty && isDestructiveHinted != true
+        requiredInputs.isEmpty && isDestructiveHinted != true && isReadOnlyHinted != false
     }
 }
 

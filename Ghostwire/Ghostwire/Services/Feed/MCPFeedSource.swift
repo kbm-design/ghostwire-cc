@@ -83,6 +83,29 @@ extension MCPFeedToolBinding {
             || Self.parseArguments(argumentsJSON) != nil
     }
 
+    /// Argument keys whose value is still an empty string — i.e. placeholders
+    /// the user hasn't filled in.
+    ///
+    /// `setFeedTool` pre-fills a required tool's shape (`{"query": ""}`) so
+    /// Settings can show what's missing. That template is the ONLY thing that
+    /// puts an empty string in here, which is what makes this a reliable
+    /// "not ready yet" signal rather than a guess.
+    var blankArgumentKeys: [String] {
+        (Self.parseArguments(argumentsJSON) ?? [:])
+            .filter { $0.value.stringValue?.isEmpty == true }
+            .keys.sorted()
+    }
+
+    /// A binding is only runnable once every placeholder has a value.
+    ///
+    /// Without this, binding a tool that needs input starts polling
+    /// IMMEDIATELY with blanks — an empty search every refresh interval,
+    /// against a billing-backed API, before the user has typed anything. That
+    /// is the exact credit burn the feed-candidacy rule exists to prevent,
+    /// reintroduced by the pre-fill that was meant to be helpful.
+    /// (Codex P2, 2026-07-29.)
+    var isRunnable: Bool { blankArgumentKeys.isEmpty }
+
     static func parseArguments(_ json: String) -> [String: Value]? {
         let trimmed = json.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, let data = trimmed.data(using: .utf8) else { return nil }
@@ -170,6 +193,17 @@ struct MCPFeedSource: FeedSource {
 
     private func card(for binding: MCPFeedToolBinding, now: Date) async -> FeedCard {
         let cardId = "\(id).\(binding.tool)"
+        // Never call a tool whose required arguments are still placeholders —
+        // that's an empty query on a timer. Show what's missing instead.
+        guard binding.isRunnable else {
+            return MCPFeedCardMapper.attentionCard(
+                id: cardId,
+                sourceId: id,
+                title: MCPFeedCardMapper.title(tool: binding.tool, serverName: serverName),
+                detail: "Set \(binding.blankArgumentKeys.joined(separator: ", ")) in Settings › MCP.",
+                now: now
+            )
+        }
         do {
             let output = try await backend.callAllowedTool(
                 serverID: serverID, name: binding.tool, arguments: binding.arguments())

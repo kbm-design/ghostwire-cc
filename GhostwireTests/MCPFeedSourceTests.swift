@@ -392,6 +392,43 @@ final class MCPFeedSourceStateTests: XCTestCase {
         XCTAssertEqual(second.calls.first?.arguments, [:])
     }
 
+    /// Codex P2: the pre-filled template must not start polling with blanks —
+    /// that's an empty search on a timer against a billing-backed API.
+    func testUnfilledPlaceholderIsNeverCalled() async throws {
+        let backend = FakeMCPFeedBackend()
+        let cards = try await source(
+            backend,
+            bindings: [.init(tool: "web_search_exa", argumentsJSON: #"{"query": ""}"#)]
+        ).fetch()
+
+        XCTAssertTrue(backend.calls.isEmpty, "must not call a tool with blank required args")
+        guard case let .generic(_, subtitle, _) = cards[0].kind else {
+            return XCTFail("expected an attention card")
+        }
+        XCTAssertEqual(subtitle, "Set query in Settings › MCP.")
+    }
+
+    func testFilledArgumentsBecomeRunnable() async throws {
+        let backend = FakeMCPFeedBackend()
+        backend.results["web_search_exa"] = .success(makeOutput(structured: .int(1), text: ""))
+        _ = try await source(
+            backend,
+            bindings: [.init(tool: "web_search_exa", argumentsJSON: #"{"query": "notch"}"#)]
+        ).fetch()
+        XCTAssertEqual(backend.calls.first?.arguments, ["query": .string("notch")])
+    }
+
+    func testRunnabilityOnlyTripsOnEmptyStringPlaceholders() {
+        XCTAssertTrue(MCPFeedToolBinding(tool: "t").isRunnable)  // "{}" — nothing required
+        XCTAssertTrue(
+            MCPFeedToolBinding(tool: "t", argumentsJSON: #"{"limit": 5}"#).isRunnable)
+        XCTAssertFalse(
+            MCPFeedToolBinding(tool: "t", argumentsJSON: #"{"a": "", "b": ""}"#).isRunnable)
+        XCTAssertEqual(
+            MCPFeedToolBinding(tool: "t", argumentsJSON: #"{"a": "", "b": "x"}"#)
+                .blankArgumentKeys, ["a"])
+    }
+
     func testArgumentValidationFlagsTheTypoWhileItIsStillFixable() {
         XCTAssertTrue(MCPFeedToolBinding(tool: "t").hasValidArguments)
         XCTAssertTrue(MCPFeedToolBinding(tool: "t", argumentsJSON: "  ").hasValidArguments)

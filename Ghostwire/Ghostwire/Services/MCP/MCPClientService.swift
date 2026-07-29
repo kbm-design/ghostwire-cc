@@ -9,6 +9,7 @@
 //
 
 import AppKit
+import Combine
 import Foundation
 import MCP
 
@@ -64,6 +65,19 @@ final class MCPClientService: ObservableObject {
     private let connectionFactory: (MCPServerConfig) -> MCPConnecting
 
     @Published private(set) var runtimes: [UUID: MCPServerRuntime] = [:]
+
+    /// GW-214: fires when a config change alters which feed Sources should
+    /// exist or what they'd call. `FeedSourceCoordinator` subscribes so it
+    /// rebuilds itself; without this, a removed server leaves an orphan poll
+    /// loop publishing a "Not connected" card for a server that's gone.
+    ///
+    /// Deliberately NOT `objectWillChange` or a store-wide observer: `runtimes`
+    /// churns on every status change and `store.update` is also called by
+    /// `recordProbe`/`recordRun` telemetry on every connect and every tool
+    /// call. Either would restart the coordinator in a loop. This fires only
+    /// from the explicit config mutations that actually change the source list
+    /// (add / remove / allow / bind / arguments / trust).
+    let feedConfigDidChange = PassthroughSubject<Void, Never>()
     private var connections: [UUID: MCPConnecting] = [:]
     private var healthPolicies: [UUID: ConnectionHealthPolicy] = [:]
     private var wakeObserver: NSObjectProtocol?
@@ -86,6 +100,7 @@ final class MCPClientService: ObservableObject {
     func addServer(_ config: MCPServerConfig) {
         store.add(config)
         runtimes[config.id] = MCPServerRuntime()
+        feedConfigDidChange.send()
     }
 
     func removeServer(id: UUID) {
@@ -100,6 +115,8 @@ final class MCPClientService: ObservableObject {
         store.remove(id: id)
         runtimes[id] = nil
         healthPolicies[id] = nil
+        // Or the coordinator keeps polling a server that no longer exists.
+        feedConfigDidChange.send()
     }
 
     func setToolAllowed(serverID: UUID, tool: String, allowed: Bool) {
@@ -114,6 +131,7 @@ final class MCPClientService: ObservableObject {
         }
         store.update(config)
         objectWillChange.send()
+        feedConfigDidChange.send()
     }
 
     /// GW-214: bind/unbind a tool as an ambient feed card. Independent of the
@@ -134,6 +152,7 @@ final class MCPClientService: ObservableObject {
         config.feedTools = bindings
         store.update(config)
         objectWillChange.send()
+        feedConfigDidChange.send()
     }
 
     /// `{}` when nothing is required; otherwise the empty shape of what is.
@@ -154,6 +173,7 @@ final class MCPClientService: ObservableObject {
         config.feedTools = bindings
         store.update(config)
         objectWillChange.send()
+        feedConfigDidChange.send()
     }
 
     /// User explicitly trusted the current command line (Add sheet / detail view).
@@ -162,6 +182,7 @@ final class MCPClientService: ObservableObject {
         config.trustedCommandSignature = config.commandSignature
         store.update(config)
         objectWillChange.send()
+        feedConfigDidChange.send()
     }
 
     // MARK: - Lifecycle

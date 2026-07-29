@@ -9,6 +9,7 @@
 //  mapper is pure, and the state machine runs against a fake backend.
 //
 
+import Combine
 import MCP
 import XCTest
 
@@ -406,10 +407,12 @@ final class MCPFeedSourceStateTests: XCTestCase {
 /// input is a *query* — putting `web_search_exa` on a 5-minute timer re-asks one
 /// frozen question forever and bills for every repeat.
 final class MCPToolFeedCandidacyTests: XCTestCase {
-    private func info(required: [String]) -> MCPToolInfo {
+    private func info(
+        required: [String] = [], readOnly: Bool? = true, destructive: Bool? = false
+    ) -> MCPToolInfo {
         MCPToolInfo(
-            name: "t", description: nil, hasOutputSchema: false, isReadOnlyHinted: true,
-            isDestructiveHinted: false, requiredInputs: required)
+            name: "t", description: nil, hasOutputSchema: false, isReadOnlyHinted: readOnly,
+            isDestructiveHinted: destructive, requiredInputs: required)
     }
 
     func testToolNeedingNoInputIsAFeedCandidate() {
@@ -419,6 +422,20 @@ final class MCPToolFeedCandidacyTests: XCTestCase {
     func testToolRequiringInputIsNot() {
         // web_search_exa requires `query` — the case that prompted the rule.
         XCTAssertFalse(info(required: ["query"]).isFeedCandidate)
+    }
+
+    /// Codex P2: a no-argument `clear_cache()` would otherwise look like a
+    /// perfect one-click card and then fire on every refresh forever.
+    func testSelfDeclaredDestructiveToolIsNeverACandidate() {
+        XCTAssertFalse(info(required: [], destructive: true).isFeedCandidate)
+    }
+
+    /// But an ABSENT read-only hint must not disqualify: annotations are
+    /// optional and many servers omit them, so demanding the positive hint
+    /// would silently hide legitimate read tools.
+    func testMissingAnnotationsStillQualify() {
+        XCTAssertTrue(info(required: [], readOnly: nil, destructive: nil).isFeedCandidate)
+        XCTAssertTrue(info(required: [], readOnly: false, destructive: false).isFeedCandidate)
     }
 
     func testRequiredInputsAreReadOffTheJSONSchema() {
@@ -450,6 +467,96 @@ final class MCPToolFeedCandidacyTests: XCTestCase {
             MCPClientService.argumentTemplate(for: ["repo", "branch"]),
             #"{"repo": "", "branch": ""}"#)
     }
+}
+
+// MARK: - Config change signal (Codex P2: orphaned sources / stale bindings)
+
+/// The coordinator snapshots its Sources at `start()`. Without a signal, a
+/// removed server leaves an orphan poll loop publishing a "Not connected" card
+/// for something that no longer exists, and an edited argument keeps calling
+/// with the old value until an unrelated restart.
+@MainActor
+final class MCPFeedConfigChangeSignalTests: XCTestCase {
+    private var service: MCPClientService!
+    private var tempURL: URL!
+    private var received = 0
+    private var cancellable: AnyCancellable?
+
+    override func setUp() async throws {
+        tempURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mcp-feedsignal-\(UUID().uuidString).json")
+        service = MCPClientService(
+            store: MCPServerConfigStore(fileURL: tempURL),
+            secretStore: InMemoryMCPSecretStore(),
+            connectionFactory: { _ in NeverConnection() }
+        )
+        received = 0
+        cancellable = service.feedConfigDidChange.sink { [weak self] in self?.received += 1 }
+    }
+
+    override func tearDown() {
+        cancellable = nil
+        try? FileManager.default.removeItem(at: tempURL)
+        super.tearDown()
+    }
+
+    private func addServer(allowed: Set<String> = ["list_issues"]) -> MCPServerConfig {
+        var config = MCPServerConfig(
+            id: UUID(), name: "Linear",
+            transport: .http(endpoint: URL(string: "https://example.com/mcp")!))
+        config.allowedTools = allowed
+        service.addServer(config)
+        return config
+    }
+
+    func testRemovingAServerSignalsSoTheOrphanSourceIsTornDown() {
+        let config = addServer()
+        received = 0
+        service.removeServer(id: config.id)
+        XCTAssertEqual(received, 1)
+    }
+
+    func testEditingArgumentsSignalsSoTheLiveSourceStopsUsingTheOldValue() {
+        let config = addServer()
+        service.setFeedTool(serverID: config.id, tool: "list_issues", bound: true)
+        received = 0
+        service.setFeedToolArguments(
+            serverID: config.id, tool: "list_issues", argumentsJSON: #"{"assignee": "me"}"#)
+        XCTAssertEqual(received, 1)
+        XCTAssertEqual(
+            service.store.server(id: config.id)?.feedBindings.first?.argumentsJSON,
+            #"{"assignee": "me"}"#)
+    }
+
+    func testBindingAndAllowlistChangesBothSignal() {
+        let config = addServer()
+        received = 0
+        service.setFeedTool(serverID: config.id, tool: "list_issues", bound: true)
+        XCTAssertEqual(received, 1)
+        service.setToolAllowed(serverID: config.id, tool: "list_issues", allowed: false)
+        XCTAssertEqual(received, 2)
+    }
+
+    /// The signal must NOT come from `objectWillChange` or a store-wide
+    /// observer: `recordProbe`/`recordRun` call `store.update` on every connect
+    /// and every tool call, which would restart the coordinator in a loop.
+    func testProbeTelemetryDoesNotSignal() async {
+        let config = addServer()
+        received = 0
+        await service.connect(id: config.id)  // writes lastProbe via store.update
+        XCTAssertEqual(received, 0)
+    }
+}
+
+/// Connects but advertises nothing — enough to exercise the probe write path.
+private final class NeverConnection: MCPConnecting {
+    func listTools() async throws -> [MCPToolInfo] { [] }
+    func listFullTools() async throws -> [Tool] { [] }
+    func callTool(name: String, arguments: [String: Value]?) async throws -> MCPToolCallOutput {
+        MCPToolCallOutput(result: CallTool.Result(content: [], isError: false))
+    }
+    func ping() async throws {}
+    func disconnect() async {}
 }
 
 // MARK: - Config persistence

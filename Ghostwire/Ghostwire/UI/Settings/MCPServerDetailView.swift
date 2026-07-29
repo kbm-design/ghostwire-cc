@@ -261,19 +261,15 @@ struct MCPServerDetailView: View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 6) {
                 Text("Arguments").font(.caption2).foregroundStyle(.secondary)
-                TextField(
-                    Self.argumentsPlaceholder(for: tool),
-                    text: Binding(
-                        get: { binding.argumentsJSON },
-                        set: {
-                            service.setFeedToolArguments(
-                                serverID: serverID, tool: binding.tool, argumentsJSON: $0)
-                        }
-                    )
+                FeedArgumentsField(
+                    placeholder: Self.argumentsPlaceholder(for: tool),
+                    initialText: binding.argumentsJSON,
+                    onCommit: { text in
+                        service.setFeedToolArguments(
+                            serverID: serverID, tool: binding.tool, argumentsJSON: text)
+                    }
                 )
-                .textFieldStyle(.roundedBorder)
-                .font(.caption.monospaced())
-                .onSubmit { restartFeed() }
+                .id(binding.tool)
             }
             if !binding.hasValidArguments {
                 Text("Not a JSON object — the tool will be called with no arguments.")
@@ -308,6 +304,11 @@ struct MCPServerDetailView: View {
 
     /// Rebuild the Source list now rather than at the next poll, so a binding
     /// shows up in the Feed while the user is still looking at this sheet.
+    ///
+    /// Redundant with `MCPClientService.feedConfigDidChange`, which the
+    /// coordinator now subscribes to — kept because it's immediate where the
+    /// subscription is debounced, and because it costs nothing if the rebuild
+    /// has already happened.
     private func restartFeed() {
         FeedSourceCoordinator.shared.start()
     }
@@ -362,5 +363,50 @@ struct MCPServerDetailView: View {
         } catch {
             runOutput = "Error: \(error.localizedDescription)"
         }
+    }
+}
+
+// MARK: - Arguments field
+
+/// A JSON text field that commits on Return **or on losing focus**.
+///
+/// Binding straight through to the store looked simpler and was wrong twice:
+/// it wrote `mcp-servers.json` on every keystroke, and — because only
+/// `.onSubmit` rebuilt the Sources — clicking away after typing persisted the
+/// new arguments while the running Source kept calling with the old ones until
+/// an unrelated restart. Buffering locally and committing on both paths fixes
+/// both. (Codex P2, 2026-07-29.)
+private struct FeedArgumentsField: View {
+    let placeholder: String
+    let initialText: String
+    let onCommit: (String) -> Void
+
+    @State private var text: String
+    @FocusState private var isFocused: Bool
+
+    init(placeholder: String, initialText: String, onCommit: @escaping (String) -> Void) {
+        self.placeholder = placeholder
+        self.initialText = initialText
+        self.onCommit = onCommit
+        _text = State(initialValue: initialText)
+    }
+
+    var body: some View {
+        TextField(placeholder, text: $text)
+            .textFieldStyle(.roundedBorder)
+            .font(.caption.monospaced())
+            .focused($isFocused)
+            .onSubmit { commit() }
+            .onChange(of: isFocused) { _, focused in
+                if !focused { commit() }
+            }
+            // The sheet can be dismissed while the field still has focus, which
+            // fires no focus-loss event.
+            .onDisappear { commit() }
+    }
+
+    private func commit() {
+        guard text != initialText else { return }
+        onCommit(text)
     }
 }

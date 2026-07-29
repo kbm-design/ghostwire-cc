@@ -35,6 +35,7 @@ final class FeedSourceCoordinator {
     private var sources: [any FeedSource] = []
     private var loops: [String: Task<Void, Never>] = [:]
     private var enabledCancellable: AnyCancellable?
+    private var mcpConfigCancellable: AnyCancellable?
 
     private let store: FeedCardStore
     private let logger = os.Logger(subsystem: "com.ghostwire.notch", category: "FeedSourceCoordinator")
@@ -99,6 +100,20 @@ final class FeedSourceCoordinator {
     func start(sources: [any FeedSource]? = nil) {
         if enabledCancellable == nil {
             enabledCancellable = Defaults.publisher(.feedSourcesEnabled)
+                .sink { [weak self] _ in
+                    Task { @MainActor in self?.start() }
+                }
+        }
+        // GW-214: rebuild when the MCP config changes. Sources are snapshotted
+        // below, so without this a removed server leaves an orphan poll loop
+        // publishing a "Not connected" card for something that no longer
+        // exists, and an edited argument keeps calling with the old value.
+        //
+        // Debounced: the arguments field commits on focus loss as well as
+        // Return, and add-then-connect fires twice in quick succession.
+        if mcpConfigCancellable == nil {
+            mcpConfigCancellable = MCPClientService.shared.feedConfigDidChange
+                .debounce(for: .milliseconds(300), scheduler: RunLoop.main)
                 .sink { [weak self] _ in
                     Task { @MainActor in self?.start() }
                 }

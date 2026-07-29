@@ -53,7 +53,20 @@ struct MCPToolInfo: Equatable, Identifiable {
     /// Whether this tool should be OFFERED as a feed card without ceremony.
     /// Not a security boundary (the allowlist is) — a curation rule, so the
     /// obvious path stays one click and no JSON.
-    var isFeedCandidate: Bool { requiredInputs.isEmpty }
+    ///
+    /// Two disqualifiers:
+    ///  * needs input → it's a question, not a standing value (see `requiredInputs`)
+    ///  * self-declared destructive → a no-argument `clear_cache()` or
+    ///    `restart()` would otherwise look like a perfect one-click card and
+    ///    then fire on every refresh forever.
+    ///
+    /// Deliberately does NOT require `isReadOnlyHinted == true`. Annotations are
+    /// optional and many servers omit them entirely, so demanding the positive
+    /// hint would silently hide legitimate read tools; refusing the explicit
+    /// negative is the part that carries real signal.
+    var isFeedCandidate: Bool {
+        requiredInputs.isEmpty && isDestructiveHinted != true
+    }
 }
 
 extension MCPToolInfo {

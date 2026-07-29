@@ -120,7 +120,7 @@ private struct FeedCardFooter: View {
     var body: some View {
         HStack(spacing: 5) {
             sourceGlyph.frame(width: 12, height: 12)
-            Text(Self.relativeFormatter.localizedString(for: card.updatedAt, relativeTo: Date()))
+            Text(card.relativeUpdatedText())
                 .lineLimit(1)
             Spacer(minLength: 0)
             if card.link != nil {
@@ -153,11 +153,6 @@ private struct FeedCardFooter: View {
         }
     }
 
-    private static let relativeFormatter: RelativeDateTimeFormatter = {
-        let f = RelativeDateTimeFormatter()
-        f.unitsStyle = .abbreviated
-        return f
-    }()
 }
 
 // MARK: - Content renderers (padded, footer below — the Shelf text-card idiom)

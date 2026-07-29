@@ -9,6 +9,37 @@
 //
 
 import XCTest
+
+/// The footer timestamp. Found live: a 60s-interval source (crypto) rendered
+/// "in 0s" every single minute, because `RelativeDateTimeFormatter` describes a
+/// just-written date in the future tense.
+final class FeedCardRelativeTimeTests: XCTestCase {
+    private func card(updatedAt: Date) -> FeedCard {
+        FeedCard(
+            id: "c", sourceId: "s", kind: .data(label: "BTC", value: "$1", delta: nil),
+            updatedAt: updatedAt)
+    }
+
+    func testJustRefreshedReadsNowNotInZeroSeconds() {
+        let now = Date()
+        XCTAssertEqual(card(updatedAt: now).relativeUpdatedText(now: now), "now")
+    }
+
+    /// Clock skew on a server-supplied date must not render forwards.
+    func testFutureTimestampIsClampedToNow() {
+        let now = Date()
+        XCTAssertEqual(
+            card(updatedAt: now.addingTimeInterval(30)).relativeUpdatedText(now: now), "now")
+    }
+
+    func testOlderTimestampsStillRenderRelatively() {
+        let now = Date()
+        let text = card(updatedAt: now.addingTimeInterval(-120)).relativeUpdatedText(now: now)
+        XCTAssertNotEqual(text, "now")
+        // Abbreviated style, past tense — never "in ...".
+        XCTAssertFalse(text.hasPrefix("in "), "rendered forwards: \(text)")
+    }
+}
 @testable import Ghostwire
 
 final class FeedCardTests: XCTestCase {

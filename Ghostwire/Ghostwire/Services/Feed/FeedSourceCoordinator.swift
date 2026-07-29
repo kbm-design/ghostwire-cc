@@ -99,7 +99,12 @@ final class FeedSourceCoordinator {
     /// settings sidebar stops the loops immediately instead of at the next poll.
     func start(sources: [any FeedSource]? = nil) {
         if enabledCancellable == nil {
+            // `dropFirst()`: Defaults.publisher emits the CURRENT value on
+            // subscribe, so without it the first start() immediately re-entered
+            // itself — every launch tore down the sources it had just created
+            // and refetched them all. Only a real toggle should restart.
             enabledCancellable = Defaults.publisher(.feedSourcesEnabled)
+                .dropFirst()
                 .sink { [weak self] _ in
                     Task { @MainActor in self?.start() }
                 }
@@ -121,6 +126,11 @@ final class FeedSourceCoordinator {
         stop()
         let sources = sources ?? (Self.builtInSources() + Self.mcpSources())
         self.sources = sources
+        // Every restart cancels in-flight fetches and re-runs them from scratch,
+        // so a burst of restarts reads to the user as a feed stuck loading.
+        logger.info(
+            "start: \(sources.count) sources [\(sources.map(\.id).joined(separator: ", "), privacy: .public)]"
+        )
         // Nothing enabled: drop the cards too, or the feed would keep showing
         // the values from just before the user switched the module off.
         if sources.isEmpty {
@@ -168,13 +178,20 @@ final class FeedSourceCoordinator {
     }
 
     private func refreshOnce(_ source: any FeedSource) async {
+        // Timed on the success path too. A polling subsystem that only logs
+        // failures can't answer "why was the feed empty for two minutes" —
+        // the interesting case is a refresh that SUCCEEDS but takes 90s.
+        let started = Date()
         do {
             let cards = try await source.fetch()
             cardsBySource[source.id] = cards
             publish()
+            logger.info(
+                "source \(source.id, privacy: .public) refreshed in \(Int(Date().timeIntervalSince(started) * 1000))ms → \(cards.count) cards"
+            )
         } catch {
             // Keep the previous cards; they'll dim on their own.
-            logger.warning("source \(source.id, privacy: .public) refresh failed: \(error.localizedDescription, privacy: .public)")
+            logger.warning("source \(source.id, privacy: .public) refresh failed after \(Int(Date().timeIntervalSince(started) * 1000))ms: \(error.localizedDescription, privacy: .public)")
         }
     }
 

@@ -75,12 +75,28 @@ struct ChatView: View {
                 // Approval bar, interactive prompt, or Input bar
                 if let tool = approvalTool {
                     if tool == "AskUserQuestion" {
-                        // Interactive tools - show prompt to answer in terminal
-                        interactivePromptBar
+                        // GW-321 State B: render the actual question + options when
+                        // the payload parses. The "answer in terminal" bar is now
+                        // only the fallback for a payload we can't render faithfully.
+                        if let choice = session.pendingChoice {
+                            ChatChoiceBar(
+                                request: choice,
+                                agentName: agentName,
+                                agentTint: agentTint,
+                                onAnswer: { answers in answerChoice(choice, answers: answers) },
+                                onGoToTerminal: { focusTerminal() }
+                            )
                             .transition(.asymmetric(
                                 insertion: .opacity.combined(with: .move(edge: .bottom)),
                                 removal: .opacity
                             ))
+                        } else {
+                            interactivePromptBar
+                                .transition(.asymmetric(
+                                    insertion: .opacity.combined(with: .move(edge: .bottom)),
+                                    removal: .opacity
+                                ))
+                        }
                     } else {
                         approvalBar(tool: tool)
                             .transition(.asymmetric(
@@ -172,12 +188,19 @@ struct ChatView: View {
             }
         }
         .onAppear {
+            // GW-320: restore an unsent reply from a previous visit — the view is
+            // torn down on every notch dismiss, the draft must not be.
+            inputText = viewModel.draft(for: sessionId)
+
             // Auto-focus input when chat opens and multiplexer messaging is available
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                 if canSendMessages {
                     isInputFocused = true
                 }
             }
+        }
+        .onChange(of: inputText) { _, text in
+            viewModel.setDraft(text, for: sessionId)
         }
     }
 
@@ -382,6 +405,39 @@ struct ChatView: View {
         targetResolution.isResolvable
     }
 
+    /// GW-320 (State D): the agent has finished its turn and is explicitly
+    /// waiting on the human. Distinct from "the box happens to be enabled" —
+    /// this is the moment the notch exists to catch, so it reads differently.
+    ///
+    /// Reads `livePhase`, not the `session` snapshot: the snapshot only refreshes
+    /// when `instances` publishes a record that differs, so a session adopted
+    /// mid-flight can sit on a stale `.idle` and never light up.
+    private var isAwaitingReply: Bool {
+        livePhase == .waitingForInput
+    }
+
+    /// Live phase from the store rather than the `session` snapshot, which is
+    /// only refreshed when `instances` publishes. The race check has to read
+    /// what is true *now*, not what was true when the view last updated.
+    private var livePhase: SessionPhase {
+        sessionMonitor.instances.first { $0.sessionId == sessionId }?.phase ?? session.phase
+    }
+
+    /// User-facing reason a send must not go out, or nil when injection is safe.
+    /// The decision itself lives on `SessionPhase.blocksTextInjection` (GW-320,
+    /// spec §5) so it is unit-testable; this only names it for the human.
+    private func injectionBlocker(_ phase: SessionPhase) -> String? {
+        guard phase.blocksTextInjection else { return nil }
+        switch phase {
+        case .waitingForApproval(let ctx):
+            return "\(agentName) is waiting on approval for \(ctx.toolName) — answer that first"
+        case .ended:
+            return "This session has ended"
+        default:
+            return "\(agentName) can't take a message right now"
+        }
+    }
+
     /// GW-311: agents that also run inside an IDE have no terminal pane to
     /// address when launched that way, so telling the user to "open it in
     /// tmux/cmux" is a dead end — the session is already running, just not
@@ -397,7 +453,8 @@ struct ChatView: View {
     private var inputPlaceholder: String {
         switch targetResolution {
         case .cmux, .tmuxTty:
-            return "Message \(agentName)..."
+            // GW-320 State D: name the moment when the agent is actually waiting.
+            return isAwaitingReply ? "Reply to \(agentName)..." : "Message \(agentName)..."
         case .unresolvable(.cmuxRefsMissing):
             return isIDEAgent
                 ? "Following along — reply in \(agentName)"
@@ -458,14 +515,21 @@ struct ChatView: View {
     }
 
     private var inputRow: some View {
-        HStack(spacing: 10) {
+        // Bottom-aligned so the send button stays level with the last line as the
+        // field grows, rather than drifting to the middle of a tall box.
+        HStack(alignment: .bottom, spacing: 10) {
             // GW-163 note: a paperclip/NSOpenPanel attach was tried and removed -
             // the notch's window level sits above every system panel, so the
             // picker rendered underneath it (test-drive finding). File attach
             // flows are Finder-copy -> clipboard -> send, or drag -> Shelf ->
             // Send to Agent; both land @path without fighting the windowing.
-            TextField(inputPlaceholder, text: $inputText)
+            // GW-320: grows downward as you type instead of scrolling the text
+            // sideways out of view. A reply you can't read back is a reply you
+            // can't check before sending. Capped so the composer can never crowd
+            // out the transcript above it; past the cap it scrolls internally.
+            TextField(inputPlaceholder, text: $inputText, axis: .vertical)
                 .textFieldStyle(.plain)
+                .lineLimit(1...6)
                 .font(.system(size: 13))
                 .foregroundColor(canSendMessages ? .white : .white.opacity(0.4))
                 .focused($isInputFocused)
@@ -477,9 +541,18 @@ struct ChatView: View {
                         .fill(Color.white.opacity(canSendMessages ? 0.08 : 0.04))
                         .overlay(
                             RoundedRectangle(cornerRadius: 20)
-                                .strokeBorder(Color.white.opacity(0.1), lineWidth: 1)
+                                // GW-320 State D: agent-tinted border marks the field
+                                // as the live reply target. Passive (spec §4.5) — it
+                                // never steals focus or expands the notch.
+                                .strokeBorder(
+                                    isAwaitingReply && canSendMessages
+                                        ? agentTint.opacity(0.55)
+                                        : Color.white.opacity(0.1),
+                                    lineWidth: 1
+                                )
                         )
                 )
+                .animation(.easeOut(duration: 0.2), value: isAwaitingReply)
                 .onSubmit {
                     sendMessage()
                 }
@@ -556,9 +629,31 @@ struct ChatView: View {
         sessionMonitor.denyPermission(sessionId: sessionId, reason: nil)
     }
 
+    /// GW-321 State B: deliver a Choice answer over the socket already held open
+    /// for this gate — no keystroke injection, so no pane is required and there is
+    /// no race with the terminal for the delivery itself.
+    ///
+    /// The transport is the deny channel because that is the only payload a hook
+    /// can express: there is no hook field that supplies a real tool result
+    /// (verified in GW-318 against the hooks reference). The hook turns `reason`
+    /// into `decision.message`, and the model reads it as the answer.
+    private func answerChoice(_ request: AskUserQuestionRequest, answers: [String: String]) {
+        sessionMonitor.denyPermission(
+            sessionId: sessionId,
+            reason: request.replyMessage(answers: answers)
+        )
+    }
+
     private func sendMessage() {
         let text = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
+
+        // Check before clearing, so a send that can't go out doesn't cost the
+        // user their draft. The authoritative check is in `sendToSession`.
+        if let blocker = injectionBlocker(livePhase) {
+            sendFailureHint = blocker
+            return
+        }
 
         inputText = ""
 
@@ -584,6 +679,21 @@ struct ChatView: View {
         }
 
         logger.debug("sendToSession: found target \(target.targetString, privacy: .public)")
+
+        // GW-320 (spec §5): re-verify immediately before injecting. The tmux
+        // target lookup above is async, and that gap is exactly where the agent
+        // can hit a gate — never inject into a screen that changed underneath us.
+        if let blocker = injectionBlocker(livePhase) {
+            logger.debug("sendToSession: aborted, phase is now \(String(describing: self.livePhase), privacy: .public)")
+            sendFailureHint = blocker
+            // Hand the draft back rather than swallowing it, unless the user has
+            // already started typing something else.
+            if inputText.isEmpty {
+                inputText = text
+            }
+            return
+        }
+
         let result = await TmuxController.shared.sendMessage(text, to: target)
         logger.debug("sendToSession: sendMessage result=\(result)")
 

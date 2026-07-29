@@ -64,13 +64,21 @@ struct ChatView: View {
                 chatHeader
 
                 // Messages
-                if isLoading {
-                    loadingState
-                } else if history.isEmpty {
-                    emptyState
-                } else {
-                    messageList
+                Group {
+                    if isLoading {
+                        loadingState
+                    } else if history.isEmpty {
+                        emptyState
+                    } else {
+                        messageList
+                    }
                 }
+                // GW-321: while a question is pending, IT is the content. The
+                // scrollback was holding ~40% of the panel to show almost
+                // nothing while the options below it got clipped, so cap it and
+                // let the Choice bar take the rest. Context still travels with
+                // the affordance (spec §4.2) — just a turn of it, not a screen.
+                .frame(maxHeight: hasPendingChoice ? Self.contextStripHeight : .infinity)
 
                 // Approval bar, interactive prompt, or Input bar
                 if let tool = approvalTool {
@@ -83,9 +91,15 @@ struct ChatView: View {
                                 request: choice,
                                 agentName: agentName,
                                 agentTint: agentTint,
-                                onAnswer: { answers in answerChoice(choice, answers: answers) },
+                                onAnswer: { answers, completion in
+                                    answerChoice(choice, answers: answers, completion: completion)
+                                },
                                 onGoToTerminal: { focusTerminal() }
                             )
+                            // Claim height ahead of the transcript: while a question
+                            // is pending it IS the content, and the scrollback above
+                            // was keeping space the options needed (GW-321 test drive).
+                            .layoutPriority(1)
                             .transition(.asymmetric(
                                 insertion: .opacity.combined(with: .move(edge: .bottom)),
                                 removal: .opacity
@@ -405,6 +419,16 @@ struct ChatView: View {
         targetResolution.isResolvable
     }
 
+    /// Whether a Choice is on screen, so the transcript above can yield its
+    /// height to the question instead of padding it out with empty space.
+    private var hasPendingChoice: Bool {
+        session.pendingChoice != nil
+    }
+
+    /// How much scrollback stays visible above a pending question — enough for
+    /// the preceding turn, not enough to crowd out the options.
+    private static let contextStripHeight: CGFloat = 76
+
     /// GW-320 (State D): the agent has finished its turn and is explicitly
     /// waiting on the human. Distinct from "the box happens to be enabled" —
     /// this is the moment the notch exists to catch, so it reads differently.
@@ -637,10 +661,14 @@ struct ChatView: View {
     /// can express: there is no hook field that supplies a real tool result
     /// (verified in GW-318 against the hooks reference). The hook turns `reason`
     /// into `decision.message`, and the model reads it as the answer.
-    private func answerChoice(_ request: AskUserQuestionRequest, answers: [String: String]) {
+    private func answerChoice(_ request: AskUserQuestionRequest, answers: [String: String],
+                              completion: @escaping (Bool) -> Void) {
         sessionMonitor.denyPermission(
             sessionId: sessionId,
-            reason: request.replyMessage(answers: answers)
+            reason: request.replyMessage(answers: answers),
+            delivered: { wasDelivered in
+                Task { @MainActor in completion(wasDelivered) }
+            }
         )
     }
 

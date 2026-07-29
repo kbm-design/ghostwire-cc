@@ -26,9 +26,19 @@ struct ChatChoiceBar: View {
     let request: AskUserQuestionRequest
     let agentName: String
     let agentTint: Color
-    /// Answers keyed by `AskUserQuestion.key`, already free-text.
-    let onAnswer: ([String: String]) -> Void
+    /// Answers keyed by `AskUserQuestion.key`, already free-text. The completion
+    /// reports whether the verdict reached the held socket, so the bar can show
+    /// sent/failed instead of assuming delivery (GW-163 glyph pattern).
+    let onAnswer: ([String: String], @escaping (Bool) -> Void) -> Void
     let onGoToTerminal: () -> Void
+
+    /// Which question is on screen. One at a time, like the terminal: showing
+    /// all of them at once burned the notch's height and pushed Send out of
+    /// reach, and a 4-option question couldn't be read without scrolling.
+    @State private var index = 0
+
+    private enum Delivery { case idle, sending, sent, failed }
+    @State private var delivery: Delivery = .idle
 
     /// Selected option labels per question key (a set, for multi-select).
     @State private var selections: [String: Set<String>] = [:]
@@ -36,8 +46,20 @@ struct ChatChoiceBar: View {
     @State private var freeText: [String: String] = [:]
     /// Which questions are in free-text mode.
     @State private var freeTextActive: Set<String> = []
-    /// One-shot latch — the socket reply can only be sent once.
-    @State private var hasSent = false
+
+    /// Locked once the reply is in flight or delivered — the socket reply is
+    /// one-shot per gate. Re-enabled only on confirmed failure (spec §5).
+    private var isLocked: Bool {
+        delivery == .sending || delivery == .sent
+    }
+
+    private var current: AskUserQuestion {
+        request.questions[min(index, request.questions.count - 1)]
+    }
+
+    private var isLastQuestion: Bool {
+        index >= request.questions.count - 1
+    }
 
     private var isComplete: Bool {
         request.questions.allSatisfy { !answer(for: $0).isEmpty }
@@ -58,8 +80,21 @@ struct ChatChoiceBar: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            ForEach(request.questions) { question in
-                questionBlock(question)
+            if request.questions.count > 1 {
+                stepper
+            }
+
+            // Take the height the question needs and scroll ONLY when it genuinely
+            // can't fit — a fixed cap left the question in a scroller while an
+            // empty transcript above it kept the space. The footer is outside
+            // either branch, so Send is always reachable: reaching past the notch
+            // edge crosses the dwell threshold and dismisses it (GW-264), and an
+            // unreachable Send was a dead end with no way to answer or escape.
+            ViewThatFits(in: .vertical) {
+                questionBlock(current)
+                ScrollView(.vertical) {
+                    questionBlock(current)
+                }
             }
 
             footer
@@ -67,6 +102,48 @@ struct ChatChoiceBar: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
         .background(Color.black.opacity(0.2))
+        .animation(.spring(response: 0.28, dampingFraction: 0.85), value: index)
+    }
+
+    // MARK: - Stepper
+
+    /// Mirrors the terminal's per-question tabs: where you are, what's left, and
+    /// what's already answered. Tappable so a wrong answer is one click to fix.
+    private var stepper: some View {
+        HStack(spacing: 6) {
+            ForEach(Array(request.questions.enumerated()), id: \.element.id) { position, question in
+                let isCurrent = position == index
+                let isAnswered = !answer(for: question).isEmpty
+
+                Button {
+                    withAnimation { index = position }
+                } label: {
+                    HStack(spacing: 4) {
+                        if isAnswered {
+                            Image(systemName: "checkmark")
+                                .font(.system(size: 8, weight: .bold))
+                        }
+                        Text(question.header ?? "Q\(position + 1)")
+                            .font(.system(size: 9, weight: .bold))
+                    }
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(
+                        isCurrent ? agentTint.opacity(0.22) : Color.white.opacity(0.06),
+                        in: Capsule()
+                    )
+                    .foregroundStyle(isCurrent ? agentTint : .white.opacity(0.45))
+                }
+                .buttonStyle(.plain)
+                .disabled(isLocked)
+            }
+
+            Spacer()
+
+            Text("\(index + 1) of \(request.questions.count)")
+                .font(.system(size: 9, weight: .medium))
+                .foregroundColor(.white.opacity(0.3))
+        }
     }
 
     // MARK: - One question
@@ -75,7 +152,9 @@ struct ChatChoiceBar: View {
     private func questionBlock(_ question: AskUserQuestion) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
-                if let header = question.header {
+                // With several questions the stepper already carries the header,
+                // so repeating it here would just spend height twice.
+                if let header = question.header, request.questions.count == 1 {
                     Text(header)
                         .font(.system(size: 9, weight: .bold))
                         .padding(.horizontal, 5)
@@ -168,7 +247,7 @@ struct ChatChoiceBar: View {
             )
         }
         .buttonStyle(.plain)
-        .disabled(hasSent)
+        .disabled(isLocked)
     }
 
     private func glyph(multiSelect: Bool, picked: Bool) -> String {
@@ -187,6 +266,13 @@ struct ChatChoiceBar: View {
             picked = [label]
         }
         selections[question.key] = picked
+
+        // Single-select answers advance, matching the terminal: one question,
+        // one choice, next. Multi-select can't — there's no way to know you're
+        // done picking — so it waits for Next.
+        if !question.multiSelect, !isLastQuestion {
+            withAnimation { index += 1 }
+        }
     }
 
     // MARK: - Free text ("Type something" parity)
@@ -217,7 +303,7 @@ struct ChatChoiceBar: View {
                 .padding(.vertical, 8)
             }
             .buttonStyle(.plain)
-            .disabled(hasSent)
+            .disabled(isLocked)
 
             if active {
                 TextField("Your answer...", text: binding(for: question.key), axis: .vertical)
@@ -235,7 +321,7 @@ struct ChatChoiceBar: View {
                                     .strokeBorder(agentTint.opacity(0.4), lineWidth: 1)
                             )
                     )
-                    .disabled(hasSent)
+                    .disabled(isLocked)
             }
         }
     }
@@ -267,38 +353,105 @@ struct ChatChoiceBar: View {
                 .background(Color.white.opacity(0.08), in: Capsule())
             }
             .buttonStyle(.plain)
+            .disabled(isLocked)
             .help("Answer in the terminal instead")
+
+            if delivery != .idle {
+                deliveryStatus
+            }
 
             Spacer()
 
-            Button {
-                send()
-            } label: {
-                Text(hasSent ? "Sent" : "Send")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(isComplete && !hasSent ? .black : .white.opacity(0.4))
-                    .padding(.horizontal, 18)
-                    .padding(.vertical, 7)
-                    .background(
-                        isComplete && !hasSent
-                            ? Color.white.opacity(0.95)
-                            : Color.white.opacity(0.1),
-                        in: Capsule()
-                    )
+            if index > 0 && !isLocked {
+                Button {
+                    withAnimation { index -= 1 }
+                } label: {
+                    Text("Back")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(.white.opacity(0.6))
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 7)
+                }
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
-            .disabled(!isComplete || hasSent)
-            .help(request.questions.count > 1 ? "Answer every question to send" : "Send answer")
+
+            if isLastQuestion {
+                primaryButton(title: sendTitle, enabled: isComplete && !isLocked) { send() }
+                    .help(request.questions.count > 1
+                          ? "Answer every question to send"
+                          : "Send answer")
+            } else {
+                // Multi-select has no natural end, so it needs an explicit Next.
+                primaryButton(title: "Next", enabled: !answer(for: current).isEmpty) {
+                    withAnimation { index += 1 }
+                }
+                .help("Answer this question to continue")
+            }
         }
     }
 
+    private var sendTitle: String {
+        switch delivery {
+        case .idle:    return "Send"
+        case .sending: return "Sending..."
+        case .sent:    return "Sent"
+        case .failed:  return "Retry"
+        }
+    }
+
+    /// GW-163 sent/failed pattern: the chip disabling on tap only proves the tap
+    /// registered. Delivery is reported from the socket write, so a verdict that
+    /// never reached the agent doesn't read as success.
+    @ViewBuilder
+    private var deliveryStatus: some View {
+        switch delivery {
+        case .sent:
+            HStack(spacing: 4) {
+                Image(systemName: "checkmark.circle.fill")
+                Text("Delivered")
+            }
+            .font(.system(size: 11, weight: .medium))
+            .foregroundColor(.green.opacity(0.85))
+        case .failed:
+            HStack(spacing: 4) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                Text("Didn't reach \(agentName)")
+            }
+            .font(.system(size: 11, weight: .medium))
+            .foregroundColor(.yellow.opacity(0.9))
+        case .sending, .idle:
+            EmptyView()
+        }
+    }
+
+    private func primaryButton(title: String, enabled: Bool,
+                               action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundColor(enabled ? .black : .white.opacity(0.4))
+                .padding(.horizontal, 18)
+                .padding(.vertical, 7)
+                .background(
+                    enabled ? Color.white.opacity(0.95) : Color.white.opacity(0.1),
+                    in: Capsule()
+                )
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+    }
+
     private func send() {
-        guard isComplete, !hasSent else { return }
-        hasSent = true  // one-shot: never replay an answer to the same gate
+        guard isComplete, !isLocked else { return }
+        delivery = .sending
         var answers: [String: String] = [:]
         for question in request.questions {
             answers[question.key] = answer(for: question)
         }
-        onAnswer(answers)
+        onAnswer(answers) { wasDelivered in
+            // Re-enable only on confirmed failure (spec §5), so a lost verdict
+            // can be retried without letting a delivered one be sent twice.
+            delivery = wasDelivered ? .sent : .failed
+        }
     }
 }

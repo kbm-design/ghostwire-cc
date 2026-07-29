@@ -119,6 +119,32 @@ final class AskUserQuestionPayloadTests: XCTestCase {
                        "id wins over question text as the correlation key")
     }
 
+    func testMultiQuestionClaudePayloadHasDistinctIdentities() {
+        // Regression: `Identifiable` used the stored optional `id`, which Claude
+        // never sends. Both questions therefore had identity nil, and ForEach
+        // rendered one question twice with selections moving in lockstep. Caught
+        // live, not here — these tests never rendered — so assert the invariant
+        // the view depends on.
+        let payload: [String: AnyCodable] = [
+            "questions": AnyCodable([
+                ["question": "Which state next?",
+                 "options": [["label": "State C", "description": "d"]]],
+                ["question": "Which rough edges?", "multiSelect": true,
+                 "options": [["label": "Scrolling", "description": "d"]]]
+            ])
+        ]
+        let request = AskUserQuestionRequest(toolInput: payload)
+        XCTAssertEqual(request?.questions.count, 2)
+
+        let ids = request!.questions.map(\.id)
+        XCTAssertEqual(Set(ids).count, 2, "each question needs its own ForEach identity")
+        XCTAssertEqual(ids, ["Which state next?", "Which rough edges?"])
+
+        // Answers are keyed by the same value, so they must not collide either.
+        let keys = request!.questions.map(\.key)
+        XCTAssertEqual(Set(keys).count, 2)
+    }
+
     func testKeyFallsBackToQuestionTextWhenNoId() {
         let request = AskUserQuestionRequest(toolInput: singleSelectPayload())
         XCTAssertEqual(request?.questions.first?.key,

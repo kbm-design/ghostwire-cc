@@ -39,16 +39,29 @@ struct AskUserQuestionOption: Codable, Equatable, Sendable, Identifiable {
 /// A single question with its options.
 struct AskUserQuestion: Codable, Equatable, Sendable, Identifiable {
     /// Codex (`request_user_input`) supplies a stable id; Claude does not.
-    let id: String?
+    let questionId: String?
     let question: String
     /// Short chip label (~12 chars in practice).
     let header: String?
     let options: [AskUserQuestionOption]
     let multiSelect: Bool
 
-    /// Correlation key. Falls back to the question text, which is also what
-    /// Claude keys its own `answers` dictionary by.
-    var key: String { id ?? question }
+    enum CodingKeys: String, CodingKey {
+        case questionId = "id"
+        case question, header, options, multiSelect
+    }
+
+    /// Stable identity, for `ForEach` and for keying answers.
+    ///
+    /// MUST NOT be the raw `questionId`: that is nil for every Claude payload,
+    /// so a multi-question call gave every question the same nil identity and
+    /// SwiftUI rendered one question twice with selections in lockstep (found
+    /// in live testing, not by the tests — they never rendered anything).
+    var id: String { questionId ?? question }
+
+    /// Correlation key — same value as `id`. Claude keys its own `answers`
+    /// dictionary by the question text, which is the fallback here.
+    var key: String { id }
 }
 
 /// The full `tool_input` payload.
@@ -91,7 +104,7 @@ extension AskUserQuestionRequest {
         guard !options.isEmpty, options.count == rawOptions.count else { return nil }
 
         return AskUserQuestion(
-            id: dict["id"] as? String,
+            questionId: dict["id"] as? String,
             question: question,
             header: dict["header"] as? String,
             options: options,

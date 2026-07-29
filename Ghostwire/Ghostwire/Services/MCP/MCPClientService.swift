@@ -123,10 +123,25 @@ final class MCPClientService: ObservableObject {
         guard var config = store.server(id: serverID) else { return }
         var bindings = config.feedTools ?? []
         bindings.removeAll { $0.tool == tool }
-        if bound { bindings.append(MCPFeedToolBinding(tool: tool)) }
+        if bound {
+            // Pre-fill the required-parameter shape so a tool that needs input
+            // shows the user what's missing instead of returning a -32602 they
+            // have to decode. Feed candidates require nothing and get `{}`.
+            let required = runtimes[serverID]?.tools.first { $0.name == tool }?.requiredInputs ?? []
+            bindings.append(
+                MCPFeedToolBinding(tool: tool, argumentsJSON: Self.argumentTemplate(for: required)))
+        }
         config.feedTools = bindings
         store.update(config)
         objectWillChange.send()
+    }
+
+    /// `{}` when nothing is required; otherwise the empty shape of what is.
+    /// Pure string work — nonisolated so it's callable (and testable) off the
+    /// main actor.
+    nonisolated static func argumentTemplate(for requiredInputs: [String]) -> String {
+        guard !requiredInputs.isEmpty else { return "{}" }
+        return "{" + requiredInputs.map { "\"\($0)\": \"\"" }.joined(separator: ", ") + "}"
     }
 
     /// Edit a binding's call arguments (Settings). No-op for an unbound tool.

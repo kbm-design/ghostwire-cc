@@ -112,81 +112,157 @@ struct MCPServerDetailView: View {
         if let runtime, !runtime.tools.isEmpty, let config {
             Text("Tools — allow individually (read-only glances)").font(.subheadline)
             List(runtime.tools) { tool in
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 6) {
-                        VStack(alignment: .leading, spacing: 1) {
-                            HStack(spacing: 4) {
-                                Text(tool.name).font(.body.monospaced())
-                                if tool.isReadOnlyHinted == true { badge("read-only", .green) }
-                                if tool.isDestructiveHinted == true { badge("destructive", .red) }
-                                if tool.hasOutputSchema { badge("schema", .blue) }
-                            }
-                            if let description = tool.description {
-                                Text(description).font(.caption).foregroundStyle(.secondary)
-                                    .lineLimit(1)
-                            }
-                        }
-                        Spacer()
-                        if config.allowedTools.contains(tool.name) {
-                            feedToggle(config: config, tool: tool.name)
-                            Button(runningTool == tool.name ? "Running…" : "Run") {
-                                Task { await run(tool: tool.name) }
-                            }
-                            .font(.caption)
-                            .disabled(runningTool != nil)
-                        }
-                        Toggle(
-                            "",
-                            isOn: Binding(
-                                get: { config.allowedTools.contains(tool.name) },
-                                set: {
-                                    service.setToolAllowed(
-                                        serverID: serverID, tool: tool.name, allowed: $0)
-                                    restartFeed()
-                                }
-                            )
-                        )
-                        .toggleStyle(.switch)
-                        .controlSize(.mini)
-                        .help("Allow Ghostwire to call this tool")
-                    }
-                    if let binding = config.feedTools?.first(where: { $0.tool == tool.name }) {
-                        feedArgumentsField(binding: binding)
-                    }
-                }
+                toolRow(tool: tool, config: config)
             }
             .frame(minHeight: 140)
         }
     }
 
-    // MARK: - GW-214: bind a tool as a feed card
+    /// One tool. The allow switch is the only control on the title line —
+    /// everything else drops to a secondary line that exists only once the tool
+    /// is allowed. Crowding four controls onto one line wrapped the monospaced
+    /// tool name mid-word and left no room for the name to breathe.
+    @ViewBuilder
+    private func toolRow(tool: MCPToolInfo, config: MCPServerConfig) -> some View {
+        let isAllowed = config.allowedTools.contains(tool.name)
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                VStack(alignment: .leading, spacing: 1) {
+                    HStack(spacing: 4) {
+                        Text(tool.name).font(.body.monospaced()).lineLimit(1)
+                        if tool.isReadOnlyHinted == true { badge("read-only", .green) }
+                        if tool.isDestructiveHinted == true { badge("destructive", .red) }
+                        if tool.hasOutputSchema { badge("schema", .blue) }
+                    }
+                    if let description = tool.description {
+                        Text(description).font(.caption).foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                }
+                Spacer(minLength: 8)
+                Toggle(
+                    "",
+                    isOn: Binding(
+                        get: { isAllowed },
+                        set: {
+                            service.setToolAllowed(
+                                serverID: serverID, tool: tool.name, allowed: $0)
+                            restartFeed()
+                        }
+                    )
+                )
+                .toggleStyle(.switch)
+                .controlSize(.mini)
+                .labelsHidden()
+                .help("Allow Ghostwire to call this tool")
+            }
 
-    /// A SECOND opt-in on top of the allowlist. Allowing says "you may call
-    /// this"; binding says "call it on a timer and show me the answer". Only
-    /// offered for already-allowed tools, because the feed goes through
-    /// `callAllowedTool` and a binding without the allowlist would fail closed.
-    private func feedToggle(config: MCPServerConfig, tool: String) -> some View {
-        let isBound = config.feedTools?.contains { $0.tool == tool } ?? false
-        return Button {
-            service.setFeedTool(serverID: serverID, tool: tool, bound: !isBound)
-            restartFeed()
-        } label: {
-            Image(systemName: isBound ? "square.grid.2x2.fill" : "square.grid.2x2")
-                .foregroundStyle(isBound ? Color.effectiveAccent : .secondary)
+            if isAllowed {
+                secondaryLine(tool: tool, config: config)
+            }
         }
-        .buttonStyle(.plain)
-        .help(isBound ? "Showing in the Feed — click to stop" : "Show this tool's result in the Feed")
+        .padding(.vertical, 2)
     }
 
-    /// Arguments for the scheduled call. Most read tools need none, so this
-    /// starts at `{}` — an empty object rather than nothing, because strict
-    /// servers reject a missing `arguments` field outright.
-    private func feedArgumentsField(binding: MCPFeedToolBinding) -> some View {
+    // MARK: - GW-214: bind a tool as a feed card
+
+    /// Run + the feed binding. Only reachable once the tool is allowed.
+    @ViewBuilder
+    private func secondaryLine(tool: MCPToolInfo, config: MCPServerConfig) -> some View {
+        let binding = config.feedTools?.first { $0.tool == tool.name }
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 10) {
+                Button(runningTool == tool.name ? "Running…" : "Run") {
+                    Task { await run(tool: tool.name) }
+                }
+                .font(.caption)
+                .disabled(runningTool != nil)
+
+                if tool.isFeedCandidate {
+                    // The good path: no arguments to supply, so binding is one
+                    // click and nothing else appears.
+                    Toggle(
+                        "Show in Feed",
+                        isOn: Binding(
+                            get: { binding != nil },
+                            set: {
+                                service.setFeedTool(
+                                    serverID: serverID, tool: tool.name, bound: $0)
+                                restartFeed()
+                            }
+                        )
+                    )
+                    .toggleStyle(.checkbox)
+                    .font(.caption)
+                } else {
+                    // Needs input, so it's a QUESTION, not a standing value.
+                    // Reachable, but never the suggested path.
+                    needsArgumentsControl(tool: tool, isBound: binding != nil)
+                }
+                Spacer(minLength: 0)
+            }
+
+            if let binding {
+                if tool.isFeedCandidate {
+                    // Optional parameters, collapsed. The candidacy rule means
+                    // the common path needs none — but `list_issues` without
+                    // `assignee: me` returns the whole team's work, so scoping
+                    // has to be REACHABLE even though it isn't the default.
+                    //
+                    // A JSON box is a placeholder control, not the answer: the
+                    // tool's inputSchema already describes each parameter's type
+                    // and enum, so these should be generated native controls.
+                    // That's GW-333.
+                    DisclosureGroup("Options") {
+                        feedArgumentsField(binding: binding, tool: tool)
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                } else {
+                    feedArgumentsField(binding: binding, tool: tool)
+                }
+            }
+        }
+        .padding(.leading, 2)
+    }
+
+    /// A tool with required inputs re-asks one frozen question on every poll.
+    /// Sometimes that's genuinely what you want (a pinned repo, a fixed
+    /// account), so it stays possible — behind a disclosure that says what
+    /// you're signing up for rather than an icon that invites it.
+    private func needsArgumentsControl(tool: MCPToolInfo, isBound: Bool) -> some View {
+        HStack(spacing: 6) {
+            Toggle(
+                "Show in Feed",
+                isOn: Binding(
+                    get: { isBound },
+                    set: {
+                        service.setFeedTool(serverID: serverID, tool: tool.name, bound: $0)
+                        restartFeed()
+                    }
+                )
+            )
+            .toggleStyle(.checkbox)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+
+            Image(systemName: "exclamationmark.triangle")
+                .font(.caption2)
+                .foregroundStyle(.orange)
+                .help(
+                    "Needs \(tool.requiredInputs.joined(separator: ", ")) — this asks a fixed question on every refresh. Best for a pinned subject, not a search."
+                )
+        }
+    }
+
+    /// Arguments for the scheduled call. Only shown for tools that require
+    /// input; a feed candidate never needs it, which is the point.
+    private func feedArgumentsField(binding: MCPFeedToolBinding, tool: MCPToolInfo) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 6) {
-                Text("Feed arguments").font(.caption2).foregroundStyle(.secondary)
+                Text("Arguments").font(.caption2).foregroundStyle(.secondary)
                 TextField(
-                    "{}",
+                    Self.argumentsPlaceholder(for: tool),
                     text: Binding(
                         get: { binding.argumentsJSON },
                         set: {
@@ -210,9 +286,24 @@ struct MCPServerDetailView: View {
                 // silently.
                 Text("Saved in plain text — put credentials in the server's auth settings, not here.")
                     .font(.caption2).foregroundStyle(.secondary)
+            } else if !tool.requiredInputs.isEmpty {
+                // The empty `{}` default is invalid for this tool by definition,
+                // so say what's missing instead of waiting for the server to
+                // return a -32602 the user has to decode. Feed candidates
+                // require nothing, so they never see this.
+                Text("Requires \(tool.requiredInputs.joined(separator: ", ")).")
+                    .font(.caption2).foregroundStyle(.orange)
             }
         }
-        .padding(.leading, 4)
+        .padding(.leading, 2)
+    }
+
+    /// A filled-in shape beats `{}` — the user shouldn't have to infer the
+    /// JSON from an error message.
+    static func argumentsPlaceholder(for tool: MCPToolInfo) -> String {
+        guard !tool.requiredInputs.isEmpty else { return "{}" }
+        let pairs = tool.requiredInputs.map { "\"\($0)\": \"\"" }.joined(separator: ", ")
+        return "{\(pairs)}"
     }
 
     /// Rebuild the Source list now rather than at the next poll, so a binding

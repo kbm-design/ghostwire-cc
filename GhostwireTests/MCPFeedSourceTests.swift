@@ -108,6 +108,38 @@ final class MCPFeedCardMapperTests: XCTestCase {
         XCTAssertEqual(items, ["one", "two"])
     }
 
+    /// The handle prefix is cross-tracker, not Linear-specific: these are the
+    /// four spellings trackers converged on.
+    func testShortHandleFromAnyTrackerPrefixesTheRow() {
+        let cases: [(String, Value, String)] = [
+            ("identifier", .string("GW-332"), "GW-332 Ship it"),   // Linear
+            ("id", .string("GW-332"), "GW-332 Ship it"),           // Linear (list_issues)
+            ("key", .string("PROJ-12"), "PROJ-12 Ship it"),        // Jira
+            ("number", .int(332), "332 Ship it"),                  // GitHub
+            ("shortId", .string("ABC-1"), "ABC-1 Ship it"),        // Sentry
+        ]
+        for (key, value, expected) in cases {
+            let row = MCPFeedCardMapper.row(
+                for: .object([key: value, "title": .string("Ship it")]))
+            XCTAssertEqual(row, expected, "handle key \(key)")
+        }
+    }
+
+    /// The length cap is what does the filtering — a UUID or database id is
+    /// never a useful prefix, and this is why the rule needs no vendor list.
+    func testLongIdIsNotTreatedAsAHandle() {
+        let row = MCPFeedCardMapper.row(
+            for: .object([
+                "id": .string("3F2504E0-4F89-11D3-9A0C-0305E82C3301"),
+                "title": .string("Ship it"),
+            ]))
+        XCTAssertEqual(row, "Ship it")
+    }
+
+    func testHandleAloneIsNotPrefixedWithItself() {
+        XCTAssertEqual(MCPFeedCardMapper.row(for: .object(["id": .string("GW-332")])), "GW-332")
+    }
+
     func testRowFallsBackThroughTheFieldPreferenceOrder() {
         XCTAssertEqual(MCPFeedCardMapper.row(for: .object(["name": .string("Deploy")])), "Deploy")
         XCTAssertEqual(
@@ -365,6 +397,58 @@ final class MCPFeedSourceStateTests: XCTestCase {
         XCTAssertFalse(MCPFeedToolBinding(tool: "t", argumentsJSON: "{limit").hasValidArguments)
         // A JSON array is valid JSON but not a valid arguments object.
         XCTAssertFalse(MCPFeedToolBinding(tool: "t", argumentsJSON: "[1,2]").hasValidArguments)
+    }
+}
+
+// MARK: - Feed candidacy: a standing value vs a question
+
+/// The curation rule that keeps search tools off a poll loop. A tool requiring
+/// input is a *query* — putting `web_search_exa` on a 5-minute timer re-asks one
+/// frozen question forever and bills for every repeat.
+final class MCPToolFeedCandidacyTests: XCTestCase {
+    private func info(required: [String]) -> MCPToolInfo {
+        MCPToolInfo(
+            name: "t", description: nil, hasOutputSchema: false, isReadOnlyHinted: true,
+            isDestructiveHinted: false, requiredInputs: required)
+    }
+
+    func testToolNeedingNoInputIsAFeedCandidate() {
+        XCTAssertTrue(info(required: []).isFeedCandidate)
+    }
+
+    func testToolRequiringInputIsNot() {
+        // web_search_exa requires `query` — the case that prompted the rule.
+        XCTAssertFalse(info(required: ["query"]).isFeedCandidate)
+    }
+
+    func testRequiredInputsAreReadOffTheJSONSchema() {
+        let schema = Value.object([
+            "type": .string("object"),
+            "properties": .object(["query": .object(["type": .string("string")])]),
+            "required": .array([.string("query")]),
+        ])
+        XCTAssertEqual(MCPToolInfo.requiredInputs(from: schema), ["query"])
+    }
+
+    /// Permissive read: a server that declares no requirements isn't claiming
+    /// any, so it stays eligible rather than being hidden.
+    func testMissingOrMalformedSchemaMeansNoRequirements() {
+        XCTAssertEqual(MCPToolInfo.requiredInputs(from: nil), [])
+        XCTAssertEqual(MCPToolInfo.requiredInputs(from: .object([:])), [])
+        XCTAssertEqual(MCPToolInfo.requiredInputs(from: .string("nonsense")), [])
+        XCTAssertEqual(
+            MCPToolInfo.requiredInputs(from: .object(["required": .string("query")])), [])
+    }
+
+    /// Binding a tool that needs input should show what's missing, not `{}`
+    /// followed by a -32602 the user has to decode.
+    func testArgumentTemplatePrefillsTheRequiredShape() {
+        XCTAssertEqual(MCPClientService.argumentTemplate(for: []), "{}")
+        XCTAssertEqual(
+            MCPClientService.argumentTemplate(for: ["query"]), #"{"query": ""}"#)
+        XCTAssertEqual(
+            MCPClientService.argumentTemplate(for: ["repo", "branch"]),
+            #"{"repo": "", "branch": ""}"#)
     }
 }
 

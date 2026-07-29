@@ -382,24 +382,51 @@ enum MCPFeedCardMapper {
         return .list(title: heading, items: items)
     }
 
+    /// Keys that hold a SHORT human-facing handle alongside a title — Linear
+    /// `identifier`/`id` ("GW-332"), Jira `key` ("PROJ-123"), GitHub `number`,
+    /// Sentry `shortId`. Not vendor-specific: these are the spellings trackers
+    /// converged on, and `maxHandleLength` is what actually does the filtering —
+    /// a UUID or a database row id is never a useful prefix.
+    static let handleKeys = ["identifier", "key", "shortId", "number", "id"]
+    static let maxHandleLength = 12
+
     /// One row's text. An element with a known human field uses it, prefixed by
-    /// its identifier when it has one — "GW-214 Feed cards" reads better than
-    /// either half alone. Per-item links are deliberately NOT modelled here:
-    /// `.list` can't carry them yet, and that's GW-328 Phase 1's to add.
+    /// its handle when it has one — "GW-332 MCP server add-flow" survives
+    /// truncation far better than either half alone, which matters because the
+    /// card truncates every row.
+    ///
+    /// This is the ceiling for guessing. GW-328 Phase 3 replaces it with a
+    /// DECLARED source→field mapping; extending the heuristic further would
+    /// just be more to delete.
+    ///
+    /// Per-item links are deliberately NOT modelled: `.list` can't carry them
+    /// yet, and that's GW-328 Phase 1's to add.
     static func row(for element: Value) -> String? {
         if let text = scalarText(element) { return text }
         guard let object = element.objectValue else { return nil }
 
-        let identifier = object["identifier"].flatMap(scalarText)
+        let handle = handle(in: object)
         for key in rowKeys {
             guard let text = object[key].flatMap(scalarText) else { continue }
-            if let identifier, key != "identifier", key != "id" {
-                return "\(identifier) \(text)"
-            }
+            // Never prefix a value with itself (an object whose only field IS
+            // the handle).
+            guard let handle, handle != text else { return text }
+            return "\(handle) \(text)"
+        }
+        // No known field: the handle, else the first scalar — either beats
+        // rendering nothing.
+        return handle
+            ?? object.keys.sorted().lazy.compactMap { object[$0].flatMap(scalarText) }.first
+    }
+
+    static func handle(in object: [String: Value]) -> String? {
+        for key in handleKeys {
+            guard let text = object[key].flatMap(scalarText),
+                text.count <= maxHandleLength
+            else { continue }
             return text
         }
-        // No known field: the first scalar beats rendering nothing.
-        return object.keys.sorted().lazy.compactMap { object[$0].flatMap(scalarText) }.first
+        return nil
     }
 
     /// The array in an object that holds exactly one. Two collections in one

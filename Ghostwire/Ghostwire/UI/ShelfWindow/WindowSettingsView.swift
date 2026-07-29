@@ -196,6 +196,9 @@ private struct ModuleBlock: View {
         case "Battery":  Charge()
         case "Shelf":    Shelf()
         case "Mirror":   MirrorSettings()
+        // GW-261 added the Feed module but never mapped its pane here, so the
+        // Sources UI was reachable only from the legacy settings window.
+        case "Feed":     FeedSettings()
         default:         EmptyView()
         }
     }

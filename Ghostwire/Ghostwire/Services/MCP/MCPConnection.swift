@@ -20,7 +20,55 @@ struct MCPToolInfo: Equatable, Identifiable {
     let hasOutputSchema: Bool
     let isReadOnlyHinted: Bool?
     let isDestructiveHinted: Bool?
+    /// Names of the tool's REQUIRED input parameters, from its `inputSchema`.
+    ///
+    /// GW-214 uses this to tell a standing value from a question. A tool that
+    /// requires no input answers on its own — "my issues", "the build status" —
+    /// and is a good ambient card. A tool that requires input is a *query*
+    /// (`web_search_exa` needs a search term), and putting one on a poll loop
+    /// re-asks the same frozen question forever, burning credits for an answer
+    /// nobody asked twice. See `MCPToolInfo.isFeedCandidate`.
+    let requiredInputs: [String]
+
     var id: String { name }
+
+    /// `requiredInputs` defaults to none — the same permissive read as a server
+    /// that declares no requirements.
+    init(
+        name: String,
+        description: String?,
+        hasOutputSchema: Bool,
+        isReadOnlyHinted: Bool?,
+        isDestructiveHinted: Bool?,
+        requiredInputs: [String] = []
+    ) {
+        self.name = name
+        self.description = description
+        self.hasOutputSchema = hasOutputSchema
+        self.isReadOnlyHinted = isReadOnlyHinted
+        self.isDestructiveHinted = isDestructiveHinted
+        self.requiredInputs = requiredInputs
+    }
+
+    /// Whether this tool should be OFFERED as a feed card without ceremony.
+    /// Not a security boundary (the allowlist is) — a curation rule, so the
+    /// obvious path stays one click and no JSON.
+    ///
+    /// Two disqualifiers:
+    ///  * needs input → it's a question, not a standing value (see `requiredInputs`)
+    ///  * self-declared destructive → a no-argument `clear_cache()` or
+    ///    `restart()` would otherwise look like a perfect one-click card and
+    ///    then fire on every refresh forever.
+    ///
+    /// Note the `!=` comparisons: an ABSENT annotation stays permissive, an
+    /// explicit one is believed. Annotations are optional and many servers omit
+    /// them entirely, so requiring `readOnlyHint == true` would silently hide
+    /// legitimate read tools — but a server that says `readOnlyHint: false` has
+    /// declared that calling it mutates something, and putting that on a timer
+    /// turns a deliberate one-off action into a repeated background write.
+    var isFeedCandidate: Bool {
+        requiredInputs.isEmpty && isDestructiveHinted != true && isReadOnlyHinted != false
+    }
 }
 
 extension MCPToolInfo {
@@ -30,6 +78,14 @@ extension MCPToolInfo {
         self.hasOutputSchema = tool.outputSchema != nil
         self.isReadOnlyHinted = tool.annotations.readOnlyHint
         self.isDestructiveHinted = tool.annotations.destructiveHint
+        self.requiredInputs = Self.requiredInputs(from: tool.inputSchema)
+    }
+
+    /// `required: [...]` off a JSON Schema object. Absent or malformed → none,
+    /// which is the permissive read: a server that doesn't declare requirements
+    /// isn't claiming any.
+    static func requiredInputs(from inputSchema: Value?) -> [String] {
+        inputSchema?.objectValue?["required"]?.arrayValue?.compactMap(\.stringValue) ?? []
     }
 }
 

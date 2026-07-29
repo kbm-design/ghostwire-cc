@@ -41,20 +41,40 @@ enum FeedValueFormatter {
     /// four-figure asset doesn't need cents, a sub-dollar one needs four
     /// decimals or it renders as "$0.00".
     static func price(_ value: Double, currency: String = "$") -> String {
+        currency + number(value)
+    }
+
+    /// The same magnitude-scaled precision without a currency prefix — used by
+    /// any Source with an unlabelled measurement (GW-214's MCP results, where the
+    /// payload rarely says what unit it's in).
+    static func number(_ value: Double) -> String {
         let decimals: Int
         switch abs(value) {
         case 1000...: decimals = 0
         case 1...: decimals = 2
         default: decimals = 4
         }
+        return grouped(value, minimumFractionDigits: decimals, maximumFractionDigits: decimals)
+    }
+
+    /// A whole number: grouped, never given decimals. Counts are the one numeric
+    /// case where `number()`'s magnitude rule is wrong — "12.00 issues" is noise.
+    static func count(_ value: Int) -> String {
+        grouped(Double(value), minimumFractionDigits: 0, maximumFractionDigits: 0)
+    }
+
+    private static func grouped(
+        _ value: Double, minimumFractionDigits: Int, maximumFractionDigits: Int
+    ) -> String {
+        // Built per call rather than cached: NumberFormatter isn't Sendable, and
+        // these run a handful of times per refresh.
         let formatter = NumberFormatter()
         formatter.numberStyle = .decimal
         formatter.groupingSeparator = ","
         formatter.usesGroupingSeparator = true
-        formatter.minimumFractionDigits = decimals
-        formatter.maximumFractionDigits = decimals
-        let number = formatter.string(from: NSNumber(value: value)) ?? "\(value)"
-        return currency + number
+        formatter.minimumFractionDigits = minimumFractionDigits
+        formatter.maximumFractionDigits = maximumFractionDigits
+        return formatter.string(from: NSNumber(value: value)) ?? "\(value)"
     }
 
     /// Signed percentage change, always carrying its sign so the delta reads as

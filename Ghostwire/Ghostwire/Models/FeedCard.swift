@@ -88,6 +88,30 @@ extension FeedCard {
         }
     }
 
+    /// The footer's relative timestamp.
+    ///
+    /// `RelativeDateTimeFormatter` renders a date at or fractionally after
+    /// `now` as **"in 0 seconds"** — so a card that had just refreshed claimed
+    /// to be from the future, which is what a 60s-interval source shows every
+    /// single minute. Anything within the last few seconds reads "now" instead,
+    /// and a future `updatedAt` (clock skew on a server-supplied date) is
+    /// clamped rather than rendered forwards.
+    func relativeUpdatedText(now: Date = Date()) -> String {
+        let elapsed = now.timeIntervalSince(updatedAt)
+        guard elapsed >= Self.justNowThreshold else { return "now" }
+        return Self.relativeFormatter.localizedString(for: updatedAt, relativeTo: now)
+    }
+
+    /// Below this, "now" reads better than any number — and it's the window
+    /// where the formatter's future-tense phrasing appears.
+    static let justNowThreshold: TimeInterval = 5
+
+    nonisolated(unsafe) private static let relativeFormatter: RelativeDateTimeFormatter = {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .abbreviated
+        return formatter
+    }()
+
     /// Whether this card's value is stale and should be dimmed. Mirrors the
     /// usage-meter freshness check (`AgentActivity.isRecent`): a card goes stale
     /// once it hasn't refreshed within `tolerance ×` its Source's `refreshInterval`.

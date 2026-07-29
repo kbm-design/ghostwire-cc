@@ -81,6 +81,35 @@ func detectMCPTransportKind(from rawInput: String) -> MCPTransportKind {
     return trimmed.hasPrefix("http://") || trimmed.hasPrefix("https://") ? .http : .stdio
 }
 
+/// GW-214: one tool bound as an ambient feed card.
+///
+/// Binding is a SECOND opt-in, deliberately separate from `allowedTools`:
+/// allowing a tool says "Ghostwire may call this when I ask", binding it says
+/// "call it on a timer forever". `MCPFeedSource` still goes through
+/// `callAllowedTool`, so a binding can never widen what may be called — a tool
+/// bound but not allowed simply fails closed.
+struct MCPFeedToolBinding: Codable, Equatable, Identifiable {
+    var tool: String
+    /// Arguments for the call, as a JSON object literal. `{}` — not `nil` — is
+    /// the default: strict (zod-validated) servers reject a missing `arguments`
+    /// field with "expected object, received undefined".
+    ///
+    /// This is the one field on this config a user could put a secret in, and it
+    /// persists in plain text like everything else here. Settings says so
+    /// inline; credentials belong in `httpAuth` / the Keychain, not in a call.
+    var argumentsJSON: String = "{}"
+
+    var id: String { tool }
+
+    init(tool: String, argumentsJSON: String = "{}") {
+        self.tool = tool
+        self.argumentsJSON = argumentsJSON
+    }
+    // Parsing `argumentsJSON` into SDK `Value`s lives in MCPFeedSource.swift so
+    // this file — the persisted, auditable, secret-free config — stays free of
+    // the MCP SDK.
+}
+
 struct MCPProbeRecord: Codable, Equatable {
     var date: Date
     var toolCount: Int
@@ -101,6 +130,15 @@ struct MCPServerConfig: Codable, Equatable, Identifiable {
     /// registration (the pre-GW-291 default; legacy configs decode to nil).
     var httpAuth: MCPHTTPAuth?
     var isEnabled: Bool = true
+    /// GW-214: tools whose results render as ambient feed cards.
+    ///
+    /// OPTIONAL, and it has to stay that way. Swift's synthesized `Codable` does
+    /// NOT fall back to a property's default value for a missing key, and
+    /// `MCPServerConfigStore.load` decodes with `try?` — so a non-optional new
+    /// key would fail to decode every pre-GW-214 `mcp-servers.json` and silently
+    /// wipe the user's entire server list on upgrade. Same reason `httpAuth` is
+    /// optional. Read it through `feedBindings`.
+    var feedTools: [MCPFeedToolBinding]?
     /// Trust gate for stdio (spawning = code execution). Holds the exact
     /// command signature the user approved; nil or mismatch = won't spawn.
     var trustedCommandSignature: String?
@@ -113,6 +151,13 @@ struct MCPServerConfig: Codable, Equatable, Identifiable {
     var commandSignature: String? {
         guard case .stdio(let command, let arguments, _) = transport else { return nil }
         return ([command] + arguments).joined(separator: "\u{1F}")
+    }
+
+    /// Non-optional view of `feedTools`, filtered to bindings that could
+    /// actually run: a tool dropped from the allowlist stops feeding rather than
+    /// producing a card that fails closed on every poll.
+    var feedBindings: [MCPFeedToolBinding] {
+        (feedTools ?? []).filter { allowedTools.contains($0.tool) }
     }
 
     var isTrusted: Bool {

@@ -9,6 +9,7 @@
 //
 
 import AppKit
+import Combine
 import Foundation
 import MCP
 
@@ -64,6 +65,19 @@ final class MCPClientService: ObservableObject {
     private let connectionFactory: (MCPServerConfig) -> MCPConnecting
 
     @Published private(set) var runtimes: [UUID: MCPServerRuntime] = [:]
+
+    /// GW-214: fires when a config change alters which feed Sources should
+    /// exist or what they'd call. `FeedSourceCoordinator` subscribes so it
+    /// rebuilds itself; without this, a removed server leaves an orphan poll
+    /// loop publishing a "Not connected" card for a server that's gone.
+    ///
+    /// Deliberately NOT `objectWillChange` or a store-wide observer: `runtimes`
+    /// churns on every status change and `store.update` is also called by
+    /// `recordProbe`/`recordRun` telemetry on every connect and every tool
+    /// call. Either would restart the coordinator in a loop. This fires only
+    /// from the explicit config mutations that actually change the source list
+    /// (add / remove / allow / bind / arguments / trust).
+    let feedConfigDidChange = PassthroughSubject<Void, Never>()
     private var connections: [UUID: MCPConnecting] = [:]
     private var healthPolicies: [UUID: ConnectionHealthPolicy] = [:]
     private var wakeObserver: NSObjectProtocol?
@@ -86,6 +100,7 @@ final class MCPClientService: ObservableObject {
     func addServer(_ config: MCPServerConfig) {
         store.add(config)
         runtimes[config.id] = MCPServerRuntime()
+        feedConfigDidChange.send()
     }
 
     func removeServer(id: UUID) {
@@ -100,6 +115,8 @@ final class MCPClientService: ObservableObject {
         store.remove(id: id)
         runtimes[id] = nil
         healthPolicies[id] = nil
+        // Or the coordinator keeps polling a server that no longer exists.
+        feedConfigDidChange.send()
     }
 
     func setToolAllowed(serverID: UUID, tool: String, allowed: Bool) {
@@ -108,9 +125,55 @@ final class MCPClientService: ObservableObject {
             config.allowedTools.insert(tool)
         } else {
             config.allowedTools.remove(tool)
+            // Disallowing implies unbinding (GW-214): a binding left behind would
+            // sit in Settings looking active while failing closed on every poll.
+            config.feedTools?.removeAll { $0.tool == tool }
         }
         store.update(config)
         objectWillChange.send()
+        feedConfigDidChange.send()
+    }
+
+    /// GW-214: bind/unbind a tool as an ambient feed card. Independent of the
+    /// allowlist — binding never grants a call, it only schedules one that the
+    /// allowlist has already permitted.
+    func setFeedTool(serverID: UUID, tool: String, bound: Bool) {
+        guard var config = store.server(id: serverID) else { return }
+        var bindings = config.feedTools ?? []
+        bindings.removeAll { $0.tool == tool }
+        if bound {
+            // Pre-fill the required-parameter shape so a tool that needs input
+            // shows the user what's missing instead of returning a -32602 they
+            // have to decode. Feed candidates require nothing and get `{}`.
+            let required = runtimes[serverID]?.tools.first { $0.name == tool }?.requiredInputs ?? []
+            bindings.append(
+                MCPFeedToolBinding(tool: tool, argumentsJSON: Self.argumentTemplate(for: required)))
+        }
+        config.feedTools = bindings
+        store.update(config)
+        objectWillChange.send()
+        feedConfigDidChange.send()
+    }
+
+    /// `{}` when nothing is required; otherwise the empty shape of what is.
+    /// Pure string work — nonisolated so it's callable (and testable) off the
+    /// main actor.
+    nonisolated static func argumentTemplate(for requiredInputs: [String]) -> String {
+        guard !requiredInputs.isEmpty else { return "{}" }
+        return "{" + requiredInputs.map { "\"\($0)\": \"\"" }.joined(separator: ", ") + "}"
+    }
+
+    /// Edit a binding's call arguments (Settings). No-op for an unbound tool.
+    func setFeedToolArguments(serverID: UUID, tool: String, argumentsJSON: String) {
+        guard var config = store.server(id: serverID),
+            var bindings = config.feedTools,
+            let index = bindings.firstIndex(where: { $0.tool == tool })
+        else { return }
+        bindings[index].argumentsJSON = argumentsJSON
+        config.feedTools = bindings
+        store.update(config)
+        objectWillChange.send()
+        feedConfigDidChange.send()
     }
 
     /// User explicitly trusted the current command line (Add sheet / detail view).
@@ -119,6 +182,7 @@ final class MCPClientService: ObservableObject {
         config.trustedCommandSignature = config.commandSignature
         store.update(config)
         objectWillChange.send()
+        feedConfigDidChange.send()
     }
 
     // MARK: - Lifecycle
@@ -315,8 +379,16 @@ final class MCPClientService: ObservableObject {
         }
     }
 
+    /// Telemetry writes RE-READ the config instead of using the caller's copy.
+    ///
+    /// The caller captured that copy BEFORE an await (a connect or a tool call
+    /// lasting hundreds of ms), so writing it back would silently revert
+    /// anything the user changed meanwhile — binding a tool, unbinding it, or
+    /// editing its feed arguments. A race, so edits stuck sometimes and not
+    /// others. Re-reading also means a server removed mid-call is not
+    /// resurrected by its own trailing telemetry. (Codex P2, 2026-07-29.)
     private func recordProbe(config: MCPServerConfig, tools: [MCPToolInfo]) {
-        var updated = config
+        guard var updated = store.server(id: config.id) else { return }
         var probe = updated.lastProbe
             ?? MCPProbeRecord(date: Date(), toolCount: 0, toolsWithOutputSchema: [])
         probe.date = Date()
@@ -326,8 +398,10 @@ final class MCPClientService: ObservableObject {
         store.update(updated)
     }
 
+    /// Same re-read as `recordProbe` — this one runs after the tool call, which
+    /// is the longer await and so the likelier window to clobber a feed edit.
     private func recordRun(config: MCPServerConfig, tool: String, output: MCPToolCallOutput) {
-        var updated = config
+        guard var updated = store.server(id: config.id) else { return }
         var probe = updated.lastProbe
             ?? MCPProbeRecord(date: Date(), toolCount: 0, toolsWithOutputSchema: [])
         probe.lastRunTool = tool

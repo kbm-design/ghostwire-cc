@@ -112,43 +112,205 @@ struct MCPServerDetailView: View {
         if let runtime, !runtime.tools.isEmpty, let config {
             Text("Tools — allow individually (read-only glances)").font(.subheadline)
             List(runtime.tools) { tool in
-                HStack(spacing: 6) {
-                    VStack(alignment: .leading, spacing: 1) {
-                        HStack(spacing: 4) {
-                            Text(tool.name).font(.body.monospaced())
-                            if tool.isReadOnlyHinted == true { badge("read-only", .green) }
-                            if tool.isDestructiveHinted == true { badge("destructive", .red) }
-                            if tool.hasOutputSchema { badge("schema", .blue) }
-                        }
-                        if let description = tool.description {
-                            Text(description).font(.caption).foregroundStyle(.secondary)
-                                .lineLimit(1)
-                        }
-                    }
-                    Spacer()
-                    if config.allowedTools.contains(tool.name) {
-                        Button(runningTool == tool.name ? "Running…" : "Run") {
-                            Task { await run(tool: tool.name) }
-                        }
-                        .font(.caption)
-                        .disabled(runningTool != nil)
-                    }
-                    Toggle(
-                        "",
-                        isOn: Binding(
-                            get: { config.allowedTools.contains(tool.name) },
-                            set: {
-                                service.setToolAllowed(
-                                    serverID: serverID, tool: tool.name, allowed: $0)
-                            }
-                        )
-                    )
-                    .toggleStyle(.switch)
-                    .controlSize(.mini)
-                }
+                toolRow(tool: tool, config: config)
             }
             .frame(minHeight: 140)
         }
+    }
+
+    /// One tool. The allow switch is the only control on the title line —
+    /// everything else drops to a secondary line that exists only once the tool
+    /// is allowed. Crowding four controls onto one line wrapped the monospaced
+    /// tool name mid-word and left no room for the name to breathe.
+    @ViewBuilder
+    private func toolRow(tool: MCPToolInfo, config: MCPServerConfig) -> some View {
+        let isAllowed = config.allowedTools.contains(tool.name)
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                VStack(alignment: .leading, spacing: 1) {
+                    HStack(spacing: 4) {
+                        Text(tool.name).font(.body.monospaced()).lineLimit(1)
+                        if tool.isReadOnlyHinted == true { badge("read-only", .green) }
+                        if tool.isDestructiveHinted == true { badge("destructive", .red) }
+                        if tool.hasOutputSchema { badge("schema", .blue) }
+                    }
+                    if let description = tool.description {
+                        Text(description).font(.caption).foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                }
+                Spacer(minLength: 8)
+                Toggle(
+                    "",
+                    isOn: Binding(
+                        get: { isAllowed },
+                        set: {
+                            service.setToolAllowed(
+                                serverID: serverID, tool: tool.name, allowed: $0)
+                            restartFeed()
+                        }
+                    )
+                )
+                .toggleStyle(.switch)
+                .controlSize(.mini)
+                .labelsHidden()
+                .help("Allow Ghostwire to call this tool")
+            }
+
+            if isAllowed {
+                secondaryLine(tool: tool, config: config)
+            }
+        }
+        .padding(.vertical, 2)
+    }
+
+    // MARK: - GW-214: bind a tool as a feed card
+
+    /// Run + the feed binding. Only reachable once the tool is allowed.
+    @ViewBuilder
+    private func secondaryLine(tool: MCPToolInfo, config: MCPServerConfig) -> some View {
+        let binding = config.feedTools?.first { $0.tool == tool.name }
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 10) {
+                Button(runningTool == tool.name ? "Running…" : "Run") {
+                    Task { await run(tool: tool.name) }
+                }
+                .font(.caption)
+                .disabled(runningTool != nil)
+
+                if tool.isFeedCandidate {
+                    // The good path: no arguments to supply, so binding is one
+                    // click and nothing else appears.
+                    Toggle(
+                        "Show in Feed",
+                        isOn: Binding(
+                            get: { binding != nil },
+                            set: {
+                                service.setFeedTool(
+                                    serverID: serverID, tool: tool.name, bound: $0)
+                                restartFeed()
+                            }
+                        )
+                    )
+                    .toggleStyle(.checkbox)
+                    .font(.caption)
+                } else {
+                    // Needs input, so it's a QUESTION, not a standing value.
+                    // Reachable, but never the suggested path.
+                    needsArgumentsControl(tool: tool, isBound: binding != nil)
+                }
+                Spacer(minLength: 0)
+            }
+
+            if let binding {
+                if tool.isFeedCandidate {
+                    // Optional parameters, collapsed. The candidacy rule means
+                    // the common path needs none — but `list_issues` without
+                    // `assignee: me` returns the whole team's work, so scoping
+                    // has to be REACHABLE even though it isn't the default.
+                    //
+                    // A JSON box is a placeholder control, not the answer: the
+                    // tool's inputSchema already describes each parameter's type
+                    // and enum, so these should be generated native controls.
+                    // That's GW-333.
+                    DisclosureGroup("Options") {
+                        feedArgumentsField(binding: binding, tool: tool)
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                } else {
+                    feedArgumentsField(binding: binding, tool: tool)
+                }
+            }
+        }
+        .padding(.leading, 2)
+    }
+
+    /// A tool with required inputs re-asks one frozen question on every poll.
+    /// Sometimes that's genuinely what you want (a pinned repo, a fixed
+    /// account), so it stays possible — behind a disclosure that says what
+    /// you're signing up for rather than an icon that invites it.
+    private func needsArgumentsControl(tool: MCPToolInfo, isBound: Bool) -> some View {
+        HStack(spacing: 6) {
+            Toggle(
+                "Show in Feed",
+                isOn: Binding(
+                    get: { isBound },
+                    set: {
+                        service.setFeedTool(serverID: serverID, tool: tool.name, bound: $0)
+                        restartFeed()
+                    }
+                )
+            )
+            .toggleStyle(.checkbox)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+
+            Image(systemName: "exclamationmark.triangle")
+                .font(.caption2)
+                .foregroundStyle(.orange)
+                .help(
+                    "Needs \(tool.requiredInputs.joined(separator: ", ")) — this asks a fixed question on every refresh. Best for a pinned subject, not a search."
+                )
+        }
+    }
+
+    /// Arguments for the scheduled call. Only shown for tools that require
+    /// input; a feed candidate never needs it, which is the point.
+    private func feedArgumentsField(binding: MCPFeedToolBinding, tool: MCPToolInfo) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 6) {
+                Text("Arguments").font(.caption2).foregroundStyle(.secondary)
+                FeedArgumentsField(
+                    placeholder: Self.argumentsPlaceholder(for: tool),
+                    initialText: binding.argumentsJSON,
+                    onCommit: { text in
+                        service.setFeedToolArguments(
+                            serverID: serverID, tool: binding.tool, argumentsJSON: text)
+                    }
+                )
+                .id(binding.tool)
+            }
+            if !binding.hasValidArguments {
+                Text("Not a JSON object — the tool will be called with no arguments.")
+                    .font(.caption2).foregroundStyle(.orange)
+            } else if !binding.argumentsJSON.trimmingCharacters(in: .whitespaces).isEmpty,
+                binding.argumentsJSON.trimmingCharacters(in: .whitespaces) != "{}" {
+                // These are stored in ~/.ghostwire/mcp-servers.json, which is
+                // otherwise guaranteed secret-free (env values and tokens live
+                // in the Keychain). Say so rather than let a token land there
+                // silently.
+                Text("Saved in plain text — put credentials in the server's auth settings, not here.")
+                    .font(.caption2).foregroundStyle(.secondary)
+            } else if !tool.requiredInputs.isEmpty {
+                // The empty `{}` default is invalid for this tool by definition,
+                // so say what's missing instead of waiting for the server to
+                // return a -32602 the user has to decode. Feed candidates
+                // require nothing, so they never see this.
+                Text("Requires \(tool.requiredInputs.joined(separator: ", ")).")
+                    .font(.caption2).foregroundStyle(.orange)
+            }
+        }
+        .padding(.leading, 2)
+    }
+
+    /// A filled-in shape beats `{}` — the user shouldn't have to infer the
+    /// JSON from an error message.
+    static func argumentsPlaceholder(for tool: MCPToolInfo) -> String {
+        guard !tool.requiredInputs.isEmpty else { return "{}" }
+        let pairs = tool.requiredInputs.map { "\"\($0)\": \"\"" }.joined(separator: ", ")
+        return "{\(pairs)}"
+    }
+
+    /// Rebuild the Source list now rather than at the next poll, so a binding
+    /// shows up in the Feed while the user is still looking at this sheet.
+    ///
+    /// Redundant with `MCPClientService.feedConfigDidChange`, which the
+    /// coordinator now subscribes to — kept because it's immediate where the
+    /// subscription is debounced, and because it costs nothing if the rebuild
+    /// has already happened.
+    private func restartFeed() {
+        FeedSourceCoordinator.shared.start()
     }
 
     private func badge(_ text: String, _ color: Color) -> some View {
@@ -201,5 +363,50 @@ struct MCPServerDetailView: View {
         } catch {
             runOutput = "Error: \(error.localizedDescription)"
         }
+    }
+}
+
+// MARK: - Arguments field
+
+/// A JSON text field that commits on Return **or on losing focus**.
+///
+/// Binding straight through to the store looked simpler and was wrong twice:
+/// it wrote `mcp-servers.json` on every keystroke, and — because only
+/// `.onSubmit` rebuilt the Sources — clicking away after typing persisted the
+/// new arguments while the running Source kept calling with the old ones until
+/// an unrelated restart. Buffering locally and committing on both paths fixes
+/// both. (Codex P2, 2026-07-29.)
+private struct FeedArgumentsField: View {
+    let placeholder: String
+    let initialText: String
+    let onCommit: (String) -> Void
+
+    @State private var text: String
+    @FocusState private var isFocused: Bool
+
+    init(placeholder: String, initialText: String, onCommit: @escaping (String) -> Void) {
+        self.placeholder = placeholder
+        self.initialText = initialText
+        self.onCommit = onCommit
+        _text = State(initialValue: initialText)
+    }
+
+    var body: some View {
+        TextField(placeholder, text: $text)
+            .textFieldStyle(.roundedBorder)
+            .font(.caption.monospaced())
+            .focused($isFocused)
+            .onSubmit { commit() }
+            .onChange(of: isFocused) { _, focused in
+                if !focused { commit() }
+            }
+            // The sheet can be dismissed while the field still has focus, which
+            // fires no focus-loss event.
+            .onDisappear { commit() }
+    }
+
+    private func commit() {
+        guard text != initialText else { return }
+        onCommit(text)
     }
 }

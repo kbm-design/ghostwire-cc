@@ -365,6 +365,16 @@ extension Defaults.Keys {
         ]
     )
 
+    // MARK: MCP feed sources (GW-214)
+    // Default ON, and safe to be: an MCP server contributes NOTHING until the
+    // user allowlists a tool AND binds it to the feed (MCPServerConfig.feedTools),
+    // so this toggle governs an opt-in set that starts empty. It exists to stop
+    // every bound server at once without unbinding them one by one.
+    static let feedMCPSourcesEnabled = Key<Bool>("feedMCPSourcesEnabled", default: true)
+    // Seconds between polls of every bound MCP tool. See
+    // MCPFeedSource.defaultRefreshInterval for why this is minutes, not seconds.
+    static let feedMCPRefreshSeconds = Key<Int>("feedMCPRefreshSeconds", default: 300)
+
     // MARK: Ambient context (GW-172) — Tier-0 frontmost-app spine.
     // SILENT: collects + persists which app is frontmost (identity only — no
     // window titles or content) for Ghostwire's OWN future surfacing (ranking

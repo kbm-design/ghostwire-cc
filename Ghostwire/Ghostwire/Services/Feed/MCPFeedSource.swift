@@ -42,6 +42,9 @@ import os
 @MainActor
 protocol MCPFeedBackend: AnyObject, Sendable {
     func feedRuntimeStatus(serverID: UUID) -> MCPServerRuntime.Status
+    /// The live tool schema, for checking a binding actually supplies what the
+    /// tool requires. Nil before the first successful connect.
+    func feedToolInfo(serverID: UUID, tool: String) -> MCPToolInfo?
     /// NON-interactive connect. Must never open a browser: a background refresh
     /// that steals focus for an OAuth grant is precisely the calm-tech violation
     /// this feed exists to avoid. `MCPClientService.connect` satisfies that —
@@ -56,6 +59,10 @@ protocol MCPFeedBackend: AnyObject, Sendable {
 extension MCPClientService: MCPFeedBackend {
     func feedRuntimeStatus(serverID: UUID) -> MCPServerRuntime.Status {
         runtime(id: serverID)?.status ?? .disconnected
+    }
+
+    func feedToolInfo(serverID: UUID, tool: String) -> MCPToolInfo? {
+        runtime(id: serverID)?.tools.first { $0.name == tool }
     }
 }
 
@@ -96,15 +103,27 @@ extension MCPFeedToolBinding {
             .keys.sorted()
     }
 
-    /// A binding is only runnable once every placeholder has a value.
+    /// Required arguments this binding can't satisfy — absent entirely, or
+    /// present as an unfilled placeholder.
     ///
-    /// Without this, binding a tool that needs input starts polling
-    /// IMMEDIATELY with blanks — an empty search every refresh interval,
-    /// against a billing-backed API, before the user has typed anything. That
-    /// is the exact credit burn the feed-candidacy rule exists to prevent,
-    /// reintroduced by the pre-fill that was meant to be helpful.
-    /// (Codex P2, 2026-07-29.)
-    var isRunnable: Bool { blankArgumentKeys.isEmpty }
+    /// Both halves are needed and each was found separately:
+    ///  * blank VALUES (`{"query": ""}`) — the pre-filled template, which would
+    ///    otherwise poll an empty search every interval against a billing-backed
+    ///    API (Codex P2).
+    ///  * absent KEYS (`{}`) — what you get by clearing the field, which the
+    ///    blank-value check can't see because there's no value to inspect. That
+    ///    reached the server and came back as a -32602 on the card, found by
+    ///    live-driving.
+    ///
+    /// `requiredInputs` comes from the live tool schema rather than anything
+    /// persisted, so it stays correct if a server changes its signature. When
+    /// it's unavailable (not yet connected) this still catches placeholders.
+    func missingArguments(requiredInputs: [String]) -> [String] {
+        let arguments = arguments()
+        var missing = Set(requiredInputs.filter { arguments[$0] == nil })
+        missing.formUnion(blankArgumentKeys)
+        return missing.sorted()
+    }
 
     static func parseArguments(_ json: String) -> [String: Value]? {
         let trimmed = json.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -193,14 +212,18 @@ struct MCPFeedSource: FeedSource {
 
     private func card(for binding: MCPFeedToolBinding, now: Date) async -> FeedCard {
         let cardId = "\(id).\(binding.tool)"
-        // Never call a tool whose required arguments are still placeholders —
-        // that's an empty query on a timer. Show what's missing instead.
-        guard binding.isRunnable else {
+        // Never call a tool the binding can't satisfy — that's a guaranteed
+        // -32602 on a timer. Say what's missing instead of relaying the
+        // server's error code to someone who can't act on it.
+        let required = await backend.feedToolInfo(serverID: serverID, tool: binding.tool)?
+            .requiredInputs ?? []
+        let missing = binding.missingArguments(requiredInputs: required)
+        guard missing.isEmpty else {
             return MCPFeedCardMapper.attentionCard(
                 id: cardId,
                 sourceId: id,
                 title: MCPFeedCardMapper.title(tool: binding.tool, serverName: serverName),
-                detail: "Set \(binding.blankArgumentKeys.joined(separator: ", ")) in Settings › MCP.",
+                detail: "Set \(missing.joined(separator: ", ")) in Settings › MCP.",
                 now: now
             )
         }

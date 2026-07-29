@@ -26,7 +26,12 @@ private final class FakeMCPFeedBackend: MCPFeedBackend {
     var calls: [(tool: String, arguments: [String: Value]?)] = []
     var results: [String: Result<MCPToolCallOutput, Error>] = [:]
 
+    /// Tool schemas the source can consult; empty means "not connected yet".
+    var toolInfo: [String: MCPToolInfo] = [:]
+
     func feedRuntimeStatus(serverID: UUID) -> MCPServerRuntime.Status { status }
+
+    func feedToolInfo(serverID: UUID, tool: String) -> MCPToolInfo? { toolInfo[tool] }
 
     func connect(id: UUID) async {
         connectCount += 1
@@ -418,12 +423,49 @@ final class MCPFeedSourceStateTests: XCTestCase {
         XCTAssertEqual(backend.calls.first?.arguments, ["query": .string("notch")])
     }
 
-    func testRunnabilityOnlyTripsOnEmptyStringPlaceholders() {
-        XCTAssertTrue(MCPFeedToolBinding(tool: "t").isRunnable)  // "{}" — nothing required
+    /// Live-drive find: clearing the arguments field leaves NO key at all, so
+    /// the blank-value check can't see it. It reached the server and came back
+    /// as "MCP error -32602: Invalid arguments for tool web_search_exa".
+    func testClearedArgumentsAreCaughtViaTheToolSchema() async throws {
+        let backend = FakeMCPFeedBackend()
+        backend.toolInfo["web_search_exa"] = MCPToolInfo(
+            name: "web_search_exa", description: nil, hasOutputSchema: false,
+            isReadOnlyHinted: true, isDestructiveHinted: false, requiredInputs: ["query"])
+
+        let cards = try await source(
+            backend, bindings: [.init(tool: "web_search_exa", argumentsJSON: "{}")]
+        ).fetch()
+
+        XCTAssertTrue(backend.calls.isEmpty, "must not call with a required key absent")
+        guard case let .generic(_, subtitle, _) = cards[0].kind else {
+            return XCTFail("expected an attention card")
+        }
+        XCTAssertEqual(subtitle, "Set query in Settings › MCP.")
+    }
+
+    func testMissingArgumentsCoversBothAbsentKeysAndBlankValues() {
+        // Absent key.
+        XCTAssertEqual(
+            MCPFeedToolBinding(tool: "t", argumentsJSON: "{}")
+                .missingArguments(requiredInputs: ["query"]), ["query"])
+        // Blank placeholder — caught even with no schema available.
+        XCTAssertEqual(
+            MCPFeedToolBinding(tool: "t", argumentsJSON: #"{"query": ""}"#)
+                .missingArguments(requiredInputs: []), ["query"])
+        // Satisfied.
         XCTAssertTrue(
-            MCPFeedToolBinding(tool: "t", argumentsJSON: #"{"limit": 5}"#).isRunnable)
-        XCTAssertFalse(
-            MCPFeedToolBinding(tool: "t", argumentsJSON: #"{"a": "", "b": ""}"#).isRunnable)
+            MCPFeedToolBinding(tool: "t", argumentsJSON: #"{"query": "notch"}"#)
+                .missingArguments(requiredInputs: ["query"]).isEmpty)
+        // A tool requiring nothing, with no arguments, is fine.
+        XCTAssertTrue(
+            MCPFeedToolBinding(tool: "t").missingArguments(requiredInputs: []).isEmpty)
+    }
+
+    func testBlankArgumentKeysIdentifyUnfilledPlaceholders() {
+        XCTAssertTrue(MCPFeedToolBinding(tool: "t").blankArgumentKeys.isEmpty)
+        XCTAssertTrue(
+            MCPFeedToolBinding(tool: "t", argumentsJSON: #"{"limit": 5}"#)
+                .blankArgumentKeys.isEmpty)
         XCTAssertEqual(
             MCPFeedToolBinding(tool: "t", argumentsJSON: #"{"a": "", "b": "x"}"#)
                 .blankArgumentKeys, ["a"])

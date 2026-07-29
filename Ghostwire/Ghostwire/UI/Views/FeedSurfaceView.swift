@@ -20,11 +20,18 @@ struct FeedSurfaceView: View {
     @Environment(\.ghostwireSurface) private var surface
 
     var body: some View {
-        if surface == .window {
-            FeedGridView()
-        } else {
-            FeedCardRowView()
+        Group {
+            if surface == .window {
+                FeedGridView()
+            } else {
+                FeedCardRowView()
+            }
         }
+        // GW-182: "seen" belongs to the feed actually being drawn, not to the
+        // notch opening. The notch's `open()` fires for every tab, so marking
+        // novelty there cleared cards the user never looked at. Re-ranks against
+        // current context first, then records the view.
+        .onAppear { FeedRankingController.shared.surfaceDidOpen() }
     }
 }
 
@@ -32,12 +39,15 @@ struct FeedSurfaceView: View {
 
 struct FeedCardRowView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    private let store = FeedCardStore.shared
+    // GW-182: the notch row reads the RANKED top-N, not the store's raw prefix.
+    // The controller falls back to the store's order whenever ranking has no
+    // confident opinion, so this is the same thing on a quiet machine.
+    private let ranking = FeedRankingController.shared
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 10) {
-                ForEach(store.notchCards) { card in
+                ForEach(ranking.notchCards) { card in
                     FeedCardView(card: card, isStale: false)
                 }
             }
@@ -48,7 +58,7 @@ struct FeedCardRowView: View {
         // Reshuffle: animate position changes when the order changes — unless
         // the user prefers reduced motion.
         .animation(reduceMotion ? nil : .spring(response: 0.35, dampingFraction: 0.8),
-                   value: store.orderedCards.map(\.id))
+                   value: ranking.notchCards.map(\.id))
     }
 }
 

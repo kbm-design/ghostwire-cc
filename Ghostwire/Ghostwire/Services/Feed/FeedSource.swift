@@ -30,6 +30,22 @@ protocol FeedSource: Sendable {
     /// One refresh. Throwing leaves the source's previous cards in place —
     /// a flaky network dims cards rather than blanking the feed.
     func fetch() async throws -> [FeedCard]
+
+    /// GW-182 — when this Source's cards are worth surfacing, expressed against
+    /// the shared `AppCategory` vocabulary (0…1 per category). This is the
+    /// producer half of the ranking join: the ambient spine says which
+    /// categories the user is working in, this says which categories the Source
+    /// speaks to, and `FeedRanker` multiplies them.
+    ///
+    /// Declaring nothing is a legitimate answer — a context-neutral Source
+    /// simply never gains from this term and rides urgency, novelty and the
+    /// user's own order instead.
+    var affinity: [AppCategory: Double] { get }
+}
+
+extension FeedSource {
+    /// Context-neutral by default, so an existing Source keeps working unchanged.
+    var affinity: [AppCategory: Double] { [:] }
 }
 
 // MARK: - Shared formatting

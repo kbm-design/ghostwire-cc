@@ -91,6 +91,49 @@ enum PermissionAutoOpenMode: String, CaseIterable, Identifiable, Defaults.Serial
     var id: String { rawValue }
 }
 
+// What is allowed to move a card in the notch's feed row (GW-182). A ladder:
+// each rung adds exactly one cause of motion, so a user can always name why
+// something moved. The detached window grid is never reordered at any setting —
+// curation has to stay stable somewhere to be worth doing.
+//
+// Default is `.alerts`, not `.context`. With a handful of cards there is little
+// to arbitrate, and a feed that rearranges itself for reasons the user can't see
+// is worse than one that never moves. `.context` becomes worth its keep when the
+// card population is large enough to have a real tail (GW-214's MCP Sources).
+enum FeedRankingMode: String, CaseIterable, Identifiable, Defaults.Serializable {
+    /// Nothing reorders. The user's order, exactly, always.
+    case fixed = "Fixed"
+    /// Only a card that is waiting on the user can move, and it moves to the
+    /// front. Rare, and self-explaining — the card already reads "2 waiting on
+    /// you", so the promotion never needs a separate justification.
+    case alerts = "Alerts only"
+    /// Full context ranking: alerts, plus app affinity and what changed while
+    /// the user was away.
+    case context = "Match what I'm doing"
+
+    var id: String { rawValue }
+
+    /// Whether an escalated card may jump the queue.
+    var allowsUrgency: Bool { self != .fixed }
+
+    /// Whether ambient context and novelty contribute at all.
+    var allowsContext: Bool { self == .context }
+
+    /// Plain-language description of exactly what can move a card, shown under
+    /// the picker. If a mode can't be explained in one sentence the user would
+    /// accept, it shouldn't ship.
+    var explanation: String {
+        switch self {
+        case .fixed:
+            return "Cards stay exactly where you put them. Nothing reorders them, ever."
+        case .alerts:
+            return "Cards stay where you put them, except one that's waiting on you — an agent blocked on an approval, or quota about to run out. Those move to the front, and say why on the card itself."
+        case .context:
+            return "As above, plus cards move up when they relate to the app you're working in, or changed while you were away. More useful the more sources you've connected; with only a few cards it mostly just moves things around."
+        }
+    }
+}
+
 // Ambient context retention (GW-172). How long frontmost-app activity shards
 // are kept on disk. session-only = RAM only, nothing is ever written (and
 // switching to it wipes existing shards). `forever` keeps everything.
@@ -344,6 +387,13 @@ extension Defaults.Keys {
     static let feedCardOrderMigrated = Key<Bool>("feedCardOrderMigrated", default: false)
     // How many of the ordered cards mirror into the notch's top-N row.
     static let feedNotchVisibleCount = Key<Int>("feedNotchVisibleCount", default: 8)
+
+    // MARK: Feed ranking mode (GW-182)
+    // What is allowed to move a card in the notch row. Default `.alerts`: the
+    // user's order holds, and the only thing that reorders it is a card that is
+    // literally waiting on them — which says so on its own face, so the reason
+    // for the move is always visible. See `FeedRankingMode`.
+    static let feedRankingMode = Key<FeedRankingMode>("feedRankingMode", default: .alerts)
 
     // MARK: Built-in feed sources (GW-261)
     // Module master key (SettingsModule.feed): off = no built-in source polls

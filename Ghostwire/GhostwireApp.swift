@@ -860,6 +860,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         CodexUsageService.shared.startPolling()
         // GW-261 built-in keyless sources (crypto + RSS) + GW-214's bound MCP servers.
         FeedSourceCoordinator.shared.start()
+        FeedRankingController.shared.start()  // GW-182: context-aware ranking of the notch top-N
 
 
 

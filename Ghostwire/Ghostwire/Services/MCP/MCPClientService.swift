@@ -103,6 +103,67 @@ final class MCPClientService: ObservableObject {
         feedConfigDidChange.send()
     }
 
+    /// GW-332: add servers discovered in another agent's config.
+    ///
+    /// Three invariants, all of them load-bearing:
+    /// 1. **Secrets never reach the config file.** Env values and the HTTP
+    ///    token go straight to the Keychain; `MCPServerConfig` carries key
+    ///    NAMES and `MCPHTTPAuth` only.
+    /// 2. **Trust is not inherited.** `trustedCommandSignature` stays nil, so
+    ///    an imported stdio server lands in `.needsTrust` and cannot spawn
+    ///    until the user confirms the command in the detail view. Importing a
+    ///    command is not approving it — the user didn't type this one, a file
+    ///    did, which makes a bulk "trust all" weaker than the add sheet's
+    ///    "Trust & Connect" and is why the import sheet doesn't offer one.
+    /// 3. **Nothing is allowlisted or feed-bound.** `allowedTools` stays empty
+    ///    and `feedTools` stays nil: an imported server is present and inert.
+    ///    Default-deny survives the import.
+    @discardableResult
+    func importServers(_ discovered: [DiscoveredMCPServer]) async -> [MCPServerConfig] {
+        var added: [MCPServerConfig] = []
+        for server in discovered where server.isImportable {
+            let id = UUID()
+            var config: MCPServerConfig
+            switch server.transport {
+            case .stdio(let command, let arguments):
+                config = MCPServerConfig(
+                    id: id, name: server.name,
+                    transport: .stdio(
+                        command: command, arguments: arguments,
+                        environmentKeys: server.environment.keys.sorted())
+                )
+                // Resolve now so a server whose command isn't on the PATH says
+                // so on first connect instead of at some later poll. A miss is
+                // not fatal: `establish` re-resolves and surfaces the error.
+                config.resolvedExecutablePath =
+                    await LoginShellPATHResolver.shared.resolve(command: command)
+                for (key, value) in server.environment {
+                    secretStore.setString(
+                        value, account: MCPSecretAccount.env(serverID: id, key: key))
+                }
+            case .http(let endpoint):
+                config = MCPServerConfig(id: id, name: server.name, transport: .http(endpoint: endpoint))
+                config.httpAuth = server.httpAuth
+                if let token = server.httpAuthToken, !token.isEmpty {
+                    secretStore.setString(
+                        token, account: MCPSecretAccount.httpAuthToken(serverID: id))
+                }
+            }
+            store.add(config)
+            // Say what the server IS, immediately. An imported stdio server
+            // that starts at `.disconnected` renders as a grey dot with no
+            // text — indistinguishable from "added but broken", which reads as
+            // if the import silently failed. It's untrusted, so name that.
+            runtimes[id] = MCPServerRuntime(status: config.isTrusted ? .disconnected : .needsTrust)
+            added.append(config)
+        }
+        if !added.isEmpty {
+            objectWillChange.send()
+            feedConfigDidChange.send()
+        }
+        return added
+    }
+
     func removeServer(id: UUID) {
         if let config = store.server(id: id),
             case .stdio(_, _, let keys) = config.transport {

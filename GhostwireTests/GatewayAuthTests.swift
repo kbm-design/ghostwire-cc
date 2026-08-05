@@ -41,7 +41,11 @@ final class GatewayAuthTests: XCTestCase {
     func testPersistentTokenIsStableAcrossInstances() {
         // The token must survive app restarts, or a `claude mcp add`
         // registration breaks on the next launch.
-        let store = InMemoryMCPSecretStore()
+        let fileURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("gw308-auth-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("gateway-token")
+        defer { try? FileManager.default.removeItem(at: fileURL.deletingLastPathComponent()) }
+        let store = GatewayTokenStore(fileURL: fileURL, keychain: InMemoryMCPSecretStore())
         let first = GatewayAuth.persistent(store: store)
         let second = GatewayAuth.persistent(store: store)
         XCTAssertFalse(first.token.isEmpty)

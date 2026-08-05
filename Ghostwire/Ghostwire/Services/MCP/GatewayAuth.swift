@@ -18,15 +18,12 @@ struct GatewayAuth: Sendable {
         self.token = token
     }
 
-    /// Load the persisted token, or mint + store one on first use. Stable
-    /// across launches so a `claude mcp add` registration keeps working.
-    static func persistent(store: MCPSecretStore = KeychainMCPSecretStore.shared) -> GatewayAuth {
-        if let existing = store.string(account: MCPSecretAccount.gatewayToken), !existing.isEmpty {
-            return GatewayAuth(token: existing)
-        }
-        let token = UUID().uuidString
-        store.setString(token, account: MCPSecretAccount.gatewayToken)
-        return GatewayAuth(token: token)
+    /// Load the persisted token, or mint one on first use. Stable across launches
+    /// AND across builds (GW-308): the token lives in a file, not Keychain, so a
+    /// differently-signed build can still read it and a `claude mcp add`
+    /// registration never goes stale.
+    static func persistent(store: GatewayTokenStore = GatewayTokenStore()) -> GatewayAuth {
+        GatewayAuth(token: store.loadOrCreate())
     }
 
     /// `RequestGate`: returns nil to allow, or a 401 `HTTPResponse` to reject.

@@ -374,7 +374,7 @@ struct ChatView: View {
                             ))
                     }
 
-                    ForEach(history.reversed()) { item in
+                    ForEach(contextHistory.reversed()) { item in
                         MessageItemView(item: item, sessionId: sessionId)
                             .padding(.horizontal, 12)
                             .scaleEffect(x: 1, y: -1)
@@ -449,6 +449,28 @@ struct ChatView: View {
     /// How much scrollback stays visible above a pending question — enough for
     /// the preceding turn, not enough to crowd out the options.
     private static let contextStripHeight: CGFloat = 76
+
+    /// Transcript for the context strip, minus the gate's own tool row.
+    ///
+    /// GW-322 test drive: with a plan pending, the strip rendered the very
+    /// `ExitPlanMode` call being reviewed — in `.fullRaw` mode that is a block of
+    /// orange monospace reading `plan: …` / `planFilePath: …`, i.e. the same
+    /// payload the bar below renders properly, plus a path the header already
+    /// shows. It consumed the whole 76pt strip with the least useful field and
+    /// crowded out what spec §4.2 actually asks for there: the agent's
+    /// immediately preceding turn.
+    ///
+    /// Only the trailing run is dropped, so an EARLIER `ExitPlanMode` in the same
+    /// session (a first plan the user asked to revise) stays visible — that one
+    /// is real history and reading it is how you check the revision landed.
+    private var contextHistory: [ChatHistoryItem] {
+        guard session.pendingPlanReview != nil else { return history }
+        var items = history
+        while case .toolCall(let tool)? = items.last?.type, tool.name == "ExitPlanMode" {
+            items.removeLast()
+        }
+        return items
+    }
 
     /// GW-320 (State D): the agent has finished its turn and is explicitly
     /// waiting on the human. Distinct from "the box happens to be enabled" —

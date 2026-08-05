@@ -42,6 +42,7 @@ struct ChatPlanReviewBar: View {
     @State private var delivery: Delivery = .idle
     @State private var isRevising = false
     @State private var feedback = ""
+    @State private var planContentHeight: CGFloat = 0
     @FocusState private var isFeedbackFocused: Bool
 
     /// Locked once a verdict is in flight or delivered — one reply per gate.
@@ -71,8 +72,27 @@ struct ChatPlanReviewBar: View {
                     }
                 }
                 .padding(.trailing, 4)
+                // Report the content height so the fade only appears when there
+                // is genuinely more plan below (test drive: a plan clipped
+                // mid-sentence at the cap reads as truncated, and "truncated"
+                // is the one thing this surface must never look like).
+                .background(
+                    GeometryReader { proxy in
+                        Color.clear.preference(key: PlanContentHeightKey.self,
+                                               value: proxy.size.height)
+                    }
+                )
             }
             .frame(maxHeight: planMaxHeight)
+            .onPreferenceChange(PlanContentHeightKey.self) { planContentHeight = $0 }
+            .overlay(alignment: .bottom) {
+                if planContentHeight > planMaxHeight {
+                    LinearGradient(colors: [.black.opacity(0), .black.opacity(0.85)],
+                                   startPoint: .top, endPoint: .bottom)
+                        .frame(height: 20)
+                        .allowsHitTesting(false)
+                }
+            }
 
             if isRevising {
                 feedbackField
@@ -342,5 +362,14 @@ struct ChatPlanReviewBar: View {
         onRevise(trimmedFeedback) { wasDelivered in
             delivery = wasDelivered ? .revised : .failed
         }
+    }
+}
+
+/// Content height of the plan scroller, so the bar can tell "the plan fits"
+/// from "there is more below" and only draw the fade in the second case.
+private struct PlanContentHeightKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
     }
 }

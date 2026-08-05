@@ -261,3 +261,66 @@ stdin payload to JSONL and can answer/hold on demand. `--settings` merges, so th
 capture hook coexists with the installed Ghostwire hook. Modes exercised:
 `observe`, `answer` (PreToolUse deny), `permdeny` (PermissionRequest deny),
 `hold` (N-second block at either event).
+
+---
+
+# Addendum — `ExitPlanMode` re-verification (GW-322, 2026-08-05)
+
+Re-captured independently while building State C, against **`claude 2.1.222`**:
+8 driven PTY runs, plus 2 runs through the *shipped* `ghostwire-hook.py` with a
+stub standing in for the notch's socket. §2, §3 and the "plan revise works"
+finding above all reproduced. Three things to add.
+
+## A. Accepting an `ExitPlanMode` needs `updatedInput` — this is a real trap
+
+`{"behavior": "allow"}` — the shape `ghostwire-hook.py` had always emitted — is
+**silently discarded for `ExitPlanMode`**. Reproduced twice:
+
+| Allow payload | `PostToolUse` fires? | Terminal plan menu | `permission_mode` after |
+| -- | -- | -- | -- |
+| `{"behavior":"allow"}` | **No** | stays up | stays `plan` |
+| `{"behavior":"allow","updatedInput":{…}}` | Yes | dismissed | `plan` → `default` |
+
+Nothing reports the failure — no error, no log line, no menu change. The verdict
+simply evaporates and the user is left looking at a notch that says "Accepted"
+and a terminal that still wants an answer.
+
+**It is specific to `ExitPlanMode`.** The bare shape was re-tested on `Write` and
+works there, so State A's shipped Allow path is unaffected — which is why the fix
+in `ghostwire-hook.py` is scoped to `tool_name == "ExitPlanMode"` rather than
+echoing every payload back through the hook's JSON encoder.
+
+Accepting this way lands the session in `permission_mode: default` — the terminal
+menu's **"Yes, manually approve edits"**, *not* its "Yes, and use auto mode" row.
+Worth preserving: the notch must not be a quieter way to grant an agent broader
+permissions than the terminal would.
+
+## B. `allowedPrompts` is rarer than 5/6 suggests
+
+Absent from **all 5** `ExitPlanMode` calls captured on 2.1.222, including plans
+that proposed shell commands (`chmod`, `npm test`, `git status`) — exactly the
+case §2 predicts would carry grants. So it is genuinely optional, not
+near-universal, and a renderer must not assume it. It still must be rendered
+whenever present, for the reason §2 gives.
+
+## C. The race, measured for `ExitPlanMode` specifically
+
+§3 measured the hold behaviour on `AskUserQuestion`. Same result here: holding
+`PermissionRequest` for 35s, the terminal rendered its full plan menu
+(`Yes, and use auto mode / Yes, manually approve edits / Tell Claude what to
+change`) **~6s in**, while the hook was still held. Confirms the §3
+recommendation and the §5 invalidation requirement for State C.
+
+Sequence, verbatim:
+
+```
+09:27:48  PreToolUse         ExitPlanMode  permission_mode=plan  (has tool_use_id)
+09:27:48  PermissionRequest  ExitPlanMode  permission_mode=plan  (NO tool_use_id)
+09:27:54  Notification       permission_prompt          <- terminal menu, mid-hold
+```
+
+Both events carry an **identical** `tool_input`, so either could render — the
+gate choice is entirely about the race, and `PreToolUse` "wins" it only by
+suppressing the terminal menu, i.e. by making the notch a single point of failure
+for the user's own agent. GW-322 ships on `PermissionRequest`. (GW-322's ticket
+text says `PreToolUse`; the payloads say otherwise and the payloads win.)

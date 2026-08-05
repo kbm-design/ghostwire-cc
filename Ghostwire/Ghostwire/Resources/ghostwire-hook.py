@@ -468,10 +468,26 @@ def main():
 
             if decision == "allow":
                 # Output JSON to approve
+                allow_decision = {"behavior": "allow"}
+
+                # GW-322: ExitPlanMode is the one tool where a bare
+                # {"behavior": "allow"} is SILENTLY DISCARDED. Measured on live
+                # Claude Code 2.1.222: bare allow -> no PostToolUse, the terminal's
+                # own plan menu stays up, the verdict simply vanishes (reproduced
+                # twice). Echoing the tool_input back as `updatedInput` accepts it
+                # -> PostToolUse fires and permission_mode moves plan -> default.
+                #
+                # Scoped to ExitPlanMode on purpose: a bare allow was verified to
+                # work for Write, so State A's shipped approval path stays
+                # byte-identical rather than round-tripping every payload through
+                # this hook's JSON encoder for no reason.
+                if data.get("tool_name") == "ExitPlanMode":
+                    allow_decision["updatedInput"] = tool_input or {}
+
                 output = {
                     "hookSpecificOutput": {
                         "hookEventName": "PermissionRequest",
-                        "decision": {"behavior": "allow"},
+                        "decision": allow_decision,
                     }
                 }
                 print(json.dumps(output))

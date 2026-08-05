@@ -92,10 +92,15 @@ class ClaudeSessionMonitor: ObservableObject {
 
     // MARK: - Permission Handling
 
-    func approvePermission(sessionId: String) {
+    /// GW-322: `delivered` mirrors `denyPermission` — it reports whether the
+    /// verdict actually reached the held hook socket, so an Accept can show
+    /// sent/failed instead of assuming it landed.
+    func approvePermission(sessionId: String,
+                           delivered: (@Sendable (Bool) -> Void)? = nil) {
         Task {
             guard let session = await SessionStore.shared.session(for: sessionId),
                   let permission = session.activePermission else {
+                delivered?(false)
                 return
             }
 
@@ -114,6 +119,7 @@ class ClaudeSessionMonitor: ObservableObject {
                         outcome: wasDelivered ? "allowed" : "timedOut"
                     )
                 }
+                delivered?(wasDelivered)
             }
 
             await SessionStore.shared.process(

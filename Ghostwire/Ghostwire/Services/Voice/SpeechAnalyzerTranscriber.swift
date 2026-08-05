@@ -21,6 +21,7 @@
 
 import AVFoundation
 import Foundation
+import OSLog
 import Speech
 
 @available(macOS 26, *)
@@ -28,6 +29,8 @@ import Speech
 final class SpeechAnalyzerTranscriber: Transcriber {
     nonisolated static var engineName: String { "Apple SpeechAnalyzer (on-device)" }
     nonisolated var privacy: TranscriptionPrivacy { .onDevice }
+
+    private static let logger = Logger(subsystem: "com.ghostwire.notch", category: "VoiceCapture")
 
     private let locale: Locale
     private var analyzer: SpeechAnalyzer?
@@ -51,7 +54,10 @@ final class SpeechAnalyzerTranscriber: Transcriber {
     }
 
     func start(onResult: @escaping @MainActor (TranscriptionResult) -> Void) async throws {
+        Self.logger.notice(
+            "SpeechAnalyzer start: requesting permissions (locale \(self.locale.identifier, privacy: .public))")
         guard await VoicePermissions.requestAll() else {
+            Self.logger.error("SpeechAnalyzer start: permission DENIED")
             throw TranscriberError.permissionDenied
         }
 
@@ -125,6 +131,9 @@ final class SpeechAnalyzerTranscriber: Transcriber {
     // MARK: - Internal
 
     private func handle(text: String, isFinal: Bool) {
+        // Length only — never the transcript itself; this is the user's speech.
+        Self.logger.notice(
+            "SpeechAnalyzer result: isFinal=\(isFinal, privacy: .public) segment=\(text.count, privacy: .public) chars")
         if isFinal {
             finalizedText += text
             volatileText = ""

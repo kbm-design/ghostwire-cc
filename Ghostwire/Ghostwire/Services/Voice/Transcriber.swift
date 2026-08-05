@@ -23,6 +23,7 @@
 import AVFoundation
 import Defaults
 import Foundation
+import OSLog
 import Speech
 
 /// One transcription update from a `Transcriber`. `text` is the best-so-far
@@ -149,18 +150,27 @@ enum DefaultTranscriberFactory {
     /// FluidAudio model.
     static let appleEngineKey = "apple"
 
+    private static let logger = Logger(subsystem: "com.ghostwire.notch", category: "VoiceCapture")
+
     static func make(locale: Locale = .current) -> Transcriber {
         let selected = Defaults[.voiceModel]
         if selected == appleEngineKey {
             #if compiler(>=6.2)
             if #available(macOS 26, *) {
+                // Which engine backs "apple" depends on the BUILD toolchain, not
+                // just the setting — a Swift 6.2+ toolchain compiles this branch
+                // in and silently swaps SFSpeechRecognizer for SpeechAnalyzer on
+                // macOS 26 (GW-352). Log it, or the swap is invisible.
+                logger.notice("transcriber selected: SpeechAnalyzer (apple, macOS 26+)")
                 return SpeechAnalyzerTranscriber(locale: locale)
             }
             #endif
+            logger.notice("transcriber selected: AppleSpeech/SFSpeechRecognizer (apple)")
             return AppleSpeechTranscriber(locale: locale)
         }
         // Default: on-device long-form FluidAudio engine (no ~1-min limit).
         let model = VoiceModel(rawValue: selected) ?? .nemotronEN
+        logger.notice("transcriber selected: FluidAudio (\(model.rawValue, privacy: .public))")
         return FluidAudioTranscriber(model: model)
     }
 }

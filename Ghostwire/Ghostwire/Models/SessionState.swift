@@ -214,6 +214,18 @@ struct SessionState: Equatable, Identifiable, Sendable {
         return AskUserQuestionRequest(toolInput: input)
     }
 
+    /// GW-322 (State C): the pending gate parsed as a plan review, when the tool
+    /// the agent is blocked on is `ExitPlanMode`. Nil for every other tool, and
+    /// nil if the payload doesn't parse cleanly — callers fall back to the
+    /// verbatim approval bar rather than rendering a plan whose pre-authorized
+    /// commands we couldn't read.
+    var pendingPlanReview: ExitPlanModeRequest? {
+        guard let permission = activePermission,
+              permission.toolName == "ExitPlanMode",
+              let input = permission.toolInput else { return nil }
+        return ExitPlanModeRequest(toolInput: input)
+    }
+
     /// GW-207: project dir last path component, for alert-history rows.
     var folderName: String {
         URL(fileURLWithPath: cwd).lastPathComponent

@@ -111,6 +111,26 @@ struct ChatView: View {
                                     removal: .opacity
                                 ))
                         }
+                    } else if tool == "ExitPlanMode", let plan = session.pendingPlanReview {
+                        // GW-322 State C: the plan rendered, with Accept/Revise.
+                        // Falls through to the verbatim approval bar when the
+                        // payload doesn't parse — that bar still shows the plan
+                        // and every allowedPrompt, just unrendered.
+                        ChatPlanReviewBar(
+                            request: plan,
+                            agentName: agentName,
+                            agentTint: agentTint,
+                            onAccept: { completion in acceptPlan(completion: completion) },
+                            onRevise: { feedback, completion in
+                                revisePlan(plan, feedback: feedback, completion: completion)
+                            },
+                            onGoToTerminal: { focusTerminal() }
+                        )
+                        .layoutPriority(1)
+                        .transition(.asymmetric(
+                            insertion: .opacity.combined(with: .move(edge: .bottom)),
+                            removal: .opacity
+                        ))
                     } else {
                         approvalBar(tool: tool)
                             .transition(.asymmetric(
@@ -419,10 +439,11 @@ struct ChatView: View {
         targetResolution.isResolvable
     }
 
-    /// Whether a Choice is on screen, so the transcript above can yield its
-    /// height to the question instead of padding it out with empty space.
+    /// Whether a Choice or a plan review is on screen, so the transcript above
+    /// can yield its height to it instead of padding it out with empty space.
+    /// GW-322 folds State C in: a plan needs at least as much room as a question.
     private var hasPendingChoice: Bool {
-        session.pendingChoice != nil
+        session.pendingChoice != nil || session.pendingPlanReview != nil
     }
 
     /// How much scrollback stays visible above a pending question — enough for
@@ -666,6 +687,40 @@ struct ChatView: View {
         sessionMonitor.denyPermission(
             sessionId: sessionId,
             reason: request.replyMessage(answers: answers),
+            delivered: { wasDelivered in
+                Task { @MainActor in completion(wasDelivered) }
+            }
+        )
+    }
+
+    /// GW-322 State C — Accept. Approves the `ExitPlanMode` tool over the same
+    /// held socket State A uses; `ghostwire-hook.py` supplies the `updatedInput`
+    /// the allow decision needs (see the note there — without it Claude Code
+    /// silently discards an `ExitPlanMode` allow and leaves its own plan menu up).
+    ///
+    /// Accepting this way lands the session in `permission_mode: default`, i.e.
+    /// the terminal menu's "Yes, manually approve edits" — never its "auto mode"
+    /// row. Measured in GW-322; worth keeping, because the notch must not be a
+    /// quieter way to hand an agent broader permissions than the terminal would.
+    private func acceptPlan(completion: @escaping (Bool) -> Void) {
+        sessionMonitor.approvePermission(
+            sessionId: sessionId,
+            delivered: { wasDelivered in
+                Task { @MainActor in completion(wasDelivered) }
+            }
+        )
+    }
+
+    /// GW-322 State C — Revise. The feedback goes back as the deny message on the
+    /// held socket, which is the whole delivery: verified in GW-322 that this
+    /// keeps `permission_mode: plan` and the model revises and re-presents via a
+    /// second `ExitPlanMode`. No keystroke injection, so no pane is required and
+    /// this works for sessions State D can't reach.
+    private func revisePlan(_ request: ExitPlanModeRequest, feedback: String,
+                            completion: @escaping (Bool) -> Void) {
+        sessionMonitor.denyPermission(
+            sessionId: sessionId,
+            reason: request.reviseMessage(feedback: feedback),
             delivered: { wasDelivered in
                 Task { @MainActor in completion(wasDelivered) }
             }

@@ -3,8 +3,12 @@
 //  Ghostwire
 //
 //  GW-219 deliverable surface (debug-grade, simple first pass — the full
-//  settings redesign comes later). List + manual add. No catalog:
-//  bring-your-own/paste is the model.
+//  settings redesign comes later). List + manual add.
+//
+//  GW-332 Phase 1: import replaces paste as the top of the funnel. Most people
+//  running Ghostwire already have MCP servers configured for Claude Code, so
+//  the first thing offered is the list they already have, not a blank field.
+//  Manual add stays as the escape hatch.
 //
 
 import SwiftUI
@@ -12,7 +16,12 @@ import SwiftUI
 struct MCPSettingsView: View {
     @ObservedObject private var service = MCPClientService.shared
     @State private var showingAddSheet = false
+    @State private var showingImportSheet = false
     @State private var selectedServer: IdentifiableUUID?
+
+    /// Whether there's a Claude Code config to read at all. Checked once per
+    /// appearance rather than per redraw — this is a stat() in a view body.
+    @State private var canImport = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -22,15 +31,27 @@ struct MCPSettingsView: View {
                 serverList
             }
         }
+        .onAppear { canImport = AgentMCPConfigImporter.claudeCodeConfigExists }
         .toolbar {
             ToolbarItem {
-                Button { showingAddSheet = true } label: {
+                // A plain menu, NOT `Menu(primaryAction:)`. The split-button
+                // form listed "Import…" twice — once as the + click, once
+                // inside its own chevron menu — so the two halves looked like
+                // two different commands that happened to do the same thing.
+                Menu {
+                    Button("Import Servers…") { showingImportSheet = true }
+                        .disabled(!canImport)
+                    Button("Add Manually…") { showingAddSheet = true }
+                } label: {
                     Label("Add Server", systemImage: "plus")
                 }
             }
         }
         .sheet(isPresented: $showingAddSheet) {
             MCPAddServerSheet()
+        }
+        .sheet(isPresented: $showingImportSheet) {
+            MCPImportSheet()
         }
         .sheet(item: $selectedServer) { wrapped in
             MCPServerDetailView(serverID: wrapped.id)
@@ -45,7 +66,17 @@ struct MCPSettingsView: View {
             Text("Connect MCP servers to glance at — kept out of your agents' context.")
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
-            Button("Add manually…") { showingAddSheet = true }
+            if canImport {
+                Text("You already have servers configured for Claude Code.")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                Button("Import Servers…") { showingImportSheet = true }
+                    .buttonStyle(.borderedProminent)
+                Button("Add manually…") { showingAddSheet = true }
+                    .buttonStyle(.link)
+            } else {
+                Button("Add manually…") { showingAddSheet = true }
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding()
@@ -75,8 +106,15 @@ struct MCPServerRow: View {
             statusDot
             VStack(alignment: .leading, spacing: 2) {
                 Text(server.name)
-                if case .failed(let reason) = runtime?.status {
-                    Text(reason).font(.caption).foregroundStyle(.red).lineLimit(1)
+                // Every non-idle state gets WORDS, not just a dot colour
+                // (docs/macos-conventions.md §6 — never signal by colour
+                // alone). Before this, a freshly imported stdio server showed
+                // an unlabelled grey dot and read as "the import didn't work".
+                if let caption = statusCaption {
+                    Text(caption)
+                        .font(.caption)
+                        .foregroundStyle(statusColor)
+                        .lineLimit(1)
                 }
             }
             Spacer()
@@ -92,7 +130,21 @@ struct MCPServerRow: View {
     }
 
     private var statusDot: some View {
-        Circle().frame(width: 8, height: 8).foregroundStyle(statusColor)
+        Circle().frame(width: 8, height: 8)
+            .foregroundStyle(statusColor)
+            .accessibilityLabel(statusCaption ?? "Connected")
+    }
+
+    /// nil for the two states that need no explanation: connected (the tool
+    /// count already says so) and never-touched.
+    private var statusCaption: String? {
+        switch runtime?.status {
+        case .failed(let reason): return reason
+        case .needsTrust: return "Not trusted — open to review the command"
+        case .needsAuth: return "Needs authorization"
+        case .connecting: return "Connecting…"
+        case .connected, .disconnected, nil: return nil
+        }
     }
 
     private var statusColor: Color {

@@ -38,6 +38,13 @@ final class GatewayAuthTests: XCTestCase {
         XCTAssertNil(auth.gate(request(["authorization": "Bearer secret"])))
     }
 
+    func testConstantTimeTokenCompareMatchesOnlyExactBytes() {
+        XCTAssertTrue(GatewayAuth.constantTimeEquals("Bearer secret", "Bearer secret"))
+        XCTAssertFalse(GatewayAuth.constantTimeEquals("Bearer secret", "Bearer secreu"))
+        XCTAssertFalse(GatewayAuth.constantTimeEquals("Bearer secret", "Bearer secretx"))
+        XCTAssertFalse(GatewayAuth.constantTimeEquals("Bearer secret", "Bearer secre"))
+    }
+
     func testPersistentTokenIsStableAcrossInstances() {
         // The token must survive app restarts, or a `claude mcp add`
         // registration breaks on the next launch.

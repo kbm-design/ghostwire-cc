@@ -31,9 +31,24 @@ struct GatewayAuth: Sendable {
         let provided = request.headers.first {
             $0.key.caseInsensitiveCompare("Authorization") == .orderedSame
         }?.value
-        guard provided == "Bearer \(token)" else {
+        guard Self.constantTimeEquals(provided ?? "", "Bearer \(token)") else {
             return .error(statusCode: 401, .invalidRequest("Unauthorized"))
         }
         return nil
+    }
+
+    /// Constant-time byte comparison for bearer tokens. Length still affects the
+    /// loop bound, but content mismatches do not short-circuit on the first byte.
+    static func constantTimeEquals(_ lhs: String, _ rhs: String) -> Bool {
+        let left = Array(lhs.utf8)
+        let right = Array(rhs.utf8)
+        let maxCount = max(left.count, right.count)
+        var diff = left.count ^ right.count
+        for index in 0..<maxCount {
+            let a = index < left.count ? left[index] : 0
+            let b = index < right.count ? right[index] : 0
+            diff |= Int(a ^ b)
+        }
+        return diff == 0
     }
 }

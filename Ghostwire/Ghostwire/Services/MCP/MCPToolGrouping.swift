@@ -41,7 +41,7 @@ import Foundation
 // MARK: - Capability
 
 /// What calling a tool does. The primary axis of the allowlist, always shown.
-enum MCPToolCapability: String, CaseIterable, Identifiable, Equatable {
+enum MCPToolCapability: String, CaseIterable, Identifiable, Equatable, Sendable {
     case readOnly
     case writes
     case destructive

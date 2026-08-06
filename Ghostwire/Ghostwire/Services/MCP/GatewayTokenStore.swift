@@ -26,6 +26,7 @@
 //
 
 import Foundation
+import Darwin
 import OSLog
 
 struct GatewayTokenStore {
@@ -33,6 +34,7 @@ struct GatewayTokenStore {
 
     let fileURL: URL
     let keychain: MCPSecretStore
+    private let temporaryName: @Sendable (String) -> String
 
     /// `Application Support/Ghostwire/MCP/gateway-token` — same canonical root as
     /// the gateway's sibling stores (ToolUsageStore, ShelfPersistenceService).
@@ -47,10 +49,16 @@ struct GatewayTokenStore {
             .appendingPathComponent("gateway-token")
     }()
 
-    init(fileURL: URL = GatewayTokenStore.canonicalURL,
-         keychain: MCPSecretStore = KeychainMCPSecretStore.shared) {
+    init(
+        fileURL: URL = GatewayTokenStore.canonicalURL,
+        keychain: MCPSecretStore = KeychainMCPSecretStore.shared,
+        temporaryName: @escaping @Sendable (String) -> String = {
+            ".\($0).\(UUID().uuidString)"
+        }
+    ) {
         self.fileURL = fileURL
         self.keychain = keychain
+        self.temporaryName = temporaryName
     }
 
     /// File → Keychain (one-time migration) → mint. Idempotent: never rewrites a
@@ -61,8 +69,23 @@ struct GatewayTokenStore {
         // place its directory posture gets corrected.
         ensureDirectoryPosture()
 
-        // 1. File is the source of truth.
-        if let token = readFile(), !token.isEmpty { return token }
+        // 1. File is the source of truth. If it exists but cannot be read, do
+        // not overwrite it with a freshly minted token — that would clobber the
+        // host registration's shared secret during a transient read failure.
+        switch readFile() {
+        case .token(let token):
+            return token
+        case .missingOrEmpty:
+            break
+        case .unreadable:
+            if let legacy = keychain.string(account: MCPSecretAccount.gatewayToken), !legacy.isEmpty {
+                return legacy
+            }
+            let token = UUID().uuidString
+            Self.log.error(
+                "Gateway token file exists but could not be read at \(fileURL.path, privacy: .public) — using an unpersisted token for this launch and leaving the file untouched")
+            return token
+        }
 
         // 2. One-time, non-destructive migration: preserve an existing Keychain
         //    token so an already-registered host keeps working. Leave the
@@ -100,9 +123,24 @@ struct GatewayTokenStore {
         try? fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir.path)
     }
 
-    private func readFile() -> String? {
-        guard let data = try? Data(contentsOf: fileURL) else { return nil }
-        return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+    private enum FileReadResult {
+        case token(String)
+        case missingOrEmpty
+        case unreadable
+    }
+
+    private func readFile() -> FileReadResult {
+        guard FileManager.default.fileExists(atPath: fileURL.path) else { return .missingOrEmpty }
+        let data: Data
+        do {
+            data = try Data(contentsOf: fileURL)
+        } catch {
+            Self.log.error("Could not read gateway token file at \(fileURL.path, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            return .unreadable
+        }
+        let token = String(data: data, encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return token.isEmpty ? .missingOrEmpty : .token(token)
     }
 
     /// Atomic, and owner-only for the token's whole visible life. Returns whether
@@ -119,10 +157,9 @@ struct GatewayTokenStore {
         let dir = fileURL.deletingLastPathComponent()
         ensureDirectoryPosture()
 
-        let temp = dir.appendingPathComponent(".\(fileURL.lastPathComponent).\(UUID().uuidString)")
-        guard fm.createFile(
-            atPath: temp.path, contents: Data(token.utf8), attributes: [.posixPermissions: 0o600])
-        else { return false }
+        let temp = dir.appendingPathComponent(temporaryName(fileURL.lastPathComponent))
+        let data = Data(token.utf8)
+        guard securelyWriteNewFile(at: temp, data: data) else { return false }
 
         do {
             _ = try fm.replaceItemAt(fileURL, withItemAt: temp, options: [.usingNewMetadataOnly])
@@ -130,6 +167,31 @@ struct GatewayTokenStore {
         } catch {
             try? fm.removeItem(at: temp)  // never leave a readable stray behind
             return false
+        }
+    }
+
+    /// Create a brand-new 0600 regular file without following a pre-existing
+    /// symlink. Foundation's `createFile` can follow a hostile temp-path symlink;
+    /// `O_EXCL | O_NOFOLLOW` makes that fail closed instead.
+    private func securelyWriteNewFile(at url: URL, data: Data) -> Bool {
+        let fd = url.path.withCString { path in
+            open(path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, S_IRUSR | S_IWUSR)
+        }
+        guard fd >= 0 else { return false }
+        defer { close(fd) }
+
+        return data.withUnsafeBytes { rawBuffer in
+            guard let base = rawBuffer.baseAddress else { return true }
+            var written = 0
+            while written < rawBuffer.count {
+                let result = Darwin.write(fd, base.advanced(by: written), rawBuffer.count - written)
+                if result <= 0 {
+                    try? FileManager.default.removeItem(at: url)
+                    return false
+                }
+                written += result
+            }
+            return true
         }
     }
 }

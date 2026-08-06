@@ -148,7 +148,11 @@ extension MCPOAuthCoordinator: OAuthAuthorizationDelegate {
               let port = redirect.port.map(UInt16.init) else {
             throw MCPAuthInteractionRequired()
         }
-        let listener = try OAuthLoopbackListener(port: port, expectedPath: redirect.path)
+        guard let expectedState = Self.queryValue("state", in: url), !expectedState.isEmpty else {
+            throw MCPAuthInteractionRequired()
+        }
+        let listener = try OAuthLoopbackListener(
+            port: port, expectedPath: redirect.path, expectedState: expectedState)
         defer { listener.stop() }
         await MainActor.run { NSWorkspace.shared.open(url) }
         return try await listener.waitForCallback(timeout: 180)
@@ -158,6 +162,11 @@ extension MCPOAuthCoordinator: OAuthAuthorizationDelegate {
     static func redirectURI(fromAuthorizeURL url: URL) -> URL? {
         URLComponents(url: url, resolvingAgainstBaseURL: false)?
             .queryItems?.first { $0.name == "redirect_uri" }?.value.flatMap(URL.init(string:))
+    }
+
+    static func queryValue(_ name: String, in url: URL) -> String? {
+        URLComponents(url: url, resolvingAgainstBaseURL: false)?
+            .queryItems?.first { $0.name == name }?.value
     }
 }
 
@@ -172,13 +181,15 @@ extension MCPOAuthCoordinator: OAuthAuthorizationDelegate {
 final class OAuthLoopbackListener: @unchecked Sendable {
     private let port: UInt16
     private let expectedPath: String
+    private let expectedState: String
     private var listener: NWListener?
     private var activeConnections: [NWConnection] = []
     private let queue = DispatchQueue(label: "com.ghostwire.oauth-loopback")
 
-    init(port: UInt16, expectedPath: String) throws {
+    init(port: UInt16, expectedPath: String, expectedState: String) throws {
         self.port = port
         self.expectedPath = expectedPath
+        self.expectedState = expectedState
 
         guard let nwPort = NWEndpoint.Port(rawValue: port) else {
             throw OAuthLoopbackError.invalidPort
@@ -221,7 +232,7 @@ final class OAuthLoopbackListener: @unchecked Sendable {
                     connection,
                     port: self.port,
                     expectedPath: self.expectedPath,
-                    queue: self.queue,
+                    expectedState: self.expectedState,
                     onMatch: { url in
                         timeoutItem.cancel()
                         resume(with: .success(url))
@@ -263,7 +274,7 @@ final class OAuthLoopbackListener: @unchecked Sendable {
         _ connection: NWConnection,
         port: UInt16,
         expectedPath: String,
-        queue: DispatchQueue,
+        expectedState: String,
         onMatch: @escaping (URL) -> Void,
         onNoMatch: @escaping (String) -> Void
     ) {
@@ -285,33 +296,69 @@ final class OAuthLoopbackListener: @unchecked Sendable {
 
             if pathOnly == expectedPath {
                 let callbackURL = URL(string: "http://127.0.0.1:\(port)\(requestTarget)")
+                guard Self.headersAreLocal(raw, port: port),
+                      Self.queryValue("state", in: callbackURL) == expectedState else {
+                    Self.send(status: "400 Bad Request", body: "", on: connection)
+                    onNoMatch(pathOnly)
+                    return
+                }
                 let body = "<html><body><h2>Connected.</h2><p>You can close this tab and return to Ghostwire.</p></body></html>"
-                let bodyBytes = body.utf8
-                let response =
-                    "HTTP/1.1 200 OK\r\n" +
-                    "Content-Type: text/html\r\n" +
-                    "Content-Length: \(bodyBytes.count)\r\n" +
-                    "Connection: close\r\n\r\n" +
-                    body
-                connection.send(
-                    content: response.data(using: .utf8),
-                    completion: .contentProcessed { _ in connection.cancel() }
-                )
+                Self.send(status: "200 OK", body: body, contentType: "text/html", on: connection)
                 if let url = callbackURL {
                     onMatch(url)
                 }
             } else {
-                let response =
-                    "HTTP/1.1 404 Not Found\r\n" +
-                    "Content-Length: 0\r\n" +
-                    "Connection: close\r\n\r\n"
-                connection.send(
-                    content: response.data(using: .utf8),
-                    completion: .contentProcessed { _ in connection.cancel() }
-                )
+                Self.send(status: "404 Not Found", body: "", on: connection)
                 onNoMatch(pathOnly)
             }
         }
+    }
+
+    private static func queryValue(_ name: String, in url: URL?) -> String? {
+        guard let url else { return nil }
+        return URLComponents(url: url, resolvingAgainstBaseURL: false)?
+            .queryItems?.first { $0.name == name }?.value
+    }
+
+    private static func headersAreLocal(_ raw: String, port: UInt16) -> Bool {
+        let lines = raw.components(separatedBy: "\r\n").dropFirst()
+        var headers: [String: String] = [:]
+        for line in lines {
+            guard let colon = line.firstIndex(of: ":") else { continue }
+            let key = line[..<colon].trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            let value = line[line.index(after: colon)...]
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            headers[key] = value
+        }
+
+        if let host = headers["host"], host != "127.0.0.1:\(port)" {
+            return false
+        }
+        if let origin = headers["origin"],
+           let url = URL(string: origin),
+           url.host != "127.0.0.1" && url.host != "localhost" {
+            return false
+        }
+        return true
+    }
+
+    private static func send(
+        status: String,
+        body: String,
+        contentType: String = "text/plain",
+        on connection: NWConnection
+    ) {
+        let bodyBytes = body.utf8
+        let response =
+            "HTTP/1.1 \(status)\r\n" +
+            "Content-Type: \(contentType)\r\n" +
+            "Content-Length: \(bodyBytes.count)\r\n" +
+            "Connection: close\r\n\r\n" +
+            body
+        connection.send(
+            content: response.data(using: .utf8),
+            completion: .contentProcessed { _ in connection.cancel() }
+        )
     }
 }
 

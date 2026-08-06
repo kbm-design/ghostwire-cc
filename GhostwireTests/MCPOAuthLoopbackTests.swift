@@ -74,7 +74,8 @@ final class MCPOAuthLoopbackTests: XCTestCase {
         // Use a fixed UUID so the port is deterministic.
         let serverID = UUID(uuidString: "CAFEBABE-CAFE-BABE-CAFE-BABECAFEBABE")!
         let port = MCPOAuthCoordinator.loopbackPort(for: serverID)
-        let listener = try OAuthLoopbackListener(port: port, expectedPath: "/callback")
+        let listener = try OAuthLoopbackListener(
+            port: port, expectedPath: "/callback", expectedState: "xyz")
 
         async let callbackURL = listener.waitForCallback(timeout: 10)
 
@@ -101,7 +102,8 @@ final class MCPOAuthLoopbackTests: XCTestCase {
     func testLoopbackListenerIgnoresFaviconAndWaits() async throws {
         let serverID = UUID(uuidString: "DEADBEEF-DEAD-BEEF-DEAD-BEEFDEADBEEF")!
         let port = MCPOAuthCoordinator.loopbackPort(for: serverID)
-        let listener = try OAuthLoopbackListener(port: port, expectedPath: "/callback")
+        let listener = try OAuthLoopbackListener(
+            port: port, expectedPath: "/callback", expectedState: "s")
 
         async let callbackURL = listener.waitForCallback(timeout: 10)
 
@@ -121,5 +123,31 @@ final class MCPOAuthLoopbackTests: XCTestCase {
 
         let items = URLComponents(url: result, resolvingAgainstBaseURL: false)?.queryItems ?? []
         XCTAssertEqual(items.first { $0.name == "code" }?.value, "xyz")
+    }
+
+    func testLoopbackListenerRejectsWrongStateAndKeepsWaiting() async throws {
+        let serverID = UUID(uuidString: "FACEFEED-FACE-FEED-FACE-FEEDFACEFEED")!
+        let port = MCPOAuthCoordinator.loopbackPort(for: serverID)
+        let listener = try OAuthLoopbackListener(
+            port: port, expectedPath: "/callback", expectedState: "expected-state")
+
+        async let callbackURL = listener.waitForCallback(timeout: 10)
+
+        try await Task.sleep(nanoseconds: 100_000_000)
+
+        let wrongURL = URL(string: "http://127.0.0.1:\(port)/callback?code=bad&state=wrong")!
+        let (_, wrongResponse) = try await URLSession.shared.data(from: wrongURL)
+        XCTAssertEqual((wrongResponse as? HTTPURLResponse)?.statusCode, 400)
+
+        let realURL = URL(
+            string: "http://127.0.0.1:\(port)/callback?code=good&state=expected-state")!
+        _ = try await URLSession.shared.data(from: realURL)
+
+        let result = try await callbackURL
+        listener.stop()
+
+        let items = URLComponents(url: result, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        XCTAssertEqual(items.first { $0.name == "code" }?.value, "good")
+        XCTAssertEqual(items.first { $0.name == "state" }?.value, "expected-state")
     }
 }

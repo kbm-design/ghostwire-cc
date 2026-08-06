@@ -173,6 +173,12 @@ final class GhostwireSessionBridge: ObservableObject {
     }
 
     func stopMonitoring() {
+        // GW-414: the mirror of the guard in startMonitoring(), and the one that
+        // was missing. A unit-test host never binds the socket, but it still
+        // terminates — and teardown used to run all the way through to
+        // HookSocketServer.stop(), which unlinked the live instance's socket
+        // path. Tearing down what we never started is not ours to do.
+        guard NSClassFromString("XCTestCase") == nil else { return }
         sessionMonitor.stopMonitoring()
         Task { await SessionDiscoveryService.shared.stop() }
     }

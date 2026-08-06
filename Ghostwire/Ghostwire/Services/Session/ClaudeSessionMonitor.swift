@@ -70,6 +70,13 @@ class ClaudeSessionMonitor: ObservableObject {
                     }
                     HookSocketServer.shared.cancelPendingPermission(toolUseId: toolUseId)
                 }
+            },
+            // GW-408: a gate the server refused outright. It never becomes a
+            // pending permission, so it has no other route into the app.
+            onGateBlocked: { event, reason in
+                Task {
+                    await SessionStore.shared.process(.permissionBlocked(event: event, reason: reason))
+                }
             }
         )
     }

@@ -177,6 +177,12 @@ struct PendingPermission: Sendable {
 /// Callback for hook events
 typealias HookEventHandler = @Sendable (HookEvent) -> Void
 
+/// GW-408: callback for a gate this server refused before it could ever be
+/// shown. Separate from `HookEventHandler` because the outcome is already
+/// decided — the deny has been written to the hook — so the store must render
+/// a finished, non-actionable record, never a live approval bar.
+typealias HookGateBlockedHandler = @Sendable (HookEvent, String) -> Void
+
 /// Unix domain socket server that receives events from Claude Code hooks
 /// Uses GCD DispatchSource for non-blocking I/O
 class HookSocketServer {
@@ -189,6 +195,7 @@ class HookSocketServer {
     private var boundSocketPath = false
     private var acceptSource: DispatchSourceRead?
     private var eventHandler: HookEventHandler?
+    private var gateBlockedHandler: HookGateBlockedHandler?
     private let queue = DispatchQueue(label: "com.ghostwire.notch.socket", qos: .userInitiated)
 
     /// Pending permission requests indexed by toolUseId
@@ -236,16 +243,19 @@ class HookSocketServer {
     }
 
     /// Start the socket server
-    func start(onEvent: @escaping HookEventHandler) {
+    func start(onEvent: @escaping HookEventHandler,
+               onGateBlocked: HookGateBlockedHandler? = nil) {
         queue.async { [weak self] in
-            self?.startServer(onEvent: onEvent)
+            self?.startServer(onEvent: onEvent, onGateBlocked: onGateBlocked)
         }
     }
 
-    private func startServer(onEvent: @escaping HookEventHandler) {
+    private func startServer(onEvent: @escaping HookEventHandler,
+                             onGateBlocked: HookGateBlockedHandler?) {
         guard serverSocket < 0 else { return }
 
         eventHandler = onEvent
+        gateBlockedHandler = onGateBlocked
 
         unlink(Self.socketPath)
 
@@ -327,11 +337,18 @@ class HookSocketServer {
         boundSocketPath = false
 
         permissionsLock.lock()
-        for (_, pending) in pendingPermissions {
-            close(pending.clientSocket)
-        }
+        let inFlight = pendingPermissions
         pendingPermissions.removeAll()
         permissionsLock.unlock()
+
+        // GW-408: a bare close() here used to be harmless — the hook read no
+        // verdict and exited 0, letting the terminal ask. Since PR #77 made the
+        // hook fail closed, closing silently means *quitting Ghostwire denies
+        // every tool call currently in flight*. Hand each one back explicitly.
+        for (_, pending) in inFlight {
+            sendPassthrough(to: pending.clientSocket,
+                            reason: "Ghostwire is shutting down and cannot show this request.")
+        }
     }
 
     /// Respond to a pending permission request by toolUseId.
@@ -384,19 +401,27 @@ class HookSocketServer {
         }
         permissionsLock.unlock()
 
-        logger.debug("Tool completed externally, closing socket for \(pending.sessionId.prefix(8), privacy: .public) tool:\(toolUseId.prefix(12), privacy: .public)")
-        close(pending.clientSocket)
+        logger.debug("Tool completed externally, releasing socket for \(pending.sessionId.prefix(8), privacy: .public) tool:\(toolUseId.prefix(12), privacy: .public)")
+        sendPassthrough(to: pending.clientSocket,
+                        reason: "This tool was already resolved outside Ghostwire.")
     }
 
     private func cleanupPendingPermissions(sessionId: String) {
         permissionsLock.lock()
         let matching = pendingPermissions.filter { $0.value.sessionId == sessionId }
-        for (toolUseId, pending) in matching {
-            logger.debug("Cleaning up stale permission for \(sessionId.prefix(8), privacy: .public) tool:\(toolUseId.prefix(12), privacy: .public)")
-            close(pending.clientSocket)
+        for (toolUseId, _) in matching {
             pendingPermissions.removeValue(forKey: toolUseId)
         }
         permissionsLock.unlock()
+
+        // GW-408: this fires on every `Stop`, i.e. at the end of every agent
+        // turn. Closing with no bytes made the hook fail closed and deny a tool
+        // the user was never asked about.
+        for (toolUseId, pending) in matching {
+            logger.debug("Releasing stale permission for \(sessionId.prefix(8), privacy: .public) tool:\(toolUseId.prefix(12), privacy: .public)")
+            sendPassthrough(to: pending.clientSocket,
+                            reason: "The agent moved on before this request was answered in Ghostwire.")
+        }
     }
 
     private func cleanupPendingPermissions(clientSocket: Int32) {
@@ -425,6 +450,39 @@ class HookSocketServer {
         return "\(sessionId):\(toolName ?? "unknown"):\(inputStr)"
     }
 
+    /// GW-408: the *shape* of a tool_input — key names only, never values.
+    ///
+    /// A correlation miss means `PreToolUse` and `PermissionRequest` disagreed
+    /// about `tool_input` for the same call, and the old logs said only that a
+    /// miss happened, so diagnosing it meant patching the installed hook on a
+    /// live machine. Key names are enough to see the disagreement (an object
+    /// that arrived JSON-encoded as a string decodes to the single key `input`,
+    /// per `decodeToolInput`) and carry none of the command text.
+    private static func inputShape(_ toolInput: [String: AnyCodable]?) -> String {
+        guard let toolInput else { return "nil" }
+        if toolInput.isEmpty { return "{}" }
+        return "{" + toolInput.keys.sorted().joined(separator: ",") + "}"
+    }
+
+    /// Shapes currently cached for this session+tool — the near-miss set.
+    /// Answers "what did we have, and how did it differ from what arrived?"
+    private func cachedShapes(sessionId: String, toolName: String?) -> [String] {
+        let prefix = "\(sessionId):\(toolName ?? "unknown"):"
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        return toolUseIdCache.keys
+            .filter { $0.hasPrefix(prefix) }
+            .map { key -> String in
+                let rendered = String(key.dropFirst(prefix.count))
+                guard let data = rendered.data(using: .utf8),
+                      let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                    return "<unparseable>"
+                }
+                return "{" + object.keys.sorted().joined(separator: ",") + "}"
+            }
+            .sorted()
+    }
+
     /// Cache tool_use_id from PreToolUse event (FIFO queue per key)
     /// (internal for unit tests)
     func cacheToolUseId(event: HookEvent) {
@@ -439,7 +497,7 @@ class HookSocketServer {
         toolUseIdCache[key]?.append(toolUseId)
         cacheLock.unlock()
 
-        logger.debug("Cached tool_use_id for \(event.sessionId.prefix(8), privacy: .public) tool:\(event.tool ?? "?", privacy: .public) id:\(toolUseId.prefix(12), privacy: .public)")
+        logger.debug("Cached tool_use_id for \(event.sessionId.prefix(8), privacy: .public) tool:\(event.tool ?? "?", privacy: .public) id:\(toolUseId.prefix(12), privacy: .public) inputShape:\(Self.inputShape(event.toolInput), privacy: .public)")
     }
 
     /// Pop and return cached tool_use_id for PermissionRequest (FIFO)
@@ -560,17 +618,21 @@ class HookSocketServer {
             // Name the field and the reason — and say out loud that a dropped
             // PermissionRequest means the hook fails open.
             let raw = String(data: data, encoding: .utf8) ?? "<non-utf8>"
+            // GW-408: this used to say "hook fails open — the tool runs unseen",
+            // which stopped being true at PR #77. The hook now denies, so the
+            // cost of a drop is a blocked tool, not an unseen one.
             let cost = raw.contains("waiting_for_approval")
-                ? "APPROVAL LOST (hook fails open — the tool runs unseen)"
+                ? "APPROVAL BLOCKED (hook fails closed — the tool is denied)"
                 : "telemetry lost"
             logger.error(
                 "Dropped hook event: \(cost, privacy: .public) — \(Self.describe(error), privacy: .public) | raw: \(raw, privacy: .public)"
             )
             if Self.payloadLooksLikePermissionRequest(data) {
-                sendImmediateDeny(
-                    to: clientSocket,
-                    reason: "Ghostwire could not decode this permission request. Denying so the tool does not run unseen."
-                )
+                let reason = "Ghostwire could not read this permission request (\(Self.describe(error))), so it was blocked rather than run unseen."
+                sendImmediateDeny(to: clientSocket, reason: reason)
+                // GW-408: PR #77 wrote the deny but told nobody. Surface it, so
+                // a blocked tool is something the user can see and re-run.
+                gateBlockedHandler?(Self.salvagedGateEvent(from: data), reason)
             }
             close(clientSocket)
             return
@@ -601,11 +663,21 @@ class HookSocketServer {
             } else if let cachedToolUseId = popCachedToolUseId(event: event) {
                 toolUseId = cachedToolUseId
             } else {
-                logger.warning("Permission request missing tool_use_id for \(event.sessionId.prefix(8), privacy: .public) - no cache hit")
-                sendImmediateDeny(
-                    to: clientSocket,
-                    reason: "Ghostwire could not match this permission request to a tool_use_id. Denying so the tool does not run unseen."
+                // GW-408: name the disagreement. Session and tool already
+                // matched to get here, so a miss means tool_input differed —
+                // print both shapes side by side rather than just "no hit".
+                let requestShape = Self.inputShape(event.toolInput)
+                let cached = cachedShapes(sessionId: event.sessionId, toolName: event.tool)
+                logger.warning(
+                    "Permission request missing tool_use_id for \(event.sessionId.prefix(8), privacy: .public) tool:\(event.tool ?? "?", privacy: .public) - no cache hit | request inputShape:\(requestShape, privacy: .public) | cached shapes for this session+tool: \(cached.isEmpty ? "<none>" : cached.joined(separator: " "), privacy: .public)"
                 )
+                let reason = "Ghostwire could not match this \(event.tool ?? "tool") request to the tool call it belongs to, so it was blocked rather than run unseen."
+                sendImmediateDeny(to: clientSocket, reason: reason)
+                // GW-408: PR #77 removed the `eventHandler?(event)` that used to
+                // sit here, so a blocked gate left no trace anywhere in the app —
+                // no session row, no history, no signal. Report it as a finished
+                // block (never a live gate: the deny is already on the wire).
+                gateBlockedHandler?(event, reason)
                 close(clientSocket)
                 return
             }
@@ -640,7 +712,13 @@ class HookSocketServer {
             permissionsLock.unlock()
 
             if let replacedPending {
-                closeClientSocket(replacedPending.clientSocket, cleanupPending: true)
+                // GW-408: a newer gate resolved to the same toolUseId. The
+                // displaced hook is still blocked in recv() — hand it back
+                // rather than stranding it into a fail-closed deny.
+                logger.debug("Superseded pending permission tool:\(toolUseId.prefix(12), privacy: .public) - releasing the older socket")
+                cleanupPendingPermissions(clientSocket: replacedPending.clientSocket)
+                sendPassthrough(to: replacedPending.clientSocket,
+                                reason: "A newer request replaced this one in Ghostwire.")
             }
 
             eventHandler?(updatedEvent)
@@ -696,6 +774,57 @@ class HookSocketServer {
         let response = HookResponse(decision: "deny", reason: reason)
         guard let data = encode(response) else { return }
         _ = write(data, to: clientSocket)
+    }
+
+    /// GW-408: "Ghostwire is bowing out of this gate — use your own prompt."
+    ///
+    /// Every path that reaches here is one where Ghostwire *chose* to stop
+    /// holding a socket (shutdown, the turn ended, the tool resolved elsewhere,
+    /// a newer gate superseded it). None of them is a judgement on the tool, so
+    /// none of them should deny it. `ask` is already the documented third value
+    /// of `HookResponse.decision`; the hook maps it to exit-0, which is what the
+    /// approval path did for every one of these cases before PR #77.
+    ///
+    /// Closing with zero bytes instead — what this code used to do — is read by
+    /// the post-#77 hook as a fail-closed deny.
+    private func sendPassthrough(to clientSocket: Int32, reason: String) {
+        let response = HookResponse(decision: "ask", reason: reason)
+        var wrote = false
+        if let data = encode(response) {
+            wrote = write(data, to: clientSocket)
+        }
+        Darwin.close(clientSocket)
+        // Logged because the failure mode is silent by construction: an unsent
+        // passthrough looks exactly like the zero-byte close it replaced, and
+        // the only other evidence is a denial in someone else's terminal.
+        if wrote {
+            logger.info("Handed gate back to the agent (ask): \(reason, privacy: .public)")
+        } else {
+            logger.error("FAILED to hand gate back (ask) — the hook will fail closed and deny: \(reason, privacy: .public)")
+        }
+    }
+
+    /// GW-408: a payload that failed `HookEvent` decoding still usually carries
+    /// enough to name what was blocked. Best-effort by design — every field
+    /// degrades to a placeholder rather than throwing, because the alternative
+    /// is the silent drop this ticket exists to remove.
+    private static func salvagedGateEvent(from data: Data) -> HookEvent {
+        let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
+        return HookEvent(
+            sessionId: object["session_id"] as? String ?? "unknown",
+            cwd: object["cwd"] as? String ?? "",
+            event: "PermissionRequest",
+            status: "waiting_for_approval",
+            pid: object["pid"] as? Int,
+            tty: object["tty"] as? String,
+            tool: object["tool"] as? String ?? object["tool_name"] as? String,
+            toolInput: nil,
+            toolUseId: nil,
+            notificationType: nil,
+            message: nil,
+            source: object["source"] as? String,
+            transcriptPath: object["transcript_path"] as? String
+        )
     }
 
     private func encode(_ response: HookResponse) -> Data? {

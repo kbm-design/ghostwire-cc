@@ -52,12 +52,62 @@ class GhostwireHookPermissionTests(unittest.TestCase):
         self.assertEqual(decision["behavior"], "deny")
         self.assertIn("Ghostwire", decision["message"])
 
-    def test_permission_request_ask_response_fails_closed(self):
+    # GW-408 --------------------------------------------------------------
+    # This used to assert that "ask" fails closed. It no longer does, and the
+    # reversal is the point: "ask" is the app explicitly saying "not mine to
+    # rule on" (shutting down, turn ended, tool resolved elsewhere, superseded
+    # by a newer gate). Denying those destroyed the turn — most visibly,
+    # quitting Ghostwire denied every tool call in flight. Silence still fails
+    # closed; only an explicit hand-back passes through.
+
+    def test_ask_response_hands_the_gate_back_to_the_agent(self):
         code, stdout = self.run_main(self.permission_payload(), socket_response={"decision": "ask"})
 
         self.assertEqual(code, 0)
-        decision = self.decision_from_stdout(stdout)
-        self.assertEqual(decision["behavior"], "deny")
+        self.assertEqual(
+            stdout, "",
+            "An 'ask' must emit no decision at all — any output overrides the agent's own prompt",
+        )
+
+    def test_blocked_message_is_distinguishable_from_a_user_denial(self):
+        _, blocked_stdout = self.run_main(self.permission_payload(), socket_response=None)
+        _, denied_stdout = self.run_main(
+            self.permission_payload(), socket_response={"decision": "deny"}
+        )
+
+        blocked = self.decision_from_stdout(blocked_stdout)["message"]
+        denied = self.decision_from_stdout(denied_stdout)["message"]
+
+        self.assertEqual(self.decision_from_stdout(blocked_stdout)["behavior"], "deny")
+        self.assertEqual(self.decision_from_stdout(denied_stdout)["behavior"], "deny")
+        # The agent reads these strings. They must not both read as "the user
+        # said no" — that taught the model a rejection that never happened.
+        self.assertIn("Blocked by Ghostwire", blocked)
+        self.assertIn("not a decision by you", blocked)
+        self.assertNotIn("Denied by you", blocked)
+        self.assertIn("Denied by you in Ghostwire", denied)
+        self.assertNotIn("Blocked by Ghostwire", denied)
+
+    def test_decision_wait_is_not_shorter_than_the_registered_hook_timeout(self):
+        # GW-408: the hook must not invent a deadline the agent never asked for.
+        # 300s against the installers' registered 86400 meant stepping away for
+        # six minutes denied the tool you were about to approve.
+        self.assertGreaterEqual(
+            self.hook.DECISION_TIMEOUT_SECONDS, 86400,
+            "The agent owns the approval deadline — Ghostwire must not time out first",
+        )
+        self.assertLess(
+            self.hook.TIMEOUT_SECONDS, 60,
+            "Connect/send is local; a long timeout there just hangs on a broken socket",
+        )
+
+    def test_app_supplied_denial_reason_is_passed_through_verbatim(self):
+        reason = "Ghostwire could not match this Bash request to the tool call it belongs to."
+        _, stdout = self.run_main(
+            self.permission_payload(), socket_response={"decision": "deny", "reason": reason}
+        )
+
+        self.assertEqual(self.decision_from_stdout(stdout)["message"], reason)
 
     def test_exit_plan_mode_allow_forwards_updated_input(self):
         tool_input = {"plan": "Implement the reviewed plan.", "title": "Audit remediation"}

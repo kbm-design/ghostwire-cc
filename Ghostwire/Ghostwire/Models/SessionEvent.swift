@@ -27,6 +27,12 @@ enum SessionEvent: Sendable {
     /// Permission socket failed (connection died before response)
     case permissionSocketFailed(sessionId: String, toolUseId: String)
 
+    /// GW-408: a gate the socket server refused before it could ever be shown —
+    /// undecodable, or impossible to correlate to a tool call. The deny is
+    /// already on the wire, so this records a finished block, never a live gate.
+    /// It exists so "Ghostwire blocked something" can never again be invisible.
+    case permissionBlocked(event: HookEvent, reason: String)
+
     // MARK: - File Events (from ConversationParser)
 
     /// JSONL file was updated with new content
@@ -197,6 +203,8 @@ extension SessionEvent: CustomStringConvertible {
             return "permissionDenied(session: \(sessionId.prefix(8)), tool: \(toolUseId.prefix(12)))"
         case .permissionSocketFailed(let sessionId, let toolUseId):
             return "permissionSocketFailed(session: \(sessionId.prefix(8)), tool: \(toolUseId.prefix(12)))"
+        case .permissionBlocked(let event, _):
+            return "permissionBlocked(session: \(event.sessionId.prefix(8)), tool: \(event.tool ?? "unknown"))"
         case .fileUpdated(let payload):
             return "fileUpdated(session: \(payload.sessionId.prefix(8)), messages: \(payload.messages.count))"
         case .interruptDetected(let sessionId):

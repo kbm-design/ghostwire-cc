@@ -72,6 +72,9 @@ actor SessionStore {
         case .permissionSocketFailed(let sessionId, let toolUseId):
             await processSocketFailure(sessionId: sessionId, toolUseId: toolUseId)
 
+        case .permissionBlocked(let hookEvent, let reason):
+            await processPermissionBlocked(hookEvent, reason: reason)
+
         case .fileUpdated(let payload):
             await processFileUpdate(payload)
 
@@ -645,6 +648,90 @@ actor SessionStore {
             return
         }
         scheduleUndeliveredGateSweep(sessionId: sessionId, toolUseId: toolUseId)
+    }
+
+    // MARK: - Blocked gates (GW-408)
+
+    /// A gate the socket server refused before it could be shown: undecodable,
+    /// or impossible to correlate to a tool call. PR #77 started denying these,
+    /// which is the right posture — but it wrote the deny and told nobody, so
+    /// the tool just failed in the terminal with no trace anywhere in the app.
+    ///
+    /// This is deliberately *not* `processSocketFailure`. That one holds the
+    /// phase at `waitingForApproval` because the gate is still answerable in the
+    /// terminal. Here it is not: the deny has already gone back over the socket
+    /// and the agent has moved on. Showing an actionable bar would be a lie.
+    /// What the user needs is a record of what was blocked and why, and to know
+    /// that re-running is how they get asked properly.
+    private func processPermissionBlocked(_ event: HookEvent, reason: String) async {
+        let sessionId = event.sessionId
+        dismissedSessionIds.remove(sessionId)
+
+        let isNewSession = sessions[sessionId] == nil
+        var session = sessions[sessionId] ?? createSession(from: event)
+        if session.isProvisional {
+            session = Self.upgradedFromProvisional(session, event: event)
+        }
+        if let source = event.source, !source.isEmpty, session.agent != source {
+            session.agent = source
+        }
+        if event.pid != nil { session.pid = event.pid }
+        if let tty = event.tty {
+            session.tty = tty.replacingOccurrences(of: "/dev/", with: "")
+        }
+        session.lastActivity = Date()
+
+        // A synthetic id: the whole reason we are here is that no tool_use_id
+        // could be established, so this row must not collide with a real one.
+        let toolName = event.tool ?? "unknown"
+        let rowId = "gw-blocked-\(UUID().uuidString.prefix(8))"
+        var input: [String: String] = ["ghostwire": reason]
+        if let hookInput = event.toolInput {
+            for (key, value) in hookInput {
+                if let str = value.value as? String { input[key] = str }
+            }
+        }
+        session.chatItems.append(ChatHistoryItem(
+            id: rowId,
+            type: .toolCall(ToolCallItem(
+                name: toolName,
+                input: input,
+                status: .error,
+                result: reason,
+                structuredResult: nil,
+                subagentTools: []
+            )),
+            timestamp: Date()
+        ))
+
+        sessions[sessionId] = session
+        publishState()
+
+        Self.logger.error(
+            "Blocked gate surfaced for \(sessionId.prefix(8), privacy: .public) tool=\(toolName, privacy: .public): \(reason, privacy: .public)"
+        )
+
+        let agent = session.agent
+        let folder = URL(fileURLWithPath: session.cwd).lastPathComponent
+        let command = input["command"] ?? input["file_path"]
+        await MainActor.run {
+            AlertHistoryStore.shared.record(
+                agent: agent,
+                sessionId: sessionId,
+                kind: "permission",
+                detail: toolName,
+                folder: folder,
+                command: command,
+                toolUseId: rowId
+            )
+            AlertHistoryStore.shared.markPermissionOutcome(
+                sessionId: sessionId, toolUseId: rowId, outcome: "blocked"
+            )
+        }
+
+        if isNewSession {
+            await adoptConversationInfo(sessionId: sessionId, agent: session.agent, cwd: session.cwd)
+        }
     }
 
     // MARK: - Undelivered gate cleanup (GW-362)

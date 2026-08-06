@@ -147,6 +147,9 @@ private struct AlertHistoryRow: View {
         case "allowed": return ("checkmark", TerminalColors.green)
         case "denied": return ("xmark", TerminalColors.red)
         case "timedOut": return ("timer", .white.opacity(0.4))
+        // GW-408: Ghostwire blocked it — not the user's call, so it must not
+        // wear the same glyph as a denial they made.
+        case "blocked": return ("exclamationmark.octagon", TerminalColors.red)
         default: return nil
         }
     }

@@ -21,7 +21,25 @@ import uuid
 
 GHOSTWIRE_SOCKET = os.environ.get("GHOSTWIRE_SOCKET", "/tmp/com.ghostwire.notch.sock")
 GHOSTWIRE_HOST = os.environ.get("GHOSTWIRE_HOST")
-TIMEOUT_SECONDS = 300  # 5 minutes for permission decisions
+# Connecting and sending are local and instant; anything slower is a broken
+# socket, not a busy one.
+TIMEOUT_SECONDS = 10
+
+# GW-408: how long to wait for a human. This deliberately matches the `timeout`
+# the installers register on the PermissionRequest hook (86400, see
+# HookInstaller.swift / CodexHookInstaller.swift) so that **the agent owns the
+# deadline, not Ghostwire**.
+#
+# It used to be 300s, which was 288x shorter than what the agent allowed. Before
+# PR #77 that was merely pointless — the hook exited 0 and the terminal asked.
+# After PR #77 it was destructive: step away for six minutes and the tool you
+# were about to approve got denied, worded as a Ghostwire delivery failure, while
+# the notch still showed a live gate over a socket that was already dead.
+#
+# Ghostwire must never manufacture a verdict out of elapsed time. If the user
+# never answers, the agent's own hook timeout ends the turn — the same way it
+# would if Ghostwire were not installed at all.
+DECISION_TIMEOUT_SECONDS = 86400
 
 if GHOSTWIRE_HOST:
     _host = GHOSTWIRE_HOST.rpartition(":")[0].strip("[]")
@@ -131,6 +149,8 @@ def send_event(state):
 
         # For permission requests, wait for response
         if state.get("status") == "waiting_for_approval":
+            # A person has to look at this — give them as long as the agent does.
+            sock.settimeout(DECISION_TIMEOUT_SECONDS)
             response = sock.recv(4096)
             sock.close()
             if response:
@@ -169,11 +189,41 @@ def emit_deny(message):
     sys.exit(0)
 
 
+def emit_passthrough():
+    """GW-408: Ghostwire declines to rule on this gate — the agent asks instead.
+
+    Emitting nothing at all is how a permission hook says "no opinion", which
+    drops the decision back to the agent's own approval UI. That is strictly
+    better than a deny whenever Ghostwire simply could not take part: the tool
+    still does not run unattended, the user is still asked, and the turn is not
+    destroyed because the app quit or the socket was reclaimed.
+
+    Only reached on an explicit `{"decision": "ask"}` from the app. A silent
+    socket still fails closed below — the app not answering at all is not the
+    same as the app saying "not mine to answer".
+    """
+    sys.exit(0)
+
+
+def _request_marker(session_id, tool_name):
+    return f"{session_id}:{tool_name or 'unknown'}:{os.getpid()}"
+
+
+def user_denial_message(session_id, tool_name, detail):
+    """A person looked at this and said no."""
+    return f"Denied by you in Ghostwire: {detail} (request {_request_marker(session_id, tool_name)})."
+
+
 def fail_closed_message(session_id, tool_name, detail):
-    request_marker = f"{session_id}:{tool_name or 'unknown'}:{os.getpid()}"
+    """GW-408: nobody decided this — Ghostwire could not deliver the request.
+
+    Worded so the agent (and the user reading the terminal) can tell it apart
+    from a real denial. Conflating the two taught the model that the user had
+    rejected something they were never shown.
+    """
     return (
-        f"Denied by Ghostwire: {detail} "
-        f"(request {request_marker})."
+        f"Blocked by Ghostwire — this was not a decision by you: {detail} "
+        f"(request {_request_marker(session_id, tool_name)})."
     )
 
 
@@ -518,16 +568,23 @@ def main():
                 emit_allow(updated_input)
 
             elif decision == "deny":
-                emit_deny(reason or fail_closed_message(
+                emit_deny(reason or user_denial_message(
                     session_id,
                     state.get("tool"),
-                    "the request was denied by the user",
+                    "the request was denied",
                 ))
+
+            elif decision == "ask":
+                # GW-408: the app is explicitly handing this gate back (it is
+                # shutting down, the turn ended, the tool resolved elsewhere, a
+                # newer request superseded this one). Let the agent ask.
+                emit_passthrough()
 
         emit_deny(fail_closed_message(
             session_id,
             state.get("tool"),
-            "Ghostwire did not return an approval decision, so the tool was not run unseen",
+            "Ghostwire could not be reached for an approval decision, so the tool was blocked "
+            "rather than run unseen. Re-run it to be asked again",
         ))
 
     elif event == "Notification":

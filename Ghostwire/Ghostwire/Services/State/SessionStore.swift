@@ -26,6 +26,11 @@ actor SessionStore {
     /// Pending file syncs (debounced)
     private var pendingSyncs: [String: Task<Void, Never>] = [:]
 
+    /// GW-362: deferred cleanup for gates whose verdict never reached the agent,
+    /// keyed by toolUseId. Without these, a socket failure could hold
+    /// `waitingForApproval` — and the persistent glow — forever.
+    private var undeliveredGateSweeps: [String: Task<Void, Never>] = [:]
+
     /// Sessions archived or ended this app run (GW-194). Their transcripts
     /// keep a fresh mtime, so without a tombstone the next discovery rescan
     /// would resurrect them as provisional rows. Cleared by a real hook event.
@@ -131,8 +136,30 @@ actor SessionStore {
         let isNewSession = sessions[sessionId] == nil
         var session = sessions[sessionId] ?? createSession(from: event)
         let wasProvisional = session.isProvisional
+        if isNewSession {
+            // GW-341: identity at birth, so a wrong tag can be traced to the
+            // event that caused it instead of guessed at from the UI.
+            Self.logger.info(
+                "New session \(sessionId.prefix(8), privacy: .public) agent=\(event.source ?? "<none>", privacy: .public) via \(event.event, privacy: .public)"
+            )
+        }
         if wasProvisional {
             session = Self.upgradedFromProvisional(session, event: event)
+        }
+
+        // GW-341: the hook's `source` is stamped by the installer that wrote the
+        // hook (GHOSTWIRE_AGENT=cursor|codex|…), so it is authoritative for
+        // identity — more so than discovery, which infers the agent from which
+        // directory a transcript sits in. Agent used to be set once at creation,
+        // so a session adopted through any other path kept that path's guess for
+        // its whole life. Re-stamp on every event that carries a source.
+        if let source = event.source, !source.isEmpty, session.agent != source {
+            if let previous = session.agent {
+                Self.logger.info(
+                    "Session \(sessionId.prefix(8), privacy: .public) agent corrected: \(previous, privacy: .public) -> \(source, privacy: .public)"
+                )
+            }
+            session.agent = source
         }
 
         session.pid = event.pid
@@ -148,11 +175,15 @@ actor SessionStore {
         if let tty = event.tty {
             session.tty = tty.replacingOccurrences(of: "/dev/", with: "")
         }
+        if let path = event.transcriptPath, !path.isEmpty {
+            session.transcriptPath = path
+        }
         session.lastActivity = Date()
 
         if event.status == "ended" {
             sessions.removeValue(forKey: sessionId)
             cancelPendingSync(sessionId: sessionId)
+            releaseCursorParserState(sessionId: sessionId, agent: session.agent)
             dismissedSessionIds.insert(sessionId)
             return
         }
@@ -170,6 +201,11 @@ actor SessionStore {
         } else {
             Self.logger.debug("Invalid transition: \(String(describing: session.phase), privacy: .public) -> \(String(describing: newPhase), privacy: .public), ignoring")
         }
+
+        // GW-311: Cursor's chat is built from the hook stream (its transcript is
+        // written lazily/incompletely). This runs before the gate status update
+        // below so the tool row already exists when a PermissionRequest lands.
+        applyCursorHookChat(event: event, session: &session)
 
         if event.event == "PermissionRequest", let toolUseId = event.toolUseId {
             Self.logger.debug("Setting tool \(toolUseId.prefix(12), privacy: .public) status to waitingForApproval")
@@ -237,11 +273,13 @@ actor SessionStore {
         SessionState(
             sessionId: event.sessionId,
             cwd: event.cwd,
-            projectName: URL(fileURLWithPath: event.cwd).lastPathComponent,
+            // nil → SessionState derives it, including the empty-cwd guard
+            projectName: nil,
             pid: event.pid,
             tty: event.tty?.replacingOccurrences(of: "/dev/", with: ""),
             isInTmux: false,  // Will be updated
             agent: event.source,
+            transcriptPath: event.transcriptPath,
             phase: .idle
         )
     }
@@ -257,6 +295,7 @@ actor SessionStore {
                 sessionId: session.sessionId,
                 cwd: event.cwd,
                 agent: session.agent,
+                transcriptPath: session.transcriptPath,
                 phase: session.phase,
                 pendingPermissions: session.pendingPermissions,
                 chatItems: session.chatItems,
@@ -416,6 +455,11 @@ actor SessionStore {
 
     private func processPermissionApproved(sessionId: String, toolUseId: String) async {
         guard var session = sessions[sessionId] else { return }
+        guard isUnansweredGate(session, toolUseId: toolUseId) else {
+            // GW-362: a late allow for a gate the terminal already resolved.
+            Self.logger.debug("Dropping stale approval for \(toolUseId.prefix(12), privacy: .public) - gate already answered")
+            return
+        }
 
         // Update tool status in chat history first
         updateToolStatus(in: &session, toolId: toolUseId, status: .running)
@@ -497,8 +541,34 @@ actor SessionStore {
         sessions[sessionId] = session
     }
 
+    /// Whether `toolUseId` is still an unanswered gate in this session.
+    ///
+    /// GW-362 (Codex adversarial review, finding 1). Verdict outcomes are now
+    /// emitted from the socket-write completion, which runs on the socket queue
+    /// and is therefore **unordered** against the hook stream. If the user
+    /// answers in the terminal first, `PostToolUse` clears the gate and marks
+    /// the tool succeeded — and a delivery completion arriving after that would
+    /// otherwise walk a finished tool back to `.running` (allow) or `.error`
+    /// (socket failure), showing a resolved plan as failed.
+    ///
+    /// True when it is the live permission context, or when it still sits in
+    /// the explicit pending queue. The queue is authoritative here: walking
+    /// `chatItems` can resurrect old `.waitingForApproval` rows as ghost prompts
+    /// after their socket has already been resolved or cancelled.
+    private func isUnansweredGate(_ session: SessionState, toolUseId: String) -> Bool {
+        if case .waitingForApproval(let ctx) = session.phase, ctx.toolUseId == toolUseId {
+            return true
+        }
+        return session.pendingPermissions.contains { $0.toolUseId == toolUseId }
+    }
+
     private func processPermissionDenied(sessionId: String, toolUseId: String, reason: String?) async {
         guard var session = sessions[sessionId] else { return }
+        guard isUnansweredGate(session, toolUseId: toolUseId) else {
+            // GW-362: see processPermissionApproved.
+            Self.logger.debug("Dropping stale denial for \(toolUseId.prefix(12), privacy: .public) - gate already answered")
+            return
+        }
 
         // Update tool status in chat history first
         updateToolStatus(in: &session, toolId: toolUseId, status: .error)
@@ -529,31 +599,122 @@ actor SessionStore {
         sessions[sessionId] = session
     }
 
+    /// A verdict that could not be written to the held hook socket.
+    ///
+    /// GW-362 decided what this means for the UI, and it is deliberately *not*
+    /// a resolution. The agent never got the verdict, so the gate is still open
+    /// — it just cannot be answered from the notch any more: `sendPermissionResponse`
+    /// drops the pending entry and closes the fd even on the failure branch, so
+    /// there is no socket left to retry against. The decision has moved to the
+    /// terminal.
+    ///
+    /// So the phase is **held** at `waitingForApproval`, which keeps the State
+    /// B/C bar on screen to say "didn't reach the agent — answer in the
+    /// terminal" instead of vanishing as if the verdict had landed. It clears
+    /// itself the moment the agent moves on: `mayExitWaitingForApproval` already
+    /// releases on a matching `PostToolUse`, on `Stop`, and on `ended`, which is
+    /// spec §5's "resolved in-terminal → the notch affordance self-invalidates".
+    ///
+    /// This used to drop the phase to `.idle`, but nothing ever reached it — its
+    /// only trigger was `respondToPermissionBySession`, which had no callers.
     private func processSocketFailure(sessionId: String, toolUseId: String) async {
         guard var session = sessions[sessionId] else { return }
+        guard isUnansweredGate(session, toolUseId: toolUseId) else {
+            // GW-362 (review finding 1): the terminal already resolved this
+            // gate. Marking it .error now would show a finished plan as failed.
+            Self.logger.debug("Dropping stale socket failure for \(toolUseId.prefix(12), privacy: .public) - gate already answered")
+            return
+        }
 
         // Mark the failed tool's status as error
         updateToolStatus(in: &session, toolId: toolUseId, status: .error)
         removePendingPermission(toolUseId: toolUseId, from: &session)
 
-        // Check if there are other tools still waiting for approval
+        // A tool whose verdict never landed does not release the gate, so there
+        // is no "move to the next pending tool" here — the failed one is still
+        // the pending one. Hold the phase exactly as it is.
+        sessions[sessionId] = session
+
+        // GW-362 (review finding 2): holding the gate depends on a later hook
+        // event to release it, and the socket-failure case is exactly when that
+        // event may never come — the hook already exited, and the user may kill
+        // the agent, close the terminal, or simply never answer. Bound it.
+        if let pid = session.pid, !Self.processIsAlive(pid) {
+            Self.logger.info("Undelivered gate for a dead agent (pid \(pid)) - releasing immediately")
+            releaseUndeliveredGate(sessionId: sessionId, toolUseId: toolUseId)
+            return
+        }
+        scheduleUndeliveredGateSweep(sessionId: sessionId, toolUseId: toolUseId)
+    }
+
+    // MARK: - Undelivered gate cleanup (GW-362)
+
+    /// Is the agent process still there to answer in its terminal? A gate whose
+    /// agent is gone can never be resolved, so it must not keep glowing.
+    private nonisolated static func processIsAlive(_ pid: Int) -> Bool {
+        guard pid > 0 else { return false }
+        // ESRCH means gone; EPERM means alive but not ours to signal.
+        return kill(pid_t(pid), 0) == 0 || errno == EPERM
+    }
+
+    /// Backstop for an undelivered gate whose agent is still alive: the user may
+    /// yet answer in the terminal, so give them a window rather than yanking the
+    /// bar away — but don't hold it forever if they never do.
+    ///
+    /// Ten minutes, deliberately generous. What a held gate actually costs while
+    /// it waits is one row in the Agents tab and a *static* 0.32 edge-glow floor
+    /// (`ContentView.effectiveGlowOpacity`) — the pulse animation fires only when
+    /// a permission first arrives, so nothing re-nudges the user. A cheap standing
+    /// cue is worth more than a short deadline that clears a gate out from under
+    /// someone who stepped away mid-task. The dead-agent check below handles the
+    /// case that actually needs prompt cleanup.
+    private var undeliveredGateTTLSeconds: Double = 600
+
+    /// Test seam — 180s is unusable in a unit test.
+    func setUndeliveredGateTTLForTesting(_ seconds: Double) {
+        undeliveredGateTTLSeconds = seconds
+    }
+
+    private func scheduleUndeliveredGateSweep(sessionId: String, toolUseId: String) {
+        undeliveredGateSweeps[toolUseId]?.cancel()
+        let ttl = undeliveredGateTTLSeconds
+        undeliveredGateSweeps[toolUseId] = Task {
+            try? await Task.sleep(nanoseconds: UInt64(ttl * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            await self.sweepUndeliveredGate(sessionId: sessionId, toolUseId: toolUseId)
+        }
+    }
+
+    private func sweepUndeliveredGate(sessionId: String, toolUseId: String) {
+        undeliveredGateSweeps.removeValue(forKey: toolUseId)
+        guard let session = sessions[sessionId],
+              isUnansweredGate(session, toolUseId: toolUseId) else {
+            // Released normally by a hook event — nothing to do. This is the
+            // expected path when the user answers in the terminal.
+            return
+        }
+        Self.logger.info("Undelivered gate \(toolUseId.prefix(12), privacy: .public) unanswered after \(self.undeliveredGateTTLSeconds)s - releasing")
+        releaseUndeliveredGate(sessionId: sessionId, toolUseId: toolUseId)
+        publishState()
+    }
+
+    /// Drop a gate that can no longer be answered. The tool keeps its `.error`
+    /// status (the verdict genuinely never landed); only the phase is released,
+    /// so the session stops demanding attention it can't act on.
+    private func releaseUndeliveredGate(sessionId: String, toolUseId: String) {
+        guard var session = sessions[sessionId] else { return }
+        guard case .waitingForApproval(let ctx) = session.phase, ctx.toolUseId == toolUseId else {
+            return
+        }
         if let nextPending = session.pendingPermissions.first {
-            // Another tool is waiting - switch to that tool's context
+            // Another gate is still genuinely open — hand off rather than idle.
             let newPhase = SessionPhase.waitingForApproval(nextPending)
             if session.phase.canTransition(to: newPhase) {
                 session.phase = newPhase
-                Self.logger.debug("Switched to next pending tool after socket failure: \(nextPending.toolUseId.prefix(12), privacy: .public)")
             }
         } else {
-            // No more pending tools - clear permission state
-            if case .waitingForApproval(let ctx) = session.phase, ctx.toolUseId == toolUseId {
-                session.phase = .idle
-            } else if case .waitingForApproval = session.phase {
-                // The failed tool wasn't in phase context, but no others pending
-                session.phase = .idle
-            }
+            session.phase = .idle
         }
-
         sessions[sessionId] = session
     }
 
@@ -851,6 +1012,90 @@ actor SessionStore {
         }
     }
 
+    // MARK: - Cursor Hook-Sourced Chat (GW-311)
+
+    /// Builds Cursor chat items from the hook event stream. Cursor's transcript
+    /// is written lazily and often incompletely, so unlike Claude/Codex (which
+    /// mirror a JSONL file) each Cursor turn is reconstructed from the hooks:
+    /// the prompt, each tool call + its output, and the assistant's reply all
+    /// arrive as discrete events. No-op for every other agent.
+    ///
+    /// Runs before the gate's status update in `processHookEvent`, so a tool row
+    /// already exists when its PermissionRequest lands. Ids are stable
+    /// (tool_use_id for tools, a per-session sequence for prose), keeping the
+    /// append idempotent if an event is delivered twice.
+    private func applyCursorHookChat(event: HookEvent, session: inout SessionState) {
+        guard session.agent == "cursor" else { return }
+
+        switch event.event {
+        case "UserPromptSubmit":
+            appendCursorProse(role: .user, text: event.message, session: &session)
+
+        case "AgentMessage":
+            appendCursorProse(role: .assistant, text: event.message, session: &session)
+
+        case "PermissionRequest":
+            guard let toolId = event.toolUseId, let name = event.tool else { return }
+            upsertCursorTool(in: &session, id: toolId, name: name,
+                             input: event.toolInput, status: .waitingForApproval, result: nil)
+
+        case "PostToolUse":
+            guard let toolId = event.toolUseId else { return }
+            // tool_output rides in on `message` (forwarded by the hook script).
+            upsertCursorTool(in: &session, id: toolId, name: event.tool ?? "Tool",
+                             input: event.toolInput, status: .success, result: event.message)
+
+        default:
+            break
+        }
+    }
+
+    private enum CursorProseRole { case user, assistant }
+
+    private func appendCursorProse(role: CursorProseRole, text: String?, session: inout SessionState) {
+        guard let text = text?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else { return }
+        session.cursorHookSeq += 1
+        let id = "cursor-msg-\(session.sessionId)-\(session.cursorHookSeq)"
+        let type: ChatHistoryItemType = role == .user ? .user(text) : .assistant(text)
+        session.chatItems.append(ChatHistoryItem(id: id, type: type, timestamp: Date()))
+    }
+
+    /// Creates a tool row keyed by tool_use_id, or advances an existing one.
+    /// Never regresses a settled tool back to pending, and only fills a result
+    /// once — so a duplicate PostToolUse can't clobber the first output.
+    private func upsertCursorTool(in session: inout SessionState, id: String, name: String,
+                                  input rawInput: [String: AnyCodable]?, status: ToolStatus, result: String?) {
+        if let idx = session.chatItems.firstIndex(where: { $0.id == id }),
+           case .toolCall(var tool) = session.chatItems[idx].type {
+            if tool.status == .success || tool.status == .error || tool.status == .interrupted { return }
+            tool.status = status
+            if let result, !result.isEmpty, tool.result == nil { tool.result = result }
+            session.chatItems[idx] = ChatHistoryItem(
+                id: id, type: .toolCall(tool), timestamp: session.chatItems[idx].timestamp
+            )
+        } else {
+            let tool = ToolCallItem(
+                name: name, input: Self.stringInput(rawInput), status: status,
+                result: result, structuredResult: nil, subagentTools: []
+            )
+            session.chatItems.append(ChatHistoryItem(id: id, type: .toolCall(tool), timestamp: Date()))
+        }
+    }
+
+    /// Flattens a hook `tool_input` (untyped JSON) to the `[String: String]` the
+    /// chat models use. Cursor's keys (`path`, `command`) are already understood
+    /// by `ToolCallItem.inputPreview`, so no key remap is needed here.
+    private static func stringInput(_ raw: [String: AnyCodable]?) -> [String: String] {
+        guard let raw else { return [:] }
+        var out: [String: String] = [:]
+        for (key, value) in raw {
+            if let s = value.value as? String { out[key] = s }
+            else if let i = value.value as? Int { out[key] = String(i) }
+            else if let b = value.value as? Bool { out[key] = b ? "true" : "false" }
+        }
+        return out
+    }
+
     private func updateToolStatus(in session: inout SessionState, toolId: String, status: ToolStatus) {
         var found = false
         for i in 0..<session.chatItems.count {
@@ -970,6 +1215,11 @@ actor SessionStore {
         let info: ConversationInfo
         if agent == "codex" {
             info = await CodexTranscriptParser.shared.parse(sessionId: sessionId)
+        } else if agent == "cursor" {
+            // GW-311: Cursor has no cwd-derivable transcript and writes no
+            // summary/ai-title line, so the title comes from its first prompt.
+            guard let path = sessions[sessionId]?.transcriptPath, !path.isEmpty else { return }
+            info = await CursorTranscriptParser.shared.parse(sessionId: sessionId, transcriptPath: path)
         } else {
             info = await ConversationParser.shared.parse(sessionId: sessionId, cwd: cwd)
         }
@@ -993,9 +1243,19 @@ actor SessionStore {
     // MARK: - Session End Processing
 
     private func processSessionEnd(sessionId: String) async {
+        let agent = sessions[sessionId]?.agent
         sessions.removeValue(forKey: sessionId)
         cancelPendingSync(sessionId: sessionId)
+        releaseCursorParserState(sessionId: sessionId, agent: agent)
         dismissedSessionIds.insert(sessionId)
+    }
+
+    /// The Cursor parser caches every parsed message per session to serve
+    /// incremental reads; drop it when the session goes away so ended sessions
+    /// don't accumulate transcripts in memory.
+    private func releaseCursorParserState(sessionId: String, agent: String?) {
+        guard agent == "cursor" else { return }
+        Task { await CursorTranscriptParser.shared.resetState(for: sessionId) }
     }
 
     // MARK: - History Loading
@@ -1090,6 +1350,12 @@ actor SessionStore {
         cancelPendingSync(sessionId: sessionId)
 
         let agent = sessions[sessionId]?.agent
+
+        // GW-311: Cursor writes its transcript lazily and often incompletely, so
+        // its chat is built from the hook event stream (see applyCursorHookChat),
+        // not a file mirror. Nothing to sync from disk. CursorTranscriptParser is
+        // kept as a candidate for later history backfill.
+        if agent == "cursor" { return }
 
         // Schedule new debounced sync
         pendingSyncs[sessionId] = Task { [weak self, syncDebounceNs] in

@@ -224,6 +224,14 @@ class GhostwireViewModel: NSObject, ObservableObject {
 
         self.notchState = .open
         MusicManager.shared.forceUpdate()
+        // GW-261: top up any feed source whose cards went stale while the notch
+        // was shut (or the machine asleep), so an opened feed isn't showing a
+        // price from an hour ago. No-op when everything is already fresh.
+        FeedSourceCoordinator.shared.refreshStaleSources()
+        // GW-182 deliberately does NOT mark the feed as seen here: `open()`
+        // fires for every tab, so opening Agents or Shelf would clear feed
+        // novelty for cards the user never looked at. `FeedSurfaceView` owns
+        // that call, on its own appearance.
     }
 
     func close() {
@@ -236,6 +244,13 @@ class GhostwireViewModel: NSObject, ObservableObject {
         self.isBatteryPopoverActive = false
         self.coordinator.sneakPeek.show = false
         self.edgeAutoOpenActive = false
+
+        // GW-265: a closed notch must not retain key focus — the next reveal is
+        // passive until the user clicks in again.
+        GhostwireSkyLightWindow.allowsKeyFocus = false
+        // GW-264: any close clears a pending dwell so a stale timer can't re-close
+        // a freshly reopened notch.
+        NotchRevealController.shared.dismissed()
 
         // GW-203: the default-tab decision lives in one place on the
         // coordinator now (shelf-by-default / agents-first / GW-199 idle),

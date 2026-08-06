@@ -24,6 +24,7 @@ struct ContentView: View {
     @ObservedObject var volumeManager = VolumeManager.shared
     @ObservedObject private var sessionBridge = GhostwireSessionBridge.shared
     @ObservedObject private var sendToAgent = SendToAgentCoordinator.shared
+    @ObservedObject private var voice = VoiceCaptureViewModel.shared
     @State private var hoverTask: Task<Void, Never>?
     @State private var isHovering: Bool = false
     @State private var anyDropDebounceTask: Task<Void, Never>?
@@ -70,6 +71,8 @@ struct ContentView: View {
             && vm.notchState == .closed && Defaults[.showPowerStatusNotifications]
         {
             chinWidth = 640
+        } else if voice.stage == .recording && vm.notchState == .closed && !vm.hideOnClosed {
+            chinWidth += (2 * max(0, vm.effectiveClosedNotchHeight - 12) + 20)
         } else if (!coordinator.expandingView.show || coordinator.expandingView.type == .buddy)
             && vm.notchState == .closed && hasActiveClaudeSession && !vm.hideOnClosed
         {
@@ -121,8 +124,8 @@ struct ContentView: View {
                         color: ((vm.notchState == .open || isHovering) && Defaults[.enableShadow])
                             ? .black.opacity(0.7) : .clear, radius: Defaults[.cornerRadiusScaling] ? 6 : 4
                     )
-                    .shadow(color: sessionBridge.passiveAlertTint.opacity(passiveGlowOpacity), radius: 14)
-                    .shadow(color: sessionBridge.passiveAlertTint.opacity(passiveGlowOpacity * 0.6), radius: 24)
+                    .shadow(color: sessionBridge.passiveAlertTint.opacity(effectiveGlowOpacity), radius: 14)
+                    .shadow(color: sessionBridge.passiveAlertTint.opacity(effectiveGlowOpacity * 0.6), radius: 24)
                     .onChange(of: sessionBridge.passiveAlertPulse) { _, _ in
                         triggerPassiveGlow()
                     }
@@ -237,6 +240,9 @@ struct ContentView: View {
             if isTargeted {
                 if vm.notchState == .closed {
                     coordinator.currentView = .shelf
+                    // GW-224: dragging onto the Shelf is a user-driven surface
+                    // use → it becomes the "reopen here" memory.
+                    coordinator.lastSelectedTab = .shelf
                     doOpen()
                 }
                 return
@@ -304,6 +310,11 @@ struct ContentView: View {
                       } else if coordinator.sneakPeek.show && Defaults[.inlineHUD] && (coordinator.sneakPeek.type != .music) && (coordinator.sneakPeek.type != .battery) && vm.notchState == .closed {
                           InlineHUD(type: $coordinator.sneakPeek.type, value: $coordinator.sneakPeek.value, icon: $coordinator.sneakPeek.icon, hoverAnimation: $isHovering, gestureProgress: $gestureProgress)
                               .transition(.opacity)
+                      } else if voice.stage == .recording && vm.notchState == .closed && !vm.hideOnClosed {
+                          // GW-229: ambient recording indicator — the notch stays
+                          // closed while you talk; it only opens for review.
+                          RecordingLiveActivity()
+                              .frame(alignment: .center)
                       } else if (!coordinator.expandingView.show || coordinator.expandingView.type == .buddy) && vm.notchState == .closed && hasActiveClaudeSession && !vm.hideOnClosed {
                           BuddyLiveActivity()
                               .frame(alignment: .center)
@@ -371,6 +382,8 @@ struct ContentView: View {
                         NotchHomeView(albumArtNamespace: albumArtNamespace)
                     case .shelf:
                         ShelfView()
+                    case .feed:
+                        FeedSurfaceView()
                     }
                 }
                 // Fill the panel height (top-aligned) so a short tab — e.g. the
@@ -396,6 +409,16 @@ struct ContentView: View {
                             onDismiss: { sendToAgent.dismissPicker() }
                         )
                         .zIndex(3)
+                    }
+                }
+                // GW-229: error overlay only. Recording is non-modal — the
+                // header shows a stop control (GhostwireHeader) when open, and
+                // the ambient indicator (RecordingLiveActivity) when closed — so
+                // the notch stays usable while recording.
+                .overlay {
+                    if voice.errorMessage != nil || voice.preparing {
+                        VoiceCaptureView(vm: voice)
+                            .zIndex(4)
                     }
                 }
             }
@@ -552,6 +575,10 @@ struct ContentView: View {
 
     private func handleHover(_ hovering: Bool) {
         if coordinator.firstLaunch { return }
+        // GW-264 (WCAG 2.2.1): hovering/interacting pauses the auto-reveal dwell
+        // timer; mouse-out restarts it. Independent of whether this hover also
+        // opens/closes the notch below.
+        NotchRevealController.shared.hoverChanged(hovering)
         hoverTask?.cancel()
         
         if hovering {
@@ -692,6 +719,37 @@ struct GeneralDropTargetDelegate: DropDelegate {
 }
 
 extension ContentView {
+    // GW-229: ambient recording indicator — a red mic glyph and a live level
+    // meter flanking the closed notch, mirroring the music/buddy live-activity
+    // layout. Shown while voice capture is recording so the user gets feedback
+    // without the notch dropping open.
+    private func RecordingLiveActivity() -> some View {
+        let notchContentHeight = max(0, vm.effectiveClosedNotchHeight - (isHovering ? 0 : 12))
+        let sideWidth = max(0, vm.effectiveClosedNotchHeight - 12) + 10
+        let centerWidth = vm.closedNotchSize.width + (isHovering ? 8 : 0)
+        let glyph = max(8, vm.effectiveClosedNotchHeight - 16)
+
+        return HStack(spacing: 0) {
+            HStack {
+                Image(systemName: "mic.fill")
+                    .font(.system(size: glyph * 0.72, weight: .semibold))
+                    .foregroundStyle(Color.red)
+            }
+            .frame(width: sideWidth, height: notchContentHeight)
+
+            Rectangle()
+                .fill(.black)
+                .frame(width: centerWidth, height: notchContentHeight)
+
+            HStack {
+                NotchRecordingMeter(barColor: .red)
+                    .frame(height: glyph)
+            }
+            .frame(width: sideWidth, height: notchContentHeight)
+        }
+        .frame(height: vm.effectiveClosedNotchHeight, alignment: .center)
+    }
+
     private func BuddyLiveActivity() -> some View {
         let notchContentHeight = max(0, vm.effectiveClosedNotchHeight - (isHovering ? 0 : 12))
         let sideWidth = max(0, vm.effectiveClosedNotchHeight - 12) + 10
@@ -744,6 +802,16 @@ extension ContentView {
 
     /// Fires a ~1.5s edge-glow pulse around the notch when a new permission arrives.
     /// Purely visual — no focus change, no notch state change.
+    /// GW-138/GW-264: the edge-glow opacity actually drawn. The transient pulse
+    /// (`passiveGlowOpacity`, fires-and-decays on each new permission) is floored
+    /// by a PERSISTENT glow while an approval is still pending and the notch is
+    /// closed — this is what an actionable reveal "recedes to" when its dwell
+    /// expires, so a blocked agent stays visible until you act on it.
+    private var effectiveGlowOpacity: Double {
+        let persistentFloor = (sessionBridge.hasUnactedPendingApproval && vm.notchState == .closed) ? 0.32 : 0
+        return max(passiveGlowOpacity, persistentFloor)
+    }
+
     private func triggerPassiveGlow() {
         passiveGlowDecayTask?.cancel()
         withAnimation(.easeOut(duration: 0.25)) {
@@ -765,4 +833,28 @@ extension ContentView {
     return ContentView()
         .environmentObject(vm)
         .frame(width: vm.notchSize.width, height: vm.notchSize.height)
+}
+
+// GW-229: a small animated level meter for the ambient recording indicator.
+private struct NotchRecordingMeter: View {
+    var barColor: Color = .red
+    @State private var animating = false
+
+    var body: some View {
+        HStack(spacing: 2.5) {
+            ForEach(0..<3, id: \.self) { index in
+                Capsule()
+                    .fill(barColor)
+                    .frame(width: 2.5)
+                    .scaleEffect(x: 1, y: animating ? 1.0 : 0.35, anchor: .center)
+                    .animation(
+                        .easeInOut(duration: 0.5)
+                            .repeatForever(autoreverses: true)
+                            .delay(Double(index) * 0.15),
+                        value: animating
+                    )
+            }
+        }
+        .onAppear { animating = true }
+    }
 }

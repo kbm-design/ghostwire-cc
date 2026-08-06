@@ -75,7 +75,36 @@ struct SettingsModule: Identifiable {
         unavailableHint: "No camera detected on this Mac."
     )
 
-    static let all: [SettingsModule] = [media, calendar, huds, battery, shelf, mirror]
+    static let ambient = SettingsModule(
+        id: "Activity",
+        label: "Activity",
+        icon: "clock.arrow.circlepath",
+        enabledKey: .ambientCaptureEnabled,
+        disabledHint: "Quietly records which app is frontmost so Ghostwire can surface the right thing later. App names only — no window titles or content. Stays on this Mac."
+    )
+
+    static let feed = SettingsModule(
+        id: "Feed",
+        label: "Feed",
+        icon: "square.grid.2x2",
+        enabledKey: .feedSourcesEnabled,
+        disabledHint: "Shows live cards from built-in public sources — crypto prices and RSS/Atom feeds. Keyless: no account or token to set up."
+    )
+
+    static let all: [SettingsModule] = [media, calendar, huds, battery, shelf, mirror, ambient, feed]
+}
+
+extension View {
+    /// Left-align a settings Section footer / help text. macOS grouped `Form`s
+    /// position the footer BLOCK at the trailing edge (and some panes also set
+    /// `.multilineTextAlignment(.trailing)`), so help text reads ragged-left on
+    /// the right. This forces the block full-width and leading — the expected
+    /// reading alignment, consistent across every settings pane. (GW-223)
+    func leadingFooter() -> some View {
+        self
+            .multilineTextAlignment(.leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
 }
 
 /// Wraps a module's settings pane: shows the pane when the module is on,
@@ -105,6 +134,7 @@ struct ModuleGate<Content: View>: View {
                     Text(available ? module.disabledHint : (module.unavailableHint ?? module.disabledHint))
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        .leadingFooter()
                 }
             }
             .navigationTitle(module.label)

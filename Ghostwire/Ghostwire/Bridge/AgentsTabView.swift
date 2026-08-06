@@ -2,8 +2,15 @@ import SwiftUI
 
 struct AgentsTabView: View {
     @EnvironmentObject var vm: GhostwireViewModel
+    // GW-223: .window when reused in the detached window — no notch collapse, so
+    // no collapse-blur and no notch scroll-gesture suppression.
+    @Environment(\.ghostwireSurface) private var surface
     @ObservedObject private var bridge = GhostwireSessionBridge.shared
-    @ObservedObject private var panelVM = GhostwireSessionBridge.shared.panelViewModel
+    // GW-223: the chat-navigation state. Defaults to the shared notch panel VM,
+    // but the detached window injects its OWN instance so the two surfaces can
+    // browse different chats independently (and closing/switching one can't exit
+    // the other's chat).
+    @ObservedObject private var panelVM: AgentPanelViewModel
     @ObservedObject private var usageService = UsageService.shared
     @ObservedObject private var codexUsageService = CodexUsageService.shared
     @State private var suppressionToken = UUID()
@@ -15,6 +22,12 @@ struct AgentsTabView: View {
     @State private var showingAlertHistory = false
     /// GW-151: meter slot order - first agent to come alive keeps slot 1
     @State private var agentOrder: [String] = []
+
+    /// Defaults to the shared notch panel VM; the window passes its own so chat
+    /// navigation is per-surface (GW-223).
+    init(panelViewModel: AgentPanelViewModel = GhostwireSessionBridge.shared.panelViewModel) {
+        _panelVM = ObservedObject(wrappedValue: panelViewModel)
+    }
 
     private var isInChat: Bool {
         if case .chat = panelVM.contentType { return true }
@@ -30,6 +43,10 @@ struct AgentsTabView: View {
                     sessionMonitor: bridge.sessionMonitor,
                     viewModel: panelVM
                 )
+                // GW-286: tie the view's identity to the session so a chat→chat
+                // switch (e.g. Jump-to-Next while already in a chat) rebuilds it
+                // for the new session instead of SwiftUI reusing the stale one.
+                .id(session.sessionId)
                 .onHover { hovering in
                     updateSuppression(for: hovering)
                 }
@@ -59,7 +76,10 @@ struct AgentsTabView: View {
                 // `display` directly (same path for any agent / GW-200 Codex).
                 AgentUsageDetailView(
                     agent: agent,
-                    display: display
+                    display: display,
+                    // GW-314: the words behind the summary row's stale dimming
+                    staleDate: agent == "claude" && usageService.isStale
+                        ? usageService.lastSuccessfulFetch : nil
                 ) {
                     withAnimation(.easeInOut(duration: 0.2)) { usageDetailAgent = nil }
                 }
@@ -90,7 +110,7 @@ struct AgentsTabView: View {
         .padding(.top, 10)
         .padding(.leading, 5)
         .transition(.asymmetric(insertion: .opacity.combined(with: .move(edge: .top)), removal: .opacity))
-        .blur(radius: vm.notchState == .closed ? 30 : 0)
+        .blur(radius: surface == .notch && vm.notchState == .closed ? 30 : 0)
         .onHover { hovering in
             updateSuppression(for: hovering)
         }
@@ -111,7 +131,9 @@ struct AgentsTabView: View {
         case .quota:
             return true
         case .tokens(let tokens):
-            if sessions.contains(where: { ($0.agent ?? "claude") == "claude" }) { return true }
+            // GW-341: an unknown agent is unknown, not Claude. Defaulting nil to
+            // a vendor is how a non-Claude session ends up wearing Claude's identity.
+            if sessions.contains(where: { $0.agent == "claude" }) { return true }
             return tokens.hasRecentActivity
         }
     }
@@ -180,7 +202,7 @@ struct AgentsTabView: View {
                         UsageBar(
                             label: "Session",
                             percent: fh.utilization / 100,
-                            detail: "\(Int(fh.utilization))%",
+                            detail: UsageFormat.percent(fh.utilization),
                             color: thresholdColor(fh.utilization, base: tint)
                         )
                     }
@@ -191,13 +213,16 @@ struct AgentsTabView: View {
                         UsageBar(
                             label: "Weekly",
                             percent: sd.utilization / 100,
-                            detail: "\(Int(sd.utilization))%",
+                            detail: UsageFormat.percent(sd.utilization),
                             color: thresholdColor(sd.utilization, base: tint)
                         )
                     }
                     .help(Self.quotaHelp(own: sd, ownVerbose: false, sibling: nil))
                 }
             }
+            // GW-314: stale server data renders dimmed - failed polls used to
+            // coast on the last snapshot indistinguishably from live numbers
+            .opacity(staleOpacity(for: agent))
             .padding(.horizontal, 8)
         case .tokens(let tokens):
             tokenBar(agent: agent, tokens: tokens)
@@ -217,10 +242,12 @@ struct AgentsTabView: View {
                     UsageBar(
                         label: selection.label,
                         percent: selection.period.utilization / 100,
-                        detail: "\(Int(selection.period.utilization))%",
+                        detail: UsageFormat.percent(selection.period.utilization),
                         color: thresholdColor(selection.period.utilization, base: AgentIdentity.tint(for: agent))
                     )
                 }
+                // GW-314: same stale-dimming as the single-agent row
+                .opacity(staleOpacity(for: agent))
                 // Dual mode hides the other window's bar - the tooltip
                 // carries it as the sibling (e.g. "2h 45m · 41% Tue")
                 .help(Self.quotaHelp(
@@ -245,7 +272,7 @@ struct AgentsTabView: View {
             parts.append(ownVerbose ? UsageFormat.resetTime(resetsAt) : UsageFormat.resetTimeCompact(resetsAt))
         }
         if let sibling {
-            var part = "\(Int(sibling.utilization))%"
+            var part = UsageFormat.percent(sibling.utilization)
             if let resetsAt = sibling.resetsAt {
                 part += " \(UsageFormat.resetTimeCompact(resetsAt))"
             }
@@ -254,11 +281,19 @@ struct AgentsTabView: View {
         return parts.joined(separator: " · ")
     }
 
+    /// GW-314: Claude's quota meter dims while the server snapshot is stale
+    /// (glyph/tint-over-text rule - the glance signal; the detail view carries
+    /// the "updated Xm ago" words). Codex/token meters are locally derived,
+    /// staleness doesn't apply.
+    private func staleOpacity(for agent: String) -> Double {
+        agent == "claude" && usageService.isStale ? 0.45 : 1
+    }
+
     /// API auth: disabled-button treatment - the track carries the agent
     /// tint dimly (identity without implying a level); no fill until
     /// GW-144 ships user-set spend limits to fill against.
     /// Label system: one word naming the measure (Session/Weekly/Spend, same
-    /// register as the Buddi-inherited quota labels); the trailing-7d window
+    /// register as the inherited quota labels); the trailing-7d window
     /// lives in the tooltip + detail view, not the label.
     private func tokenBar(agent: String, tokens: AgentTokenDisplay) -> some View {
         let tint = AgentIdentity.tint(for: agent)
@@ -295,6 +330,8 @@ struct AgentsTabView: View {
     private var sessions: [SessionState] { bridge.sessionMonitor.instances }
 
     private func updateSuppression(for hovering: Bool) {
+        // No notch scroll to suppress when hosted in the window.
+        guard surface == .notch else { return }
         guard hovering != isSuppressing else { return }
         isSuppressing = hovering
         vm.setScrollGestureSuppression(hovering, token: suppressionToken)

@@ -17,6 +17,7 @@ import json
 import os
 import socket
 import sys
+import uuid
 
 GHOSTWIRE_SOCKET = os.environ.get("GHOSTWIRE_SOCKET", "/tmp/com.ghostwire.notch.sock")
 GHOSTWIRE_HOST = os.environ.get("GHOSTWIRE_HOST")
@@ -176,15 +177,242 @@ def fail_closed_message(session_id, tool_name, detail):
     )
 
 
+# ---------------------------------------------------------------------------
+# Third-party agent adapter (GW-175 + cluster)
+#
+# Claude and Codex speak Ghostwire's native hook vocabulary directly
+# (PreToolUse telemetry + a dedicated blocking PermissionRequest, decided via
+# {hookSpecificOutput:{decision:{behavior}}}). Every other agent we support
+# (Cursor, Copilot, Factory droid, Qoder, CodeBuddy) instead gates on a single
+# pre-tool event and honours a universal block signal: exit code 2.
+#
+# So for those agents this hook NORMALISES on the way in (their native gate
+# event -> internal "PermissionRequest" so the existing socket/approval path
+# fires unchanged) and DENORMALISES on the way out (deny -> exit 2 + stderr
+# reason; allow -> the agent's native allow decision; ask/no-response -> exit 0,
+# deferring to the agent's own permission UI). No Swift socket/approval changes.
+#
+# Field spelling per agent should be re-confirmed against current vendor docs;
+# see the plan / GW-175.
+# ---------------------------------------------------------------------------
+
+_THIRD_PARTY_AGENTS = {"cursor", "copilot", "factory", "qoder", "codebuddy"}
+
+# Native pre-tool events (lowercased) that should block and wait for the notch.
+_GATE_EVENTS = {
+    "cursor": {"pretooluse", "beforeshellexecution", "beforemcpexecution"},
+    "copilot": {"pretooluse"},
+    "factory": {"pretooluse"},
+    "qoder": {"pretooluse"},
+    "codebuddy": {"pretooluse"},
+}
+
+# Native telemetry events (lowercased) -> internal (event name, status).
+_TELEMETRY_EVENTS = {
+    "posttooluse": ("PostToolUse", "processing"),
+    "aftershellexecution": ("PostToolUse", "processing"),
+    "userpromptsubmit": ("UserPromptSubmit", "processing"),
+    "userpromptsubmitted": ("UserPromptSubmit", "processing"),
+    "beforesubmitprompt": ("UserPromptSubmit", "processing"),
+    "stop": ("Stop", "waiting_for_input"),
+    "sessionstart": ("SessionStart", "waiting_for_input"),
+    "sessionend": ("SessionEnd", "ended"),
+    # GW-311: Cursor's transcript is written lazily/incompletely, so the notch
+    # chat is sourced from the hook stream instead. afterAgentResponse carries
+    # the assistant's natural-language reply for that turn.
+    "afteragentresponse": ("AgentMessage", "processing"),
+}
+
+
+def _stringify(value):
+    """Flatten a hook field that may be a string or structured JSON to text."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    try:
+        return json.dumps(value)
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def _extract_tool(data):
+    """Pull (tool_name, tool_input) from a third-party gate payload.
+
+    Most agents mirror Claude's tool_name/tool_input. Cursor's
+    beforeShellExecution carries `command`/`cwd` instead, and
+    beforeMCPExecution carries `url`/`command`."""
+    name = data.get("tool_name")
+    tool_input = data.get("tool_input", {})
+    if not name:
+        # Check url before command: beforeMCPExecution carries BOTH, and
+        # classifying it as Shell would drop the URL from the approval UI
+        # (Codex P2, 2026-07-08).
+        if data.get("url"):
+            name = "MCP"
+            tool_input = {"url": data.get("url"), "command": data.get("command")}
+        elif data.get("command") is not None:
+            name = "Shell"
+            tool_input = {"command": data.get("command"), "cwd": data.get("cwd")}
+    return name, tool_input
+
+
+# GW-341: GHOSTWIRE_AGENT says which CONFIG FILE this hook lives in, not which
+# agent is running. cursor-agent also executes ~/.claude/settings.json hooks, so
+# a single Cursor turn fires BOTH configs: the Cursor copy reports source=cursor
+# and the Claude copy reports the same event again as source=claude. Whichever
+# landed last owned the session's identity — which is why every Cursor session in
+# the notch wore a Claude tag.
+#
+# The payload doesn't lie: Cursor stamps `cursor_version` on every event it
+# sends. Verified live 2026-07-29 against cursor-agent 2026.07.01 — present on
+# sessionStart/preToolUse/postToolUse/beforeShellExecution/beforeMCPExecution/
+# sessionEnd, and absent from every Claude Code payload.
+_AGENT_FINGERPRINTS = (
+    ("cursor", "cursor_version"),
+)
+
+# Where each agent's own hook lives, so we can tell "its hook already reported
+# this" from "we're the only hook that will".
+_AGENT_CONFIG_DIRS = {
+    "cursor": ".cursor",
+    "copilot": ".copilot",
+    "factory": ".factory",
+    "qoder": ".qoder",
+    "codebuddy": ".codebuddy",
+}
+
+
+def _detect_agent(data, declared):
+    """The agent that actually produced this payload, or `declared` if unsure."""
+    for agent, marker in _AGENT_FINGERPRINTS:
+        if marker in data:
+            return agent
+    return declared
+
+
+def _agent_has_own_hook(agent):
+    """Whether `agent`'s own ghostwire hook is installed. Uninstall removes the
+    script, so its presence tracks installation."""
+    config_dir = _AGENT_CONFIG_DIRS.get(agent)
+    if not config_dir:
+        return False
+    return os.path.isfile(
+        os.path.expanduser(os.path.join("~", config_dir, "hooks", "ghostwire-hook.py"))
+    )
+
+
+def _allow_output(source):
+    """Native allow decision so the agent doesn't re-prompt after a notch allow.
+    None -> just exit 0 (exit-code-only agents)."""
+    if source in ("factory", "qoder", "codebuddy"):
+        return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "allow"}}
+    if source == "copilot":
+        return {"permissionDecision": "allow"}
+    if source == "cursor":
+        return {"permission": "allow"}
+    return None
+
+
+def _emit_third_party_decision(source, decision, reason):
+    """Denormalise the notch decision into the agent's native contract."""
+    if decision == "deny":
+        if source == "cursor":
+            # Cursor's documented contract is a JSON permission response
+            # ({"permission": "deny"}); exit-2 semantics are undocumented
+            # for it, so speak the documented protocol.
+            print(json.dumps({
+                "permission": "deny",
+                "agent_message": reason or "Denied by user via Ghostwire",
+            }))
+            sys.exit(0)
+        # Universal block lever across the other third-party agents.
+        sys.stderr.write(reason or "Denied by user via Ghostwire")
+        sys.exit(2)
+    if decision == "allow":
+        out = _allow_output(source)
+        if out is not None:
+            print(json.dumps(out))
+        sys.exit(0)
+    # "ask" / unknown: defer to the agent's own permission UI.
+    sys.exit(0)
+
+
+def _handle_third_party(data, source, state):
+    """Route a third-party agent event through the normalise/denormalise path."""
+    raw = data.get("hook_event_name", "").lower()
+
+    if raw in _GATE_EVENTS.get(source, set()):
+        name, tool_input = _extract_tool(data)
+        state["event"] = "PermissionRequest"  # normalise to the internal gate
+        state["status"] = "waiting_for_approval"
+        state["tool"] = name
+        state["tool_input"] = tool_input
+        # HookSocketServer correlates a held PermissionRequest by tool_use_id;
+        # with none (e.g. Cursor's beforeShellExecution carries no id) it closes
+        # the request without waiting and we'd silently fail open. Synthesise a
+        # stable id so the direct-correlation path keeps the socket open. There
+        # is no preceding PreToolUse for these agents, so the cache never has it.
+        state["tool_use_id"] = data.get("tool_use_id") or f"ghostwire-{uuid.uuid4().hex}"
+
+        response = send_event(state)
+        if response:
+            _emit_third_party_decision(
+                source, response.get("decision", "ask"), response.get("reason", "")
+            )
+        # No response (app down / timeout) -> fail open, let the agent proceed.
+        sys.exit(0)
+
+    mapped = _TELEMETRY_EVENTS.get(raw)
+    if mapped:
+        state["event"], state["status"] = mapped
+        if raw == "beforesubmitprompt":
+            # GW-311: carry the prompt text so the notch mirrors the user's turn.
+            prompt = data.get("prompt")
+            if prompt:
+                state["message"] = _stringify(prompt)
+        elif raw in ("posttooluse", "aftershellexecution"):
+            name, tool_input = _extract_tool(data)
+            state["tool"] = name
+            state["tool_input"] = tool_input
+            # Correlate with the tool row created at gate time (GW-311).
+            tool_use_id = data.get("tool_use_id")
+            if tool_use_id:
+                state["tool_use_id"] = tool_use_id
+            # Cursor's transcript rarely carries results in real time, so the
+            # tool output only reliably arrives here — forward it for the chat.
+            output = data.get("tool_output")
+            if output is not None:
+                state["message"] = _stringify(output)
+        elif raw == "afteragentresponse":
+            # Field spelling varies by version; take the first populated one.
+            text = (data.get("response") or data.get("text")
+                    or data.get("message") or data.get("content"))
+            if text:
+                state["message"] = _stringify(text)
+    else:
+        state["status"] = "unknown"
+    send_event(state)
+
+
 def main():
     try:
         data = json.load(sys.stdin)
     except json.JSONDecodeError:
         sys.exit(1)
 
-    session_id = data.get("session_id", "unknown")
+    # Claude/Codex send session_id; Cursor sends conversation_id (its stable
+    # per-conversation id, verified against Cursor's hooks docs 2026-07).
+    session_id = data.get("session_id") or data.get("conversation_id") or "unknown"
     event = data.get("hook_event_name", "")
     cwd = data.get("cwd", "")
+    # GW-311: some payloads carry no cwd (Cursor's beforeSubmitPrompt/stop), which
+    # left sessions titled "/" — the lastPathComponent of an empty path. Every
+    # Cursor payload also carries workspace_roots; use the first as the fallback.
+    if not cwd:
+        roots = data.get("workspace_roots") or []
+        if isinstance(roots, list) and roots and isinstance(roots[0], str):
+            cwd = roots[0]
     # Authoritative transcript location. cwd can lag behind for worktree sessions
     # (Claude keys the projects dir by launch cwd), so forward the hook's own
     # transcript_path and let Swift prefer it over cwd-derivation (GW-205).
@@ -207,6 +435,18 @@ def main():
         "source": os.environ.get("GHOSTWIRE_AGENT", "claude"),
     }
 
+    # GW-341: trust the payload over the config file we happen to live in.
+    actual = _detect_agent(data, state["source"])
+    if actual != state["source"]:
+        if _agent_has_own_hook(actual):
+            # That agent's own hook is installed and reports this same event.
+            # Sending it twice re-stamps the session's identity and, for a gate,
+            # raises a second approval for one tool call. Stay quiet.
+            sys.exit(0)
+        # We're the only hook that will see this turn — report it, but under the
+        # agent that actually ran, never under the one whose config we're in.
+        state["source"] = actual
+
     # Forward the transcript path when the agent provides one (GW-205).
     if transcript_path:
         state["transcript_path"] = transcript_path
@@ -215,6 +455,13 @@ def main():
     if cmux_workspace and cmux_surface:
         state["cmux_workspace"] = cmux_workspace
         state["cmux_surface"] = cmux_surface
+
+    # Third-party agents (Cursor, Copilot, droid, Qoder, CodeBuddy) speak their
+    # own event/decision dialect — normalise in, denormalise out. Claude/Codex
+    # fall through to the native path below unchanged.
+    if state["source"] in _THIRD_PARTY_AGENTS:
+        _handle_third_party(data, state["source"], state)
+        return
 
     # Map events to status
     if event == "UserPromptSubmit":
@@ -254,7 +501,21 @@ def main():
             reason = response.get("reason", "")
 
             if decision == "allow":
-                emit_allow(response.get("updatedInput"))
+                # GW-322: ExitPlanMode is the one tool where a bare
+                # {"behavior": "allow"} is SILENTLY DISCARDED. Measured on live
+                # Claude Code 2.1.222: bare allow -> no PostToolUse, the terminal's
+                # own plan menu stays up, the verdict simply vanishes (reproduced
+                # twice). Echoing the tool_input back as `updatedInput` accepts it
+                # -> PostToolUse fires and permission_mode moves plan -> default.
+                #
+                # Scoped to ExitPlanMode on purpose: a bare allow was verified to
+                # work for Write, so State A's shipped approval path stays
+                # byte-identical rather than round-tripping every payload through
+                # this hook's JSON encoder for no reason.
+                updated_input = response.get("updatedInput")
+                if updated_input is None and data.get("tool_name") == "ExitPlanMode":
+                    updated_input = tool_input or {}
+                emit_allow(updated_input)
 
             elif decision == "deny":
                 emit_deny(reason or fail_closed_message(

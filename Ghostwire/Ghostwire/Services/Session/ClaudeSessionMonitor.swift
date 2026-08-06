@@ -70,25 +70,6 @@ class ClaudeSessionMonitor: ObservableObject {
                     }
                     HookSocketServer.shared.cancelPendingPermission(toolUseId: toolUseId)
                 }
-            },
-            onPermissionFailure: { sessionId, toolUseId in
-                // GW-207: a held permission socket that can no longer be written
-                // (hook process gone / its wait elapsed) is the provable
-                // "timed out" signal. Stamp the matching history alert. Pending
-                // permissions cleared by a plain Stop with no verdict carry no
-                // such signal — they stay unanswered (the absence state).
-                Task { @MainActor in
-                    AlertHistoryStore.shared.markPermissionOutcome(
-                        sessionId: sessionId,
-                        toolUseId: toolUseId,
-                        outcome: "timedOut"
-                    )
-                }
-                Task {
-                    await SessionStore.shared.process(
-                        .permissionSocketFailed(sessionId: sessionId, toolUseId: toolUseId)
-                    )
-                }
             }
         )
     }
@@ -99,11 +80,14 @@ class ClaudeSessionMonitor: ObservableObject {
 
     // MARK: - Permission Handling
 
-    func approvePermission(sessionId: String, toolUseId: String) {
+    func approvePermission(sessionId: String,
+                           toolUseId: String,
+                           delivered: (@Sendable (Bool) -> Void)? = nil) {
         Task {
             guard let session = await SessionStore.shared.session(for: sessionId),
                   session.pendingPermissions.contains(where: { $0.toolUseId == toolUseId })
                     || session.activePermission?.toolUseId == toolUseId else {
+                delivered?(false)
                 return
             }
 
@@ -121,19 +105,41 @@ class ClaudeSessionMonitor: ObservableObject {
                         outcome: wasDelivered ? "allowed" : "timedOut"
                     )
                 }
+                Task {
+                    await SessionStore.shared.process(
+                        wasDelivered
+                            ? .permissionApproved(sessionId: sessionId, toolUseId: toolUseId)
+                            : .permissionSocketFailed(sessionId: sessionId, toolUseId: toolUseId)
+                    )
+                }
+                delivered?(wasDelivered)
             }
-
-            await SessionStore.shared.process(
-                .permissionApproved(sessionId: sessionId, toolUseId: toolUseId)
-            )
         }
     }
 
-    func denyPermission(sessionId: String, toolUseId: String, reason: String?) {
+    /// Compatibility wrapper for non-row call sites; UI gate bars should pass
+    /// their visible toolUseId to avoid verdict drift across back-to-back gates.
+    func approvePermission(sessionId: String,
+                           delivered: (@Sendable (Bool) -> Void)? = nil) {
+        Task {
+            guard let session = await SessionStore.shared.session(for: sessionId),
+                  let permission = session.activePermission else {
+                delivered?(false)
+                return
+            }
+            approvePermission(sessionId: sessionId, toolUseId: permission.toolUseId, delivered: delivered)
+        }
+    }
+
+    func denyPermission(sessionId: String,
+                        toolUseId: String,
+                        reason: String?,
+                        delivered: (@Sendable (Bool) -> Void)? = nil) {
         Task {
             guard let session = await SessionStore.shared.session(for: sessionId),
                   session.pendingPermissions.contains(where: { $0.toolUseId == toolUseId })
                     || session.activePermission?.toolUseId == toolUseId else {
+                delivered?(false)
                 return
             }
 
@@ -151,10 +157,35 @@ class ClaudeSessionMonitor: ObservableObject {
                         outcome: wasDelivered ? "denied" : "timedOut"
                     )
                 }
+                Task {
+                    await SessionStore.shared.process(
+                        wasDelivered
+                            ? .permissionDenied(sessionId: sessionId,
+                                                toolUseId: toolUseId,
+                                                reason: reason)
+                            : .permissionSocketFailed(sessionId: sessionId, toolUseId: toolUseId)
+                    )
+                }
+                delivered?(wasDelivered)
             }
+        }
+    }
 
-            await SessionStore.shared.process(
-                .permissionDenied(sessionId: sessionId, toolUseId: toolUseId, reason: reason)
+    /// Compatibility wrapper for non-row call sites; UI gate bars should pass
+    /// their visible toolUseId to avoid verdict drift across back-to-back gates.
+    func denyPermission(sessionId: String, reason: String?,
+                        delivered: (@Sendable (Bool) -> Void)? = nil) {
+        Task {
+            guard let session = await SessionStore.shared.session(for: sessionId),
+                  let permission = session.activePermission else {
+                delivered?(false)
+                return
+            }
+            denyPermission(
+                sessionId: sessionId,
+                toolUseId: permission.toolUseId,
+                reason: reason,
+                delivered: delivered
             )
         }
     }

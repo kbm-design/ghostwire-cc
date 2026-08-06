@@ -29,6 +29,11 @@ struct SessionState: Equatable, Identifiable, Sendable {
     /// Which agent CLI produced this session ("claude" | "codex" | …), from the hook's source tag
     var agent: String?
 
+    /// Authoritative transcript location as reported by the hook (GW-205).
+    /// Claude's can be derived from cwd; Cursor's cannot — it lives under
+    /// ~/.cursor/projects/<workspace-slug>/agent-transcripts/… (GW-311).
+    var transcriptPath: String?
+
     /// True for sessions registered from a transcript scan (GW-194) that no
     /// hook event has confirmed yet. No pid/tty; pruned when the transcript
     /// falls out of the discovery snapshot; cleared by the first hook event.
@@ -68,6 +73,11 @@ struct SessionState: Equatable, Identifiable, Sendable {
     /// This removes pre-/clear items that no longer exist in the JSONL
     var needsClearReconciliation: Bool
 
+    /// GW-311: monotonic id source for Cursor chat items built from hook events
+    /// (user prompts + assistant replies, which carry no id of their own). Tool
+    /// rows key off tool_use_id instead, so this only covers prose.
+    var cursorHookSeq: Int
+
     // MARK: - Timestamps
 
     var lastActivity: Date
@@ -88,6 +98,7 @@ struct SessionState: Equatable, Identifiable, Sendable {
         isInTmux: Bool = false,
         isInCmux: Bool = false,
         agent: String? = nil,
+        transcriptPath: String? = nil,
         isProvisional: Bool = false,
         phase: SessionPhase = .idle,
         pendingPermissions: [PermissionContext] = [],
@@ -99,17 +110,24 @@ struct SessionState: Equatable, Identifiable, Sendable {
             lastToolName: nil, firstUserMessage: nil, lastUserMessageDate: nil
         ),
         needsClearReconciliation: Bool = false,
+        cursorHookSeq: Int = 0,
         lastActivity: Date = Date(),
         createdAt: Date = Date()
     ) {
         self.sessionId = sessionId
         self.cwd = cwd
-        self.projectName = projectName ?? URL(fileURLWithPath: cwd).lastPathComponent
+        // GW-311: an empty cwd yields "/" as the last path component, which read
+        // as a session literally titled "/". Fall back to a neutral label until
+        // a prompt or summary supplies a real title.
+        let derivedName = URL(fileURLWithPath: cwd).lastPathComponent
+        self.projectName = projectName
+            ?? (derivedName == "/" || derivedName.isEmpty ? "Session" : derivedName)
         self.pid = pid
         self.tty = tty
         self.isInTmux = isInTmux
         self.isInCmux = isInCmux
         self.agent = agent
+        self.transcriptPath = transcriptPath
         self.isProvisional = isProvisional
         self.phase = phase
         self.pendingPermissions = pendingPermissions
@@ -118,6 +136,7 @@ struct SessionState: Equatable, Identifiable, Sendable {
         self.subagentState = subagentState
         self.conversationInfo = conversationInfo
         self.needsClearReconciliation = needsClearReconciliation
+        self.cursorHookSeq = cursorHookSeq
         self.lastActivity = lastActivity
         self.createdAt = createdAt
     }
@@ -188,6 +207,29 @@ struct SessionState: Equatable, Identifiable, Sendable {
     /// GW-207: single-line command summary for the alert-history row.
     var pendingCommandSummary: String? {
         activePermission?.commandSummary
+    }
+
+    /// GW-321 (State B): the pending gate parsed as a Choice, when the tool the
+    /// agent is blocked on is `AskUserQuestion`. Nil for every other tool, and
+    /// nil if the payload doesn't parse cleanly — callers fall back to the
+    /// "answer in the terminal" bar rather than rendering a partial question.
+    var pendingChoice: AskUserQuestionRequest? {
+        guard let permission = activePermission,
+              permission.toolName == "AskUserQuestion",
+              let input = permission.toolInput else { return nil }
+        return AskUserQuestionRequest(toolInput: input)
+    }
+
+    /// GW-322 (State C): the pending gate parsed as a plan review, when the tool
+    /// the agent is blocked on is `ExitPlanMode`. Nil for every other tool, and
+    /// nil if the payload doesn't parse cleanly — callers fall back to the
+    /// verbatim approval bar rather than rendering a plan whose pre-authorized
+    /// commands we couldn't read.
+    var pendingPlanReview: ExitPlanModeRequest? {
+        guard let permission = activePermission,
+              permission.toolName == "ExitPlanMode",
+              let input = permission.toolInput else { return nil }
+        return ExitPlanModeRequest(toolInput: input)
     }
 
     /// GW-207: project dir last path component, for alert-history rows.

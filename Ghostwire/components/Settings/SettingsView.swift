@@ -112,8 +112,14 @@ struct SettingsView: View {
                     ModuleGate(.shelf) { Shelf() }
                 case "Mirror":
                     ModuleGate(.mirror) { MirrorSettings() }
+                case "Activity":
+                    ModuleGate(.ambient) { AmbientSettings() }
+                case "Feed":
+                    ModuleGate(.feed) { FeedSettings() }
                 case "Shortcuts":
                     Shortcuts()
+                case "MCP":
+                    MCPSettingsView()
                 case "Advanced":
                     Advanced()
                 case "About":
@@ -213,6 +219,7 @@ struct NotchTabManagementSection: View {
             Text("Reorder and hide tabs in the open notch. Agents stays visible — it's where approvals surface. Shelf follows its module toggle.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+                .leadingFooter()
         }
     }
 }
@@ -224,6 +231,7 @@ struct GeneralSettings: View {
     }
     @EnvironmentObject var vm: GhostwireViewModel
     @ObservedObject var coordinator = GhostwireViewCoordinator.shared
+    @ObservedObject private var voiceModels = VoiceModelStore.shared
 
     @Default(.mirrorShape) var mirrorShape
     @Default(.gestureSensitivity) var gestureSensitivity
@@ -236,6 +244,8 @@ struct GeneralSettings: View {
     @Default(.automaticallySwitchDisplay) var automaticallySwitchDisplay
     @Default(.enableGestures) var enableGestures
     @Default(.openNotchOnHover) var openNotchOnHover
+    @Default(.voiceCaptureEnabled) var voiceCaptureEnabled
+    @Default(.voiceModel) var voiceModel
     
 
     var body: some View {
@@ -353,6 +363,60 @@ struct GeneralSettings: View {
             NotchBehaviour()
 
             gestureControls()
+
+            Section {
+                Defaults.Toggle(key: .voiceCaptureEnabled) {
+                    Text("Voice capture")
+                }
+                // GW-270: the master switch gates the hold-to-talk event tap, and
+                // turning voice ON warms the selected model so the first capture
+                // isn't a cold load. prepare() downloads only if needed — toggling
+                // voice on is explicit intent, like the Download button.
+                .onChange(of: voiceCaptureEnabled) { _, isOn in
+                    HoldToTalkMonitor.shared.reconfigure()
+                    if isOn,
+                       voiceModel != DefaultTranscriberFactory.appleEngineKey,
+                       let model = VoiceModel(rawValue: voiceModel) {
+                        FluidAudioTranscriber.prepare(model)
+                    }
+                }
+                Defaults.Toggle(key: .voicePasteIntoFocusedField) {
+                    Text("Paste into the focused text field when possible")
+                }
+                .disabled(!voiceCaptureEnabled)
+                Picker("Speech engine", selection: Binding(
+                    get: { voiceModel },
+                    set: { newValue in
+                        Defaults[.voiceModel] = newValue
+                        // Pre-download/load the chosen on-device model so the
+                        // next recording isn't a cold start.
+                        if newValue != DefaultTranscriberFactory.appleEngineKey,
+                           let model = VoiceModel(rawValue: newValue) {
+                            FluidAudioTranscriber.prepare(model)
+                        }
+                    }
+                )) {
+                    ForEach(VoiceModel.allCases, id: \.self) { model in
+                        Text(model.displayName).tag(model.rawValue)
+                    }
+                    Text("Apple built-in (no download)").tag(DefaultTranscriberFactory.appleEngineKey)
+                }
+                .disabled(!voiceCaptureEnabled)
+                if voiceCaptureEnabled,
+                   voiceModel != DefaultTranscriberFactory.appleEngineKey,
+                   let model = VoiceModel(rawValue: voiceModel) {
+                    voiceModelStatus(model)
+                }
+            } header: {
+                Text("Voice")
+            } footer: {
+                Text(
+                    "Press the Voice Capture shortcut (⌃⇧Space by default) to record a thought — on-device. If you're in a text field it pastes there; otherwise it's copied and saved to the Shelf. With paste off, captures always go to the clipboard + Shelf. Change the shortcut in Settings ▸ Shortcuts."
+                )
+                .foregroundStyle(.secondary)
+                .font(.caption)
+                .leadingFooter()
+            }
         }
         .toolbar {
             Button("Quit app") {
@@ -401,9 +465,42 @@ struct GeneralSettings: View {
             Text(
                 "Two-finger swipe up on notch to close, two-finger swipe down on notch to open when **Open notch on hover** option is disabled"
             )
-            .multilineTextAlignment(.trailing)
             .foregroundStyle(.secondary)
             .font(.caption)
+            .leadingFooter()
+        }
+    }
+
+    @ViewBuilder
+    func voiceModelStatus(_ model: VoiceModel) -> some View {
+        switch voiceModels.state(model) {
+        case .ready:
+            Label("Model downloaded", systemImage: "checkmark.circle.fill")
+                .foregroundStyle(.green)
+                .font(.caption)
+        case .downloading:
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small)
+                Text("Downloading model… (\(model.approxDownload), one time)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        case .notDownloaded:
+            HStack {
+                Text("Model not downloaded (\(model.approxDownload))")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button("Download") { FluidAudioTranscriber.prepare(model) }
+            }
+        case .failed:
+            HStack {
+                Text("Download failed — check your connection")
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                Spacer()
+                Button("Retry") { FluidAudioTranscriber.prepare(model) }
+            }
         }
     }
 
@@ -636,12 +733,14 @@ struct Media: View {
                         .font(.caption)
                         .foregroundColor(.blue)  // Ensures it's visibly a link
                     }
+                    .leadingFooter()
                 } else {
                     Text(
                         "'Now Playing' was the only option on previous versions and works with all media apps."
                     )
                     .foregroundStyle(.secondary)
                     .font(.caption)
+                    .leadingFooter()
                 }
             }
             
@@ -964,9 +1063,9 @@ struct Shelf: View {
                 Text("Clipboard")
             } footer: {
                 Text("Stored locally on this Mac. Password-manager and transient copies are skipped. Open with the Clipboard row in the Shelf, or the shortcut below.")
-                    .multilineTextAlignment(.trailing)
                     .foregroundStyle(.secondary)
                     .font(.caption)
+                    .leadingFooter()
             }
 
             Section {
@@ -1025,6 +1124,7 @@ struct Shelf: View {
                 Text("Choose which service to use when sharing files from the shelf. Click the shelf button to select files, or drag files onto it to share immediately.")
                     .font(.caption)
                     .foregroundColor(.secondary)
+                    .leadingFooter()
             }
         }
         .accentColor(.effectiveAccent)
@@ -1094,6 +1194,7 @@ struct MirrorSettings: View {
                     Text("No camera detected on this Mac.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        .leadingFooter()
                 }
             }
         }
@@ -1187,7 +1288,8 @@ struct Advanced: View {
                                     AccentCircleButton(
                                         isSelected: selectedPresetColor == preset,
                                         color: preset.color,
-                                        isMulticolor: false
+                                        isMulticolor: false,
+                                        help: "\(preset.rawValue) accent"
                                     ) {
                                         selectedPresetColor = preset
                                         customAccentColor = preset.color
@@ -1244,9 +1346,9 @@ struct Advanced: View {
                 Text("Accent color")
             } footer: {
                 Text("Choose between your system accent color or customize it with your own selection.")
-                    .multilineTextAlignment(.trailing)
                     .foregroundStyle(.secondary)
                     .font(.caption)
+                    .leadingFooter()
             }
             .onAppear {
                 initializeAccentColorState()
@@ -1342,21 +1444,26 @@ struct AccentCircleButton: View {
     let color: Color
     var isSystemDefault: Bool = false
     var isMulticolor: Bool = false
+    var help: String? = nil
     let action: () -> Void
-    
+
+    private var tooltip: String? {
+        help ?? (isSystemDefault ? "Use your macOS system accent color" : nil)
+    }
+
     var body: some View {
-        Button(action: action) {
+        let button = Button(action: action) {
             ZStack {
                 // Color circle
                 Circle()
                     .fill(color)
                     .frame(width: 32, height: 32)
-                
+
                 // Subtle border
                 Circle()
                     .strokeBorder(Color.primary.opacity(0.15), lineWidth: 1)
                     .frame(width: 32, height: 32)
-                
+
                 // Apple-style highlight ring around the middle when selected
                 if isSelected {
                     Circle()
@@ -1369,11 +1476,20 @@ struct AccentCircleButton: View {
             }
         }
         .buttonStyle(.plain)
-        .help(isSystemDefault ? "Use your macOS system accent color" : "")
+
+        // Only attach a tooltip when one is provided — .help("") shows a
+        // blank tooltip bubble.
+        if let tooltip {
+            button.help(tooltip)
+        } else {
+            button
+        }
     }
 }
 
 struct Shortcuts: View {
+    @Default(.voiceHoldToTalkKey) private var voiceHoldToTalkKey
+
     var body: some View {
         Form {
             Section {
@@ -1384,15 +1500,74 @@ struct Shortcuts: View {
                 Text(
                     "Sneak Peek shows the media title and artist under the notch for a few seconds."
                 )
-                .multilineTextAlignment(.trailing)
                 .foregroundStyle(.secondary)
                 .font(.caption)
+                .leadingFooter()
             }
             Section {
                 KeyboardShortcuts.Recorder("Toggle Notch Open:", name: .toggleNotchOpen)
+            } header: {
+                Text("Notch")
+            }
+            Section {
+                // GW-286: open the notch directly on a tab. All unbound by
+                // default — the user assigns whichever they want.
+                KeyboardShortcuts.Recorder("Open on Agents:", name: .openNotchAgents)
+                KeyboardShortcuts.Recorder("Open on Shelf:", name: .openNotchShelf)
+                KeyboardShortcuts.Recorder("Open on Dashboard:", name: .openNotchDashboard)
+            } header: {
+                Text("Open Notch")
+            } footer: {
+                Text("Each opens the notch straight to that tab, unhiding it first if it was hidden.")
+                    .foregroundStyle(.secondary)
+                    .font(.caption)
+                    .leadingFooter()
+            }
+            Section {
+                // GW-286/GW-267: navigation only — cycles every session needing
+                // you (approvals + questions). Never approves or denies.
+                KeyboardShortcuts.Recorder("Jump to Next Pending:", name: .jumpToNextPendingApproval)
+                // GW-267: act on the approval you're looking at, from anywhere.
+                // Approve/Deny only fire when an approval's chat is open in front
+                // of you; otherwise they do nothing.
+                KeyboardShortcuts.Recorder("Approve:", name: .approveFocusedApproval)
+                KeyboardShortcuts.Recorder("Deny:", name: .denyFocusedApproval)
+                KeyboardShortcuts.Recorder("Open Terminal:", name: .openTerminalForFocusedSession)
+            } header: {
+                Text("Approvals")
+            } footer: {
+                Text("Jump cycles every session that needs you — approvals and questions — and drills into its chat. Approve / Deny act on the request whose chat is in front of you; if none is, the first press just reveals the next approval (so press twice from the list: once to open it, again to confirm). They never act on something you can't see, so a stray press is safe. Open Terminal focuses the focused session's terminal. None auto-answer on your behalf.")
+                    .foregroundStyle(.secondary)
+                    .font(.caption)
+                    .leadingFooter()
+            }
+            Section {
                 // GW-210: unbound by default — opens the notch on the Shelf tab
                 // and lands on clipboard history.
                 KeyboardShortcuts.Recorder("Open Clipboard History:", name: .openClipboardHistory)
+                // GW-229: ⌃⇧Space by default — record a thought and send it to a
+                // running agent without leaving the app you're in.
+                KeyboardShortcuts.Recorder("Voice Capture:", name: .toggleVoiceCapture)
+                // GW-270: hold-to-talk (push-to-talk) — independent of the toggle
+                // above. Selecting a key starts the event-tap monitor (prompts for
+                // Accessibility if needed); "Off" stops it.
+                Picker("Hold to Talk:", selection: $voiceHoldToTalkKey) {
+                    ForEach(HoldToTalkKey.allCases, id: \.self) { key in
+                        Text(key.displayName).tag(key.rawValue)
+                    }
+                }
+                .onChange(of: voiceHoldToTalkKey) { _, _ in
+                    HoldToTalkMonitor.shared.reconfigure(promptIfNeeded: true)
+                }
+            } header: {
+                Text("Capture")
+            } footer: {
+                Text(
+                    "Voice Capture is a toggle (press to start, press again to stop). Hold to Talk records only while the key is held, then routes on release. Right Option (the default) works well — a bare hold does nothing; it only arms briefly when you use ⌥ in a shortcut. Right Command arms on every ⌘ shortcut. Fn suppresses macOS's globe-key behavior while held and isn't on most external keyboards."
+                )
+                .foregroundStyle(.secondary)
+                .font(.caption)
+                .leadingFooter()
             }
         }
         .accentColor(.effectiveAccent)

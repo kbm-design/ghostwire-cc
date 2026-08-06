@@ -102,6 +102,7 @@
       }
     },
     " – %lld" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -220,6 +221,9 @@
 
     },
     "... and more (truncated)" : {
+
+    },
+    "…trimmed" : {
 
     },
     "'Now Playing' was the only option on previous versions and works with all media apps." : {
@@ -758,7 +762,33 @@
         }
       }
     },
+    "%@ %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ %2$@"
+          }
+        }
+      }
+    },
     "%@ needs your input" : {
+
+    },
+    "%@ stopped firing Ghostwire hooks" : {
+
+    },
+    "%@ stopped firing the Ghostwire hooks after they changed. Run %@ in %@ and trust them to restore approvals." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ stopped firing the Ghostwire hooks after they changed. Run %2$@ in %3$@ and trust them to restore approvals."
+          }
+        }
+      }
+    },
+    "%@ trusts the Ghostwire hooks." : {
 
     },
     "%@:" : {
@@ -964,8 +994,21 @@
         }
       }
     },
+    "%lld days" : {
+
+    },
     "%lld files with matches" : {
 
+    },
+    "%lld item%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$lld item%2$@"
+          }
+        }
+      }
     },
     "%lld new messages" : {
 
@@ -1385,6 +1428,9 @@
     "<✦~✦>" : {
 
     },
+    "1 day" : {
+
+    },
     "1 new message" : {
 
     },
@@ -1795,6 +1841,7 @@
 
     },
     "Add" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -1893,6 +1940,9 @@
           }
         }
       }
+    },
+    "Add environment variable" : {
+
     },
     "Add manually" : {
       "extractionState" : "stale",
@@ -1995,7 +2045,14 @@
         }
       }
     },
+    "Add manually…" : {
+
+    },
+    "Add MCP Server" : {
+
+    },
     "Add new visualizer" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -2095,7 +2152,11 @@
         }
       }
     },
+    "Add Server" : {
+
+    },
     "Additional features" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -2295,6 +2356,12 @@
         }
       }
     },
+    "Agents" : {
+
+    },
+    "Alert history" : {
+
+    },
     "All-day" : {
       "localizations" : {
         "ar" : {
@@ -2398,6 +2465,9 @@
     "Allow" : {
 
     },
+    "Allow (⌘⇧↩)" : {
+
+    },
     "Allow Access" : {
       "localizations" : {
         "ar" : {
@@ -2497,6 +2567,9 @@
           }
         }
       }
+    },
+    "Always" : {
+
     },
     "Always show full event titles" : {
       "localizations" : {
@@ -2698,7 +2771,11 @@
         }
       }
     },
+    "API · 7d" : {
+
+    },
     "App icon" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -2897,6 +2974,12 @@
           }
         }
       }
+    },
+    "Approval mode" : {
+
+    },
+    "Authorize" : {
+
     },
     "Auto-scroll to next event" : {
       "localizations" : {
@@ -3297,9 +3380,6 @@
           }
         }
       }
-    },
-    "Automation mode" : {
-
     },
     "Background task: %@" : {
 
@@ -3804,108 +3884,7 @@
         }
       }
     },
-    "Buddi" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "ar" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Buddi"
-          }
-        },
-        "cs" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Buddi"
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Buddi"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Buddi"
-          }
-        },
-        "en-GB" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Buddi"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Buddi"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Buddi"
-          }
-        },
-        "hu" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Buddi"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Buddi"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Buddi"
-          }
-        },
-        "pl" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Buddi"
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Buddi"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Buddi"
-          }
-        },
-        "tr" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Buddi"
-          }
-        },
-        "uk" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Buddi"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Buddi"
-          }
-        }
-      }
-    },
-    "Built by TalkValue" : {
+    "Built by Ghostwire Design" : {
 
     },
     "Calendar" : {
@@ -4308,7 +4287,17 @@
         }
       }
     },
+    "Caps the recorded permission and ready alerts. Whichever limit hits first wins." : {
+
+    },
+    "Capture clipboard history" : {
+
+    },
+    "Captured locally. Password-manager and transient copies are skipped." : {
+
+    },
     "Change media with horizontal gestures" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -5208,10 +5197,10 @@
         }
       }
     },
-    "Claude Code" : {
+    "Clear" : {
 
     },
-    "Claude Code Hooks" : {
+    "Clear filter (esc)" : {
 
     },
     "Clear slot" : {
@@ -5313,6 +5302,12 @@
           }
         }
       }
+    },
+    "Clipboard" : {
+
+    },
+    "Clipboard history is off" : {
+
     },
     "Close" : {
       "localizations" : {
@@ -5920,10 +5915,22 @@
     "Completed" : {
 
     },
+    "Connect" : {
+
+    },
+    "Connect MCP servers to glance at — kept out of your agents' context." : {
+
+    },
     "Connect to Claude Code" : {
 
     },
     "Connected" : {
+
+    },
+    "Connected — %lld tools" : {
+
+    },
+    "Connecting…" : {
 
     },
     "Continue" : {
@@ -6026,6 +6033,30 @@
         }
       }
     },
+    "Copied" : {
+
+    },
+    "Copies land here automatically. Pin anything to keep it." : {
+
+    },
+    "Copy" : {
+
+    },
+    "Copy /hooks" : {
+
+    },
+    "Copy %@" : {
+
+    },
+    "Copy command" : {
+
+    },
+    "Copy config" : {
+
+    },
+    "Copy fix" : {
+
+    },
     "Copy items on drag" : {
       "localizations" : {
         "ar" : {
@@ -6125,6 +6156,9 @@
           }
         }
       }
+    },
+    "Copy or drag to start" : {
+
     },
     "Corner radius scaling" : {
       "localizations" : {
@@ -6530,6 +6564,7 @@
       }
     },
     "Custom music live activity animation" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -6730,6 +6765,7 @@
       }
     },
     "Custom vizualizers (Lottie)" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -7129,6 +7165,9 @@
         }
       }
     },
+    "Delete" : {
+
+    },
     "Deny" : {
 
     },
@@ -7434,6 +7473,18 @@
           }
         }
       }
+    },
+    "Disconnected" : {
+
+    },
+    "Display" : {
+
+    },
+    "Done" : {
+
+    },
+    "Double-click a card" : {
+
     },
     "Download" : {
       "localizations" : {
@@ -7836,7 +7887,11 @@
         }
       }
     },
+    "Drag items in, or turn on clipboard capture in Settings." : {
+
+    },
     "Drop files here" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -8139,6 +8194,9 @@
     "Enable" : {
 
     },
+    "Enable %@" : {
+
+    },
     "Enable blur effect behind album art" : {
       "localizations" : {
         "ar" : {
@@ -8238,110 +8296,6 @@
           }
         }
       }
-    },
-    "Enable Buddi mirror" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "ar" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Enable Buddi mirror"
-          }
-        },
-        "cs" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Povolit Buddi zrcadlo"
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Spiegelfunktion aktivieren"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Enable Buddi mirror"
-          }
-        },
-        "en-GB" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Enable Buddi mirror"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Habilitar espejo Buddi"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Activer le miroir Buddi"
-          }
-        },
-        "hu" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Enable Buddi mirror"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Abilita specchio"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Buddi 거울 켜기"
-          }
-        },
-        "pl" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Włącz Buddi mirror"
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Enable Buddi mirror"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Enable Buddi mirror"
-          }
-        },
-        "tr" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Buddi aynasını aktifleştir"
-          }
-        },
-        "uk" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Enable Buddi mirror"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "启用虚拟镜像"
-          }
-        }
-      }
-    },
-    "Enable camera mirror" : {
-
     },
     "Enable colored spectrograms" : {
       "extractionState" : "stale",
@@ -8745,6 +8699,7 @@
       }
     },
     "Enable shelf" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -9144,6 +9099,12 @@
         }
       }
     },
+    "ENV_KEY" : {
+
+    },
+    "Error" : {
+
+    },
     "Exit: %lld" : {
 
     },
@@ -9246,6 +9207,9 @@
           }
         }
       }
+    },
+    "Exposed" : {
+
     },
     "Extend hover area" : {
       "localizations" : {
@@ -9448,6 +9412,9 @@
         }
       }
     },
+    "extra usage · monthly" : {
+
+    },
     "Files dropped on the shelf will be shared via this service" : {
       "localizations" : {
         "ar" : {
@@ -9648,7 +9615,16 @@
         }
       }
     },
-    "Forwards Claude Code events to Ghostwire via Unix socket." : {
+    "For up to" : {
+
+    },
+    "Full gate" : {
+
+    },
+    "Full raw" : {
+
+    },
+    "Full raw shows prompts and commands verbatim — monospaced, unrendered, never truncated." : {
 
     },
     "Full screen behavior" : {
@@ -11257,10 +11233,19 @@
         }
       }
     },
+    "Hook trust" : {
+
+    },
+    "Hooks forward agent events to Ghostwire via Unix socket." : {
+
+    },
     "Hooks installed" : {
 
     },
     "Hooks only send session events to Ghostwire. No data leaves your machine." : {
+
+    },
+    "Hosted URL or command (e.g. npx -y @example/server)" : {
 
     },
     "Hover delay" : {
@@ -11979,10 +11964,10 @@
         }
       }
     },
-    "Integration" : {
+    "Interrupted" : {
 
     },
-    "Interrupted" : {
+    "Keep alerts" : {
 
     },
     "Layout Preview" : {
@@ -12085,10 +12070,17 @@
         }
       }
     },
+    "Let agents pull from your Shelf" : {
+
+    },
+    "Lets Ghostwire send messages and focus cmux surfaces. cmux is optional." : {
+
+    },
     "Loading messages..." : {
 
     },
     "Lottie JSON URL" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -12388,7 +12380,11 @@
         }
       }
     },
+    "Made with ❤️ by Ghostwire Design" : {
+
+    },
     "Made with ❤️ by TalkValue" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -13688,7 +13684,7 @@
         }
       }
     },
-    "Message %@..." : {
+    "Message display" : {
 
     },
     "Mic %@" : {
@@ -13990,6 +13986,9 @@
           }
         }
       }
+    },
+    "Modules" : {
+
     },
     "More" : {
       "localizations" : {
@@ -14491,7 +14490,13 @@
         }
       }
     },
+    "Needs authorization" : {
+
+    },
     "Needs your input" : {
+
+    },
+    "Never" : {
 
     },
     "Never hide" : {
@@ -14594,7 +14599,11 @@
         }
       }
     },
+    "No camera detected on this Mac." : {
+
+    },
     "No custom animation available" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -14695,6 +14704,7 @@
       }
     },
     "No custom visualizer" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -15113,6 +15123,9 @@
     "Not available" : {
 
     },
+    "Not detected" : {
+
+    },
     "Not Now" : {
       "localizations" : {
         "ar" : {
@@ -15212,6 +15225,9 @@
           }
         }
       }
+    },
+    "Not trusted yet" : {
+
     },
     "Notch" : {
 
@@ -15616,22 +15632,22 @@
         }
       }
     },
+    "Notch tabs" : {
+
+    },
+    "Nothing copied yet" : {
+
+    },
     "Notification Sound" : {
 
     },
     "Notifications" : {
 
     },
-    "OAuth login required for plan usage display." : {
-
-    },
     "Off" : {
 
     },
     "On" : {
-
-    },
-    "Open %@ in tmux/cmux to enable messaging" : {
 
     },
     "Open Calendar Settings" : {
@@ -15733,6 +15749,12 @@
           }
         }
       }
+    },
+    "Open Clipboard History:" : {
+
+    },
+    "Open for approvals" : {
+
     },
     "Open Notch" : {
       "localizations" : {
@@ -16234,6 +16256,12 @@
         }
       }
     },
+    "or drag\nhere" : {
+
+    },
+    "Per-agent approval modes (auto-approve · plan · review · full gate) are planned." : {
+
+    },
     "Pick a Color" : {
       "localizations" : {
         "ar" : {
@@ -16334,7 +16362,10 @@
         }
       }
     },
-    "Plays when Claude finishes and is ready for input." : {
+    "Pin" : {
+
+    },
+    "Plays when an agent finishes and is ready for input." : {
 
     },
     "Plugged In" : {
@@ -17037,7 +17068,23 @@
         }
       }
     },
+    "Re-check cmux socket access" : {
+
+    },
+    "Re-trust required" : {
+
+    },
+    "Ready" : {
+
+    },
+    "Recent alerts" : {
+
+    },
+    "Register" : {
+
+    },
     "Release name" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -17437,6 +17484,12 @@
         }
       }
     },
+    "Remove all clipboard history" : {
+
+    },
+    "Remove all recorded alerts" : {
+
+    },
     "Remove from shelf after dragging" : {
       "localizations" : {
         "ar" : {
@@ -17536,6 +17589,12 @@
           }
         }
       }
+    },
+    "Remove Server" : {
+
+    },
+    "Reorder and hide tabs in the open notch. Agents stays visible — it's where approvals surface. Shelf follows its module toggle." : {
+
     },
     "Replace system HUD" : {
       "localizations" : {
@@ -18038,111 +18097,13 @@
         }
       }
     },
-    "Restart Buddi" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "ar" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Restart Buddi"
-          }
-        },
-        "cs" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Restart Buddi"
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Restart Buddi"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Restart Buddi"
-          }
-        },
-        "en-GB" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Restart Buddi"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Restart Buddi"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Restart Buddi"
-          }
-        },
-        "hu" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Restart Buddi"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Restart Buddi"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Restart Buddi"
-          }
-        },
-        "pl" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Restart Buddi"
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Restart Buddi"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Restart Buddi"
-          }
-        },
-        "tr" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Restart Buddi"
-          }
-        },
-        "uk" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Restart Buddi"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Restart Buddi"
-          }
-        }
-      }
-    },
     "Restart Ghostwire" : {
 
     },
     "Retry" : {
+
+    },
+    "Run" : {
 
     },
     "Run claude in terminal" : {
@@ -18249,7 +18210,16 @@
         }
       }
     },
+    "Running…" : {
+
+    },
+    "Saved" : {
+
+    },
     "Screen" : {
+
+    },
+    "Search" : {
 
     },
     "Select the music source you want to use. You can change this later in the app settings." : {
@@ -18353,6 +18323,7 @@
       }
     },
     "selected" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -18453,6 +18424,7 @@
       }
     },
     "Selected animation" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -18551,6 +18523,12 @@
           }
         }
       }
+    },
+    "Send to" : {
+
+    },
+    "Send to Agent" : {
+
     },
     "Settings" : {
       "localizations" : {
@@ -18752,6 +18730,9 @@
         }
       }
     },
+    "Shelf access" : {
+
+    },
     "Shortcuts" : {
       "localizations" : {
         "ar" : {
@@ -18853,6 +18834,7 @@
       }
     },
     "Show battery indicator" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -19053,6 +19035,7 @@
       }
     },
     "Show calendar" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -19351,6 +19334,9 @@
           }
         }
       }
+    },
+    "Show in Finder" : {
+
     },
     "Show lyrics below artist name" : {
       "localizations" : {
@@ -20455,6 +20441,12 @@
         }
       }
     },
+    "Smart" : {
+
+    },
+    "Smart opens the notch only when the asking session's pane isn't already in front of you. Always opens on every approval; Never only glows." : {
+
+    },
     "Sneak Peek shows the media title and artist under the notch for a few seconds." : {
       "localizations" : {
         "ar" : {
@@ -20658,7 +20650,7 @@
     "Socket" : {
 
     },
-    "Socket Control Mode" : {
+    "Socket access" : {
 
     },
     "Software updates" : {
@@ -20765,6 +20757,7 @@
 
     },
     "Speed" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -21074,6 +21067,9 @@
         }
       }
     },
+    "Stored locally on this Mac. Password-manager and transient copies are skipped. Open with the Clipboard row in the Shelf, or the shortcut below." : {
+
+    },
     "Subagent used %lld tools:" : {
 
     },
@@ -21381,6 +21377,25 @@
     "Terminal" : {
 
     },
+    "Test" : {
+
+    },
+    "The hooks changed, so %@ marked them untrusted. Run /hooks in %@ and trust them to restore approvals." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "The hooks changed, so %1$@ marked them untrusted. Run /hooks in %2$@ and trust them to restore approvals."
+          }
+        }
+      }
+    },
+    "The socket is shared by all agents. OAuth login required for plan usage display." : {
+
+    },
+    "This runs a program on your Mac. Only add commands you trust." : {
+
+    },
     "Time to Full Charge: %lld min" : {
       "localizations" : {
         "ar" : {
@@ -21580,9 +21595,6 @@
           }
         }
       }
-    },
-    "To send messages from Ghostwire to cmux sessions, set Socket Control Mode to \"Automation mode\" in cmux Settings > Automation." : {
-
     },
     "Toggle Notch Open:" : {
       "localizations" : {
@@ -21784,6 +21796,21 @@
         }
       }
     },
+    "Tools — allow individually (read-only glances)" : {
+
+    },
+    "trimmed" : {
+
+    },
+    "Trust & Connect" : {
+
+    },
+    "Trusted" : {
+
+    },
+    "Turn on" : {
+
+    },
     "Two-finger swipe up on notch to close, two-finger swipe down on notch to open when **Open notch on hover** option is disabled" : {
       "localizations" : {
         "ar" : {
@@ -21885,7 +21912,6 @@
       }
     },
     "Uninstall" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -22392,6 +22418,7 @@
 
     },
     "Use music visualizer spectrogram" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -22591,6 +22618,9 @@
         }
       }
     },
+    "user responded" : {
+
+    },
     "Using System Accent" : {
       "localizations" : {
         "ar" : {
@@ -22692,6 +22722,9 @@
       }
     },
     "v%@" : {
+
+    },
+    "value (stored in Keychain)" : {
 
     },
     "Version" : {

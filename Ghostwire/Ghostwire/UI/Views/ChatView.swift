@@ -68,23 +68,73 @@ struct ChatView: View {
                 chatHeader
 
                 // Messages
-                if isLoading {
-                    loadingState
-                } else if history.isEmpty {
-                    emptyState
-                } else {
-                    messageList
+                Group {
+                    if isLoading {
+                        loadingState
+                    } else if history.isEmpty {
+                        emptyState
+                    } else {
+                        messageList
+                    }
                 }
+                // GW-321: while a question is pending, IT is the content. The
+                // scrollback was holding ~40% of the panel to show almost
+                // nothing while the options below it got clipped, so cap it and
+                // let the Choice bar take the rest. Context still travels with
+                // the affordance (spec §4.2) — just a turn of it, not a screen.
+                .frame(maxHeight: hasPendingChoice ? Self.contextStripHeight : .infinity)
 
                 // Approval bar, interactive prompt, or Input bar
                 if let tool = approvalTool, let toolUseId = approvalToolId {
                     if tool == "AskUserQuestion" {
-                        // Interactive tools - show prompt to answer in terminal
-                        interactivePromptBar
+                        // GW-321 State B: render the actual question + options when
+                        // the payload parses. The "answer in terminal" bar is now
+                        // only the fallback for a payload we can't render faithfully.
+                        if let choice = session.pendingChoice {
+                            ChatChoiceBar(
+                                request: choice,
+                                agentName: agentName,
+                                agentTint: agentTint,
+                                onAnswer: { answers, completion in
+                                    answerChoice(choice, answers: answers, completion: completion)
+                                },
+                                onGoToTerminal: { focusTerminal() }
+                            )
+                            // Claim height ahead of the transcript: while a question
+                            // is pending it IS the content, and the scrollback above
+                            // was keeping space the options needed (GW-321 test drive).
+                            .layoutPriority(1)
                             .transition(.asymmetric(
                                 insertion: .opacity.combined(with: .move(edge: .bottom)),
                                 removal: .opacity
                             ))
+                        } else {
+                            interactivePromptBar
+                                .transition(.asymmetric(
+                                    insertion: .opacity.combined(with: .move(edge: .bottom)),
+                                    removal: .opacity
+                                ))
+                        }
+                    } else if tool == "ExitPlanMode", let plan = session.pendingPlanReview {
+                        // GW-322 State C: the plan rendered, with Accept/Revise.
+                        // Falls through to the verbatim approval bar when the
+                        // payload doesn't parse — that bar still shows the plan
+                        // and every allowedPrompt, just unrendered.
+                        ChatPlanReviewBar(
+                            request: plan,
+                            agentName: agentName,
+                            agentTint: agentTint,
+                            onAccept: { completion in acceptPlan(completion: completion) },
+                            onRevise: { feedback, completion in
+                                revisePlan(plan, feedback: feedback, completion: completion)
+                            },
+                            onGoToTerminal: { focusTerminal() }
+                        )
+                        .layoutPriority(1)
+                        .transition(.asymmetric(
+                            insertion: .opacity.combined(with: .move(edge: .bottom)),
+                            removal: .opacity
+                        ))
                     } else {
                         approvalBar(tool: tool, toolUseId: toolUseId)
                             .transition(.asymmetric(
@@ -176,12 +226,19 @@ struct ChatView: View {
             }
         }
         .onAppear {
+            // GW-320: restore an unsent reply from a previous visit — the view is
+            // torn down on every notch dismiss, the draft must not be.
+            inputText = viewModel.draft(for: sessionId)
+
             // Auto-focus input when chat opens and multiplexer messaging is available
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                 if canSendMessages {
                     isInputFocused = true
                 }
             }
+        }
+        .onChange(of: inputText) { _, text in
+            viewModel.setDraft(text, for: sessionId)
         }
     }
 
@@ -204,6 +261,20 @@ struct ChatView: View {
                     .foregroundColor(.white.opacity(isHeaderHovered ? 1.0 : 0.85))
                     .lineLimit(1)
 
+                // GW-311: with several agents running you cannot tell whose
+                // approval you are about to allow or deny from the title alone —
+                // and keyboard approval (GW-267) is gated to the focused chat.
+                // Same badge treatment as the agents list, so the drill-in reads
+                // as the same session you clicked.
+                if let agentLabel = session.agentLabel {
+                    Text(agentLabel)
+                        .font(.system(size: 9, weight: .bold))
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(agentTint.opacity(0.18), in: Capsule())
+                        .foregroundStyle(agentTint)
+                }
+
                 Spacer()
             }
             .padding(.horizontal, 12)
@@ -214,6 +285,7 @@ struct ChatView: View {
             )
         }
         .buttonStyle(.plain)
+        .help("Back to agents")
         .onHover { isHeaderHovered = $0 }
         .padding(.horizontal, 5)
         .padding(.vertical, 4)
@@ -270,6 +342,13 @@ struct ChatView: View {
             Text("No messages yet")
                 .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(.secondary)
+            // GW-311: an IDE session mirrors from the agent's own transcript, so
+            // the wait is on the agent, not on the user doing something here.
+            if isIDEAgent {
+                Text("Messages appear as \(agentName) works")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.tertiary)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -299,7 +378,7 @@ struct ChatView: View {
                             ))
                     }
 
-                    ForEach(history.reversed()) { item in
+                    ForEach(contextHistory.reversed()) { item in
                         MessageItemView(item: item, sessionId: sessionId)
                             .padding(.horizontal, 12)
                             .scaleEffect(x: 1, y: -1)
@@ -364,23 +443,112 @@ struct ChatView: View {
         targetResolution.isResolvable
     }
 
-    /// Placeholder names the gap when input is disabled
+    /// Whether a Choice or a plan review is on screen, so the transcript above
+    /// can yield its height to it instead of padding it out with empty space.
+    /// GW-322 folds State C in: a plan needs at least as much room as a question.
+    private var hasPendingChoice: Bool {
+        session.pendingChoice != nil || session.pendingPlanReview != nil
+    }
+
+    /// How much scrollback stays visible above a pending question — enough for
+    /// the preceding turn, not enough to crowd out the options.
+    private static let contextStripHeight: CGFloat = 76
+
+    /// Transcript for the context strip, minus the gate's own tool row.
+    ///
+    /// GW-322 test drive: with a plan pending, the strip rendered the very
+    /// `ExitPlanMode` call being reviewed — in `.fullRaw` mode that is a block of
+    /// orange monospace reading `plan: …` / `planFilePath: …`, i.e. the same
+    /// payload the bar below renders properly, plus a path the header already
+    /// shows. It consumed the whole 76pt strip with the least useful field and
+    /// crowded out what spec §4.2 actually asks for there: the agent's
+    /// immediately preceding turn.
+    ///
+    /// Only the trailing run is dropped, so an EARLIER `ExitPlanMode` in the same
+    /// session (a first plan the user asked to revise) stays visible — that one
+    /// is real history and reading it is how you check the revision landed.
+    private var contextHistory: [ChatHistoryItem] {
+        guard session.pendingPlanReview != nil else { return history }
+        var items = history
+        while case .toolCall(let tool)? = items.last?.type, tool.name == "ExitPlanMode" {
+            items.removeLast()
+        }
+        return items
+    }
+
+    /// GW-320 (State D): the agent has finished its turn and is explicitly
+    /// waiting on the human. Distinct from "the box happens to be enabled" —
+    /// this is the moment the notch exists to catch, so it reads differently.
+    ///
+    /// Reads `livePhase`, not the `session` snapshot: the snapshot only refreshes
+    /// when `instances` publishes a record that differs, so a session adopted
+    /// mid-flight can sit on a stale `.idle` and never light up.
+    private var isAwaitingReply: Bool {
+        livePhase == .waitingForInput
+    }
+
+    /// Live phase from the store rather than the `session` snapshot, which is
+    /// only refreshed when `instances` publishes. The race check has to read
+    /// what is true *now*, not what was true when the view last updated.
+    private var livePhase: SessionPhase {
+        sessionMonitor.instances.first { $0.sessionId == sessionId }?.phase ?? session.phase
+    }
+
+    /// User-facing reason a send must not go out, or nil when injection is safe.
+    /// The decision itself lives on `SessionPhase.blocksTextInjection` (GW-320,
+    /// spec §5) so it is unit-testable; this only names it for the human.
+    private func injectionBlocker(_ phase: SessionPhase) -> String? {
+        guard phase.blocksTextInjection else { return nil }
+        switch phase {
+        case .waitingForApproval(let ctx):
+            return "\(agentName) is waiting on approval for \(ctx.toolName) — answer that first"
+        case .ended:
+            return "This session has ended"
+        default:
+            return "\(agentName) can't take a message right now"
+        }
+    }
+
+    /// GW-311: agents that also run inside an IDE have no terminal pane to
+    /// address when launched that way, so telling the user to "open it in
+    /// tmux/cmux" is a dead end — the session is already running, just not
+    /// somewhere we can type into.
+    private var isIDEAgent: Bool {
+        guard let agent = session.agent?.lowercased() else { return false }
+        return GenericHookInstaller.all.contains { $0.agentId == agent }
+    }
+
+    /// Placeholder names the gap when input is disabled. For an unaddressable
+    /// IDE session it says what this surface *does* do rather than prescribing
+    /// something the user cannot act on.
     private var inputPlaceholder: String {
         switch targetResolution {
         case .cmux, .tmuxTty:
-            return "Message \(agentName)..."
+            // GW-320 State D: name the moment when the agent is actually waiting.
+            return isAwaitingReply ? "Reply to \(agentName)..." : "Message \(agentName)..."
         case .unresolvable(.cmuxRefsMissing):
-            return "Waiting for \(agentName)'s pane identity (hooks)..."
+            return isIDEAgent
+                ? "Following along — reply in \(agentName)"
+                : "Waiting for \(agentName)'s pane identity (hooks)..."
         case .unresolvable(.ttyMissing):
-            return "No tty recorded for this session"
+            return isIDEAgent
+                ? "Following along — reply in \(agentName)"
+                : "No tty recorded for this session"
         case .unresolvable(.notInMultiplexer):
-            return "Open \(agentName) in tmux/cmux to enable messaging"
+            return isIDEAgent
+                ? "Following along — reply in \(agentName)"
+                : "Open \(agentName) in tmux/cmux to enable messaging"
         }
     }
 
     /// Display name for this session's agent ("Claude" / "Codex"); neutral fallback if untagged
     private var agentName: String {
         session.agentLabel ?? "Agent"
+    }
+
+    /// Per-agent tint — single source via AgentIdentity (GW-138).
+    private var agentTint: Color {
+        AgentIdentity.tint(for: session.agent)
     }
 
     private var inputBar: some View {
@@ -418,14 +586,21 @@ struct ChatView: View {
     }
 
     private var inputRow: some View {
-        HStack(spacing: 10) {
+        // Bottom-aligned so the send button stays level with the last line as the
+        // field grows, rather than drifting to the middle of a tall box.
+        HStack(alignment: .bottom, spacing: 10) {
             // GW-163 note: a paperclip/NSOpenPanel attach was tried and removed -
             // the notch's window level sits above every system panel, so the
             // picker rendered underneath it (test-drive finding). File attach
             // flows are Finder-copy -> clipboard -> send, or drag -> Shelf ->
             // Send to Agent; both land @path without fighting the windowing.
-            TextField(inputPlaceholder, text: $inputText)
+            // GW-320: grows downward as you type instead of scrolling the text
+            // sideways out of view. A reply you can't read back is a reply you
+            // can't check before sending. Capped so the composer can never crowd
+            // out the transcript above it; past the cap it scrolls internally.
+            TextField(inputPlaceholder, text: $inputText, axis: .vertical)
                 .textFieldStyle(.plain)
+                .lineLimit(1...6)
                 .font(.system(size: 13))
                 .foregroundColor(canSendMessages ? .white : .white.opacity(0.4))
                 .focused($isInputFocused)
@@ -437,9 +612,18 @@ struct ChatView: View {
                         .fill(Color.white.opacity(canSendMessages ? 0.08 : 0.04))
                         .overlay(
                             RoundedRectangle(cornerRadius: 20)
-                                .strokeBorder(Color.white.opacity(0.1), lineWidth: 1)
+                                // GW-320 State D: agent-tinted border marks the field
+                                // as the live reply target. Passive (spec §4.5) — it
+                                // never steals focus or expands the notch.
+                                .strokeBorder(
+                                    isAwaitingReply && canSendMessages
+                                        ? agentTint.opacity(0.55)
+                                        : Color.white.opacity(0.1),
+                                    lineWidth: 1
+                                )
                         )
                 )
+                .animation(.easeOut(duration: 0.2), value: isAwaitingReply)
                 .onSubmit {
                     sendMessage()
                 }
@@ -453,6 +637,7 @@ struct ChatView: View {
             }
             .buttonStyle(.plain)
             .disabled(!canSendMessages || inputText.isEmpty)
+            .help("Send message")
         }
     }
 
@@ -515,9 +700,84 @@ struct ChatView: View {
         sessionMonitor.denyPermission(sessionId: sessionId, toolUseId: toolUseId, reason: nil)
     }
 
+    /// GW-321 State B: deliver a Choice answer over the socket already held open
+    /// for this gate — no keystroke injection, so no pane is required and there is
+    /// no race with the terminal for the delivery itself.
+    ///
+    /// The transport is the deny channel because that is the only payload a hook
+    /// can express: there is no hook field that supplies a real tool result
+    /// (verified in GW-318 against the hooks reference). The hook turns `reason`
+    /// into `decision.message`, and the model reads it as the answer.
+    private func answerChoice(_ request: AskUserQuestionRequest, answers: [String: String],
+                              completion: @escaping (Bool) -> Void) {
+        guard let toolUseId = session.pendingToolId else {
+            completion(false)
+            return
+        }
+        sessionMonitor.denyPermission(
+            sessionId: sessionId,
+            toolUseId: toolUseId,
+            reason: request.replyMessage(answers: answers),
+            delivered: { wasDelivered in
+                Task { @MainActor in completion(wasDelivered) }
+            }
+        )
+    }
+
+    /// GW-322 State C — Accept. Approves the `ExitPlanMode` tool over the same
+    /// held socket State A uses; `ghostwire-hook.py` supplies the `updatedInput`
+    /// the allow decision needs (see the note there — without it Claude Code
+    /// silently discards an `ExitPlanMode` allow and leaves its own plan menu up).
+    ///
+    /// Accepting this way lands the session in `permission_mode: default`, i.e.
+    /// the terminal menu's "Yes, manually approve edits" — never its "auto mode"
+    /// row. Measured in GW-322; worth keeping, because the notch must not be a
+    /// quieter way to hand an agent broader permissions than the terminal would.
+    private func acceptPlan(completion: @escaping (Bool) -> Void) {
+        guard let toolUseId = session.pendingToolId else {
+            completion(false)
+            return
+        }
+        sessionMonitor.approvePermission(
+            sessionId: sessionId,
+            toolUseId: toolUseId,
+            delivered: { wasDelivered in
+                Task { @MainActor in completion(wasDelivered) }
+            }
+        )
+    }
+
+    /// GW-322 State C — Revise. The feedback goes back as the deny message on the
+    /// held socket, which is the whole delivery: verified in GW-322 that this
+    /// keeps `permission_mode: plan` and the model revises and re-presents via a
+    /// second `ExitPlanMode`. No keystroke injection, so no pane is required and
+    /// this works for sessions State D can't reach.
+    private func revisePlan(_ request: ExitPlanModeRequest, feedback: String,
+                            completion: @escaping (Bool) -> Void) {
+        guard let toolUseId = session.pendingToolId else {
+            completion(false)
+            return
+        }
+        sessionMonitor.denyPermission(
+            sessionId: sessionId,
+            toolUseId: toolUseId,
+            reason: request.reviseMessage(feedback: feedback),
+            delivered: { wasDelivered in
+                Task { @MainActor in completion(wasDelivered) }
+            }
+        )
+    }
+
     private func sendMessage() {
         let text = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
+
+        // Check before clearing, so a send that can't go out doesn't cost the
+        // user their draft. The authoritative check is in `sendToSession`.
+        if let blocker = injectionBlocker(livePhase) {
+            sendFailureHint = blocker
+            return
+        }
 
         inputText = ""
 
@@ -543,6 +803,21 @@ struct ChatView: View {
         }
 
         logger.debug("sendToSession: found target \(target.targetString, privacy: .public)")
+
+        // GW-320 (spec §5): re-verify immediately before injecting. The tmux
+        // target lookup above is async, and that gap is exactly where the agent
+        // can hit a gate — never inject into a screen that changed underneath us.
+        if let blocker = injectionBlocker(livePhase) {
+            logger.debug("sendToSession: aborted, phase is now \(String(describing: self.livePhase), privacy: .public)")
+            sendFailureHint = blocker
+            // Hand the draft back rather than swallowing it, unless the user has
+            // already started typing something else.
+            if inputText.isEmpty {
+                inputText = text
+            }
+            return
+        }
+
         let result = await TmuxController.shared.sendMessage(text, to: target)
         logger.debug("sendToSession: sendMessage result=\(result)")
 
@@ -1150,6 +1425,7 @@ struct ChatInteractivePromptBar: View {
                 .clipShape(Capsule())
             }
             .buttonStyle(.plain)
+            .help("Answer in the terminal")
             .opacity(showButton ? 1 : 0)
             .scaleEffect(showButton ? 1 : 0.8)
         }
@@ -1241,6 +1517,7 @@ struct ChatApprovalBar: View {
                     .clipShape(Capsule())
             }
             .buttonStyle(.plain)
+            .help("Deny this request")
             .opacity(showDenyButton ? 1 : 0)
             .scaleEffect(showDenyButton ? 1 : 0.8)
 

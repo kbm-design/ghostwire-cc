@@ -74,11 +74,19 @@ final class SessionFocusController {
         case .tmuxBaseline(let tty):
             guard let target = await TmuxTargetFinder.shared.findTarget(forTty: tty) else { return false }
             let switched = await TmuxController.shared.switchToPane(target: target)
-            activateTerminalApp(forSessionPid: session.pid)
+            if let pid = session.pid {
+                _ = await TerminalActivator.activateAndVerify(forSessionPid: pid)
+            }
             return switched
 
         case .none:
-            return false
+            // GW-266: a plain terminal (no mux) has no pane to switch, but we can
+            // still bring its owning terminal app fully frontmost. The old code
+            // returned false here and focused NOTHING — so "Go to terminal" was a
+            // no-op on standard setups. Refuse only if there's no resolvable
+            // terminal ancestor.
+            guard let pid = session.pid else { return false }
+            return await TerminalActivator.activateAndVerify(forSessionPid: pid) != nil
         }
     }
 
@@ -88,17 +96,13 @@ final class SessionFocusController {
         if let app = NSRunningApplication.runningApplications(
             withBundleIdentifier: "com.cmuxterm.app"
         ).first {
-            app.activate()
+            // GW-266: raise all of cmux's windows over the current frontmost app.
+            TerminalActivator.activate(app)
         }
     }
 
     private func activateTerminalApp(forSessionPid pid: Int?) {
         guard let pid else { return }
-        let tree = ProcessTreeBuilder.shared.buildTree()
-        guard let terminalPid = ProcessTreeBuilder.shared.findTerminalPid(forProcess: pid, tree: tree),
-              let app = NSRunningApplication(processIdentifier: pid_t(terminalPid)) else {
-            return
-        }
-        app.activate()
+        Task { _ = await TerminalActivator.activateAndVerify(forSessionPid: pid) }
     }
 }

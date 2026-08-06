@@ -1,0 +1,76 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#171A21"/>
+      <stop offset="1" stop-color="#0C0E12"/>
+    </linearGradient>
+    <linearGradient id="ghostFill" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FF9E6D"/>
+      <stop offset="0.55" stop-color="#E4795A"/>
+      <stop offset="1" stop-color="#C85C7E"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.45" r="0.55">
+      <stop offset="0" stop-color="#E4795A" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#E4795A" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="soft" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="18"/>
+    </filter>
+    <clipPath id="tileClip"><rect x="64" y="64" width="896" height="896" rx="200"/></clipPath>
+  </defs>
+
+  <!-- tile -->
+  <rect x="64" y="64" width="896" height="896" rx="200" fill="url(#tile)"/>
+
+  <g clip-path="url(#tileClip)">
+    <!-- circuit board traces -->
+    <g stroke="#2FE0A8" stroke-width="7" fill="none" opacity="0.34" stroke-linecap="round">
+      <path d="M120 300 H300 V220"/>
+      <path d="M120 470 H240 V560 H360"/>
+      <path d="M904 360 H720 V250"/>
+      <path d="M904 540 H780 V640 H660"/>
+      <path d="M180 760 H360 V700"/>
+      <path d="M844 760 H660 V710"/>
+      <path d="M512 900 V820"/>
+      <path d="M360 860 H300 V800"/>
+      <path d="M664 860 H724 V800"/>
+    </g>
+    <g fill="#2FE0A8" opacity="0.6">
+      <circle cx="300" cy="220" r="12"/>
+      <circle cx="360" cy="560" r="12"/>
+      <circle cx="720" cy="250" r="12"/>
+      <circle cx="660" cy="640" r="12"/>
+      <circle cx="360" cy="700" r="12"/>
+      <circle cx="660" cy="710" r="12"/>
+      <circle cx="300" cy="800" r="12"/>
+      <circle cx="724" cy="800" r="12"/>
+    </g>
+    <g fill="none" stroke="#2FE0A8" stroke-width="6" opacity="0.4">
+      <rect x="120" y="286" width="26" height="26" rx="4"/>
+      <rect x="878" y="346" width="26" height="26" rx="4"/>
+      <rect x="878" y="526" width="26" height="26" rx="4"/>
+      <rect x="120" y="456" width="26" height="26" rx="4"/>
+    </g>
+
+    <!-- glow behind ghost -->
+    <ellipse cx="512" cy="470" rx="300" ry="300" fill="url(#glow)"/>
+
+    <!-- ghost -->
+    <g filter="url(#soft)" opacity="0.5">
+      <path d="M312 620 L312 380 A200 200 0 0 1 712 380 L712 620 L662 700 L612 620 L562 700 L512 620 L462 700 L412 620 L362 700 Z" fill="#E4795A"/>
+    </g>
+    <path d="M312 620 L312 380 A200 200 0 0 1 712 380 L712 620 L662 700 L612 620 L562 700 L512 620 L462 700 L412 620 L362 700 Z" fill="url(#ghostFill)"/>
+
+    <!-- eyes looking right -->
+    <ellipse cx="452" cy="368" rx="50" ry="64" fill="#FDF6F0"/>
+    <ellipse cx="576" cy="368" rx="50" ry="64" fill="#FDF6F0"/>
+    <circle cx="474" cy="384" r="24" fill="#14161C"/>
+    <circle cx="598" cy="384" r="24" fill="#14161C"/>
+    <!-- ghost as a chip: little pin nodes on the feet -->
+    <g fill="#2FE0A8">
+      <circle cx="337" cy="705" r="9"/>
+      <circle cx="512" cy="705" r="9"/>
+      <circle cx="687" cy="705" r="9"/>
+    </g>
+  </g>
+</svg>

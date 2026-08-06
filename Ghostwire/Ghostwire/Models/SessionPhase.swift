@@ -162,6 +162,10 @@ enum SessionPhase: Sendable {
         // WaitingForInput transitions
         case (.waitingForInput, .processing):
             return true
+        case (.waitingForInput, .waitingForApproval):
+            return true  // Gate with no observed turn-start: a held PermissionRequest
+                         // means the agent is provably blocked. Cursor GUI sessions hit
+                         // this (stop -> next turn's gate, no prompt-submit between) — GW-175
         case (.waitingForInput, .idle):
             return true  // Can become idle
         case (.waitingForInput, .compacting):
@@ -230,6 +234,26 @@ enum SessionPhase: Sendable {
             return ctx.toolName
         }
         return nil
+    }
+
+    /// GW-320 race safety (Interaction Model spec §5): whether free text must NOT
+    /// be injected into this session right now.
+    ///
+    /// The notch composer and the terminal are two live channels into one agent.
+    /// If the session reached a gate while a reply was being typed, injecting the
+    /// text would type into a permission menu — answering a question the user
+    /// never saw. Re-check this immediately before injecting, not just when the
+    /// composer was rendered.
+    ///
+    /// `.processing` is deliberately safe: queueing a message mid-turn is normal,
+    /// supported agent behaviour, not a race.
+    nonisolated var blocksTextInjection: Bool {
+        switch self {
+        case .waitingForApproval, .ended:
+            return true
+        case .idle, .processing, .waitingForInput, .compacting:
+            return false
+        }
     }
 }
 

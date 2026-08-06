@@ -56,6 +56,7 @@
 		1194E8872EA6DDA7009C82D6 /* GhostwireSkyLightWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1194E8862EA6DDA7009C82D6 /* GhostwireSkyLightWindow.swift */; };
 		1194E9402EACC652009C82D6 /* Color+AccentColor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1194E93F2EACC652009C82D6 /* Color+AccentColor.swift */; };
 		11A45C792E34E63100CEB175 /* MediaChecker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11A45C782E34E63100CEB175 /* MediaChecker.swift */; };
+		11AA00032F00000000000003 /* MCP in Frameworks */ = {isa = PBXBuildFile; productRef = 11AA00022F00000000000002 /* MCP */; };
 		11C5E3132DFE85970065821E /* SettingsWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11C5E3112DFE85970065821E /* SettingsWindowController.swift */; };
 		11C5E3162DFE88510065821E /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11C5E3152DFE88510065821E /* SettingsView.swift */; };
 		11CC44A22CEE614100C7244B /* GhostwireViewCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11CC44A12CEE614100C7244B /* GhostwireViewCoordinator.swift */; };
@@ -104,6 +105,10 @@
 		14E9FEAA2C70BF610062E83F /* DownloadView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 14E9FEA92C70BF610062E83F /* DownloadView.swift */; };
 		14E9FEAE2C7325770062E83F /* Button+Bouncing.swift in Sources */ = {isa = PBXBuildFile; fileRef = 14E9FEAD2C7325770062E83F /* Button+Bouncing.swift */; };
 		14FC6E502C7DED5600C7BEA5 /* DataTypes+Extensions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 14FC6E4F2C7DED5600C7BEA5 /* DataTypes+Extensions.swift */; };
+		30AF3A8D2FE38A3B005DEC77 /* NIOCore in Frameworks */ = {isa = PBXBuildFile; productRef = 30AF3A8C2FE38A3B005DEC77 /* NIOCore */; };
+		30AF3A8F2FE38A3B005DEC77 /* NIOHTTP1 in Frameworks */ = {isa = PBXBuildFile; productRef = 30AF3A8E2FE38A3B005DEC77 /* NIOHTTP1 */; };
+		30AF3A912FE38A3B005DEC77 /* NIOPosix in Frameworks */ = {isa = PBXBuildFile; productRef = 30AF3A902FE38A3B005DEC77 /* NIOPosix */; };
+		30DBC2DC2FE3C30200F7605A /* FluidAudio in Frameworks */ = {isa = PBXBuildFile; productRef = 30DBC2DB2FE3C30200F7605A /* FluidAudio */; };
 		507266DB2C908E2E00A2D00D /* HoverButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = 507266DA2C908E2E00A2D00D /* HoverButton.swift */; };
 		5917FD112E57891600E87F1C /* MediaKeyInterceptor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5917FD102E57891600E87F1C /* MediaKeyInterceptor.swift */; };
 		5955950D2E900ED800C66711 /* ApplicationRelauncher.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5955950C2E900ED800C66711 /* ApplicationRelauncher.swift */; };
@@ -288,6 +293,7 @@
 		9A0887342C7AFF8E00C160EA /* TabSelectionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabSelectionView.swift; sourceTree = "<group>"; };
 		9A987A032C73CA66005CA465 /* ShelfView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ShelfView.swift; sourceTree = "<group>"; };
 		9AB0C6BB2C73C9CB00F7CD30 /* NotchHomeView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = NotchHomeView.swift; sourceTree = "<group>"; };
+		AA1920000000000000000008 /* GhostwireTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = GhostwireTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		B10348D82C74E56000475897 /* ConditionalModifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConditionalModifier.swift; sourceTree = "<group>"; };
 		B10F84A22C6C9596009F3026 /* TestView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TestView.swift; sourceTree = "<group>"; };
 		B141C2402CA5F53E00AC8CC8 /* SparkleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SparkleView.swift; sourceTree = "<group>"; };
@@ -313,7 +319,6 @@
 		B1F747F82EC7E94000F841DB /* LottieView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LottieView.swift; sourceTree = "<group>"; };
 		B1FEB4982C7686630066EBBC /* PanGesture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PanGesture.swift; sourceTree = "<group>"; };
 		F38DE6472D8243E2008B5C6D /* BatteryActivityManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BatteryActivityManager.swift; sourceTree = "<group>"; };
-		AA1920000000000000000008 /* GhostwireTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = GhostwireTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -341,18 +346,12 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		AA1920000000000000000004 /* Frameworks */ = {
-			isa = PBXFrameworksBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
 		14CEF40F2C5CAED300855D72 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
 				111BEA5F2ED07A340079DD4E /* MacroVisionKit in Frameworks */,
+				30DBC2DC2FE3C30200F7605A /* FluidAudio in Frameworks */,
 				9A987A102C73CA8D005CA465 /* Collections in Frameworks */,
 				1194E8852EA57D23009C82D6 /* SkyLightWindow in Frameworks */,
 				112B0EBB2E30DD5000562D6C /* MediaRemoteAdapter.framework in Frameworks */,
@@ -361,10 +360,28 @@
 				11F748732EC9DA9300F841DB /* Lottie in Frameworks */,
 				14D0321A2C68F32E0096E6A1 /* LaunchAtLogin in Frameworks */,
 				111BEA512ECFBF7F0079DD4E /* MacroVisionKit in Frameworks */,
+				30AF3A8D2FE38A3B005DEC77 /* NIOCore in Frameworks */,
+				30AF3A912FE38A3B005DEC77 /* NIOPosix in Frameworks */,
 				B18654392C6F4990000B926A /* KeyboardShortcuts in Frameworks */,
 				B19016222CC15B3D00E3F12E /* Defaults in Frameworks */,
+				11AA00032F00000000000003 /* MCP in Frameworks */,
 				111BE95D2ECD71E10079DD4E /* AsyncXPCConnection in Frameworks */,
 				B1628B922CC260C0003D8DF3 /* SwiftUIIntrospect in Frameworks */,
+				30AF3A8F2FE38A3B005DEC77 /* NIOHTTP1 in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		AA1920000000000000000004 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		AA1920000000000000000004 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -824,6 +841,7 @@
 				B18654382C6F4990000B926A /* KeyboardShortcuts */,
 				9A987A0F2C73CA8D005CA465 /* Collections */,
 				B19016212CC15B3D00E3F12E /* Defaults */,
+				11AA00022F00000000000002 /* MCP */,
 				B1628B912CC260C0003D8DF3 /* SwiftUIIntrospect */,
 				1194E8842EA57D23009C82D6 /* SkyLightWindow */,
 				11F748722EC9DA9300F841DB /* Lottie */,
@@ -831,6 +849,10 @@
 				111BEA502ECFBF7F0079DD4E /* MacroVisionKit */,
 				111BEA5E2ED07A340079DD4E /* MacroVisionKit */,
 				111BEA6E2ED166E20079DD4E /* MacroVisionKit */,
+				30AF3A8C2FE38A3B005DEC77 /* NIOCore */,
+				30AF3A8E2FE38A3B005DEC77 /* NIOHTTP1 */,
+				30AF3A902FE38A3B005DEC77 /* NIOPosix */,
+				30DBC2DB2FE3C30200F7605A /* FluidAudio */,
 			);
 			productName = dynamicNotch;
 			productReference = 14CEF4122C5CAED300855D72 /* Ghostwire.app */;
@@ -903,6 +925,9 @@
 				11F748712EC9DA9300F841DB /* XCRemoteSwiftPackageReference "lottie-spm" */,
 				111BE95B2ECD71E10079DD4E /* XCRemoteSwiftPackageReference "AsyncXPCConnection" */,
 				111BEA6D2ED166E20079DD4E /* XCRemoteSwiftPackageReference "MacroVisionKit" */,
+				11AA00012F00000000000001 /* XCRemoteSwiftPackageReference "swift-sdk" */,
+				30AF3A8B2FE38A3B005DEC77 /* XCRemoteSwiftPackageReference "swift-nio" */,
+				30DBC2DA2FE3C30200F7605A /* XCRemoteSwiftPackageReference "FluidAudio" */,
 			);
 			productRefGroup = 14CEF4132C5CAED300855D72 /* Products */;
 			projectDirPath = "";
@@ -923,13 +948,6 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		AA1920000000000000000005 /* Resources */ = {
-			isa = PBXResourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
 		14CEF4102C5CAED300855D72 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -941,16 +959,16 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-/* End PBXResourcesBuildPhase section */
-
-/* Begin PBXSourcesBuildPhase section */
-		AA1920000000000000000003 /* Sources */ = {
-			isa = PBXSourcesBuildPhase;
+		AA1920000000000000000005 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
 		11F7484B2EC9AABA00F841DB /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -1080,6 +1098,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		AA1920000000000000000003 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -1104,7 +1129,7 @@
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 5;
+				CURRENT_PROJECT_VERSION = 13;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -1112,7 +1137,7 @@
 				INFOPLIST_KEY_CFBundleDisplayName = "Ghostwire XPC Helper";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 0.1.4;
+				MARKETING_VERSION = 0.2.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.ghostwire.notch.XPCHelper;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -1130,7 +1155,7 @@
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 5;
+				CURRENT_PROJECT_VERSION = 13;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -1138,7 +1163,7 @@
 				INFOPLIST_KEY_CFBundleDisplayName = "Ghostwire XPC Helper";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 0.1.4;
+				MARKETING_VERSION = 0.2.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.ghostwire.notch.XPCHelper;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -1284,7 +1309,7 @@
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 5;
+				CURRENT_PROJECT_VERSION = 13;
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_ASSET_PATHS = "\"Ghostwire/Preview Content\"";
 				DEVELOPMENT_TEAM = K7A26693A4;
@@ -1305,13 +1330,15 @@
 				INFOPLIST_KEY_NSCalendarsUsageDescription = "This app uses the calendar to display your calendar events";
 				INFOPLIST_KEY_NSCameraUsageDescription = "This app uses the camera to display a live camera view";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Ghostwire uses the microphone to capture your voice for on-device transcription.";
 				INFOPLIST_KEY_NSRemindersUsageDescription = "This app uses Reminders to display your scheduled reminder in the calendar";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Ghostwire transcribes your speech on-device to send it to your agent and save it to the Shelf.";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 0.1.4;
+				MARKETING_VERSION = 0.2.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.ghostwire.notch;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
@@ -1337,7 +1364,7 @@
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 5;
+				CURRENT_PROJECT_VERSION = 13;
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_ASSET_PATHS = "\"Ghostwire/Preview Content\"";
 				DEVELOPMENT_TEAM = K7A26693A4;
@@ -1357,13 +1384,15 @@
 				INFOPLIST_KEY_NSCalendarsUsageDescription = "This app uses the calendar to display your calendar events";
 				INFOPLIST_KEY_NSCameraUsageDescription = "This app uses the camera to display a live camera view";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Ghostwire uses the microphone to capture your voice for on-device transcription.";
 				INFOPLIST_KEY_NSRemindersUsageDescription = "This app uses Reminders to display your scheduled reminder in the calendar";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Ghostwire transcribes your speech on-device to send it to your agent and save it to the Shelf.";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 0.1.4;
+				MARKETING_VERSION = 0.2.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.ghostwire.notch;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
@@ -1481,6 +1510,14 @@
 				minimumVersion = 1.0.0;
 			};
 		};
+		11AA00012F00000000000001 /* XCRemoteSwiftPackageReference "swift-sdk" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/modelcontextprotocol/swift-sdk";
+			requirement = {
+				kind = exactVersion;
+				version = 0.12.1;
+			};
+		};
 		11F748712EC9DA9300F841DB /* XCRemoteSwiftPackageReference "lottie-spm" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/airbnb/lottie-spm.git";
@@ -1503,6 +1540,22 @@
 			requirement = {
 				kind = upToNextMajorVersion;
 				minimumVersion = 2.8.0;
+			};
+		};
+		30AF3A8B2FE38A3B005DEC77 /* XCRemoteSwiftPackageReference "swift-nio" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/apple/swift-nio.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.101.0;
+			};
+		};
+		30DBC2DA2FE3C30200F7605A /* XCRemoteSwiftPackageReference "FluidAudio" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/FluidInference/FluidAudio.git";
+			requirement = {
+				kind = upToNextMinorVersion;
+				minimumVersion = 0.15.4;
 			};
 		};
 		9A987A0E2C73CA8D005CA465 /* XCRemoteSwiftPackageReference "swift-collections" */ = {
@@ -1571,6 +1624,11 @@
 			package = 1194E8832EA57D23009C82D6 /* XCRemoteSwiftPackageReference "SkyLightWindow" */;
 			productName = SkyLightWindow;
 		};
+		11AA00022F00000000000002 /* MCP */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 11AA00012F00000000000001 /* XCRemoteSwiftPackageReference "swift-sdk" */;
+			productName = MCP;
+		};
 		11F748722EC9DA9300F841DB /* Lottie */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 11F748712EC9DA9300F841DB /* XCRemoteSwiftPackageReference "lottie-spm" */;
@@ -1585,6 +1643,26 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 14D0321B2C68F3350096E6A1 /* XCRemoteSwiftPackageReference "Sparkle" */;
 			productName = Sparkle;
+		};
+		30AF3A8C2FE38A3B005DEC77 /* NIOCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 30AF3A8B2FE38A3B005DEC77 /* XCRemoteSwiftPackageReference "swift-nio" */;
+			productName = NIOCore;
+		};
+		30AF3A8E2FE38A3B005DEC77 /* NIOHTTP1 */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 30AF3A8B2FE38A3B005DEC77 /* XCRemoteSwiftPackageReference "swift-nio" */;
+			productName = NIOHTTP1;
+		};
+		30AF3A902FE38A3B005DEC77 /* NIOPosix */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 30AF3A8B2FE38A3B005DEC77 /* XCRemoteSwiftPackageReference "swift-nio" */;
+			productName = NIOPosix;
+		};
+		30DBC2DB2FE3C30200F7605A /* FluidAudio */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 30DBC2DA2FE3C30200F7605A /* XCRemoteSwiftPackageReference "FluidAudio" */;
+			productName = FluidAudio;
 		};
 		9A987A0F2C73CA8D005CA465 /* Collections */ = {
 			isa = XCSwiftPackageProductDependency;

@@ -58,7 +58,9 @@ struct AgentRateLimits: Equatable, Codable {
 /// A per-model weekly sub-limit (e.g. Opus/Sonnet on the Claude OAuth plan).
 /// GW-203: rides the display enum so the UI never reaches past it for the
 /// data (was a Claude-only side channel via UsageService.usage in GW-201).
-struct PerModelQuota: Equatable {
+/// GW-314: Codable - scoped weeklies now live on UsageData (from limits[])
+/// and persist through usage-cache.json.
+struct PerModelQuota: Equatable, Codable {
     let label: String
     let period: QuotaPeriod
 }

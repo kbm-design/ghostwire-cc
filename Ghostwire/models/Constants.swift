@@ -91,6 +91,73 @@ enum PermissionAutoOpenMode: String, CaseIterable, Identifiable, Defaults.Serial
     var id: String { rawValue }
 }
 
+// What is allowed to move a card in the notch's feed row (GW-182). A ladder:
+// each rung adds exactly one cause of motion, so a user can always name why
+// something moved. The detached window grid is never reordered at any setting —
+// curation has to stay stable somewhere to be worth doing.
+//
+// Default is `.alerts`, not `.context`. With a handful of cards there is little
+// to arbitrate, and a feed that rearranges itself for reasons the user can't see
+// is worse than one that never moves. `.context` becomes worth its keep when the
+// card population is large enough to have a real tail (GW-214's MCP Sources).
+enum FeedRankingMode: String, CaseIterable, Identifiable, Defaults.Serializable {
+    /// Nothing reorders. The user's order, exactly, always.
+    case fixed = "Fixed"
+    /// Only a card that is waiting on the user can move, and it moves to the
+    /// front. Rare, and self-explaining — the card already reads "2 waiting on
+    /// you", so the promotion never needs a separate justification.
+    case alerts = "Alerts only"
+    /// Full context ranking: alerts, plus app affinity and what changed while
+    /// the user was away.
+    case context = "Match what I'm doing"
+
+    var id: String { rawValue }
+
+    /// Whether an escalated card may jump the queue.
+    var allowsUrgency: Bool { self != .fixed }
+
+    /// Whether ambient context and novelty contribute at all.
+    var allowsContext: Bool { self == .context }
+
+    /// Plain-language description of exactly what can move a card, shown under
+    /// the picker. If a mode can't be explained in one sentence the user would
+    /// accept, it shouldn't ship.
+    var explanation: String {
+        switch self {
+        case .fixed:
+            return "Cards stay exactly where you put them. Nothing reorders them, ever."
+        case .alerts:
+            return "Cards stay where you put them, except one that's waiting on you — an agent blocked on an approval, or quota about to run out. Those move to the front, and say why on the card itself."
+        case .context:
+            return "As above, plus cards move up when they relate to the app you're working in, or changed while you were away. More useful the more sources you've connected; with only a few cards it mostly just moves things around."
+        }
+    }
+}
+
+// Ambient context retention (GW-172). How long frontmost-app activity shards
+// are kept on disk. session-only = RAM only, nothing is ever written (and
+// switching to it wipes existing shards). `forever` keeps everything.
+enum AmbientRetention: String, CaseIterable, Identifiable, Defaults.Serializable {
+    case days7 = "7 days"
+    case days30 = "30 days"
+    case days90 = "90 days"
+    case forever = "Forever"
+    case sessionOnly = "Session only"
+
+    var id: String { rawValue }
+
+    /// Max age to keep, or nil for `forever`. `sessionOnly` also returns nil
+    /// here but is special-cased upstream (nothing is persisted at all).
+    var maxAge: TimeInterval? {
+        switch self {
+        case .days7: return 7 * 86_400
+        case .days30: return 30 * 86_400
+        case .days90: return 90 * 86_400
+        case .forever, .sessionOnly: return nil
+        }
+    }
+}
+
 extension Defaults.Keys {
     // MARK: General
     static let menubarIcon = Key<Bool>("menubarIcon", default: true)
@@ -225,6 +292,24 @@ extension Defaults.Keys {
     // uninstall from the Agents tab sticks across relaunches.
     static let claudeHooksEnabled = Key<Bool>("claudeHooksEnabled", default: true)
     static let codexHooksEnabled = Key<Bool>("codexHooksEnabled", default: true)
+    // GW-175: third-party agent cluster. Enabled by default, but install is
+    // also gated on the CLI actually being present (isDetected), so nothing is
+    // written for an agent the user doesn't have.
+    static let cursorHooksEnabled = Key<Bool>("cursorHooksEnabled", default: true)
+    static let copilotHooksEnabled = Key<Bool>("copilotHooksEnabled", default: true)
+    static let factoryHooksEnabled = Key<Bool>("factoryHooksEnabled", default: true)
+    static let qoderHooksEnabled = Key<Bool>("qoderHooksEnabled", default: true)
+    static let codebuddyHooksEnabled = Key<Bool>("codebuddyHooksEnabled", default: true)
+    // GW-173: consent gate for the MCP context-hub server (pull side). When
+    // off, the `mcp-serve` subcommand serves an empty Shelf even if an agent
+    // is registered. Default off — exposing held context to agents is opt-in.
+    static let mcpServeEnabled = Key<Bool>("mcpServeEnabled", default: false)
+    // GW-253: kill-switch for the localhost MCP gateway HTTP server. On by
+    // default — the gateway auto-starts only when you actually have ≥1 MCP
+    // server configured (nothing to expose otherwise), and it's bearer-token +
+    // localhost-gated, so registration is the real consent. Set false to
+    // disable entirely. A Settings toggle is the GW-255 follow-up.
+    static let mcpGatewayEnabled = Key<Bool>("mcpGatewayEnabled", default: true)
     // Pending Codex re-trust map (GW-196): `[hooks.state]` position key ->
     // the stale `trusted_hash` that was in config.toml when we changed that
     // hook's command in place (e.g. buddi -> ghostwire). The installer records
@@ -239,6 +324,14 @@ extension Defaults.Keys {
         "permissionAutoOpenMode",
         default: .smart
     )
+    // GW-264/GW-227: how long an auto-reveal dwells before collapsing on its own
+    // (the user didn't trigger it by hand, so it behaves like a notification).
+    // Hover/interaction pauses the countdown; mouse-out restarts it. Informational
+    // reveals (track change, saved-to-Shelf, agent-finished, waiting-for-input)
+    // collapse to nothing; actionable reveals (pending approval) recede to the
+    // passive glow and the request stays pending in the Agents tab.
+    static let notchInfoDwellSeconds = Key<Double>("notchInfoDwellSeconds", default: 3.0)
+    static let notchActionableDwellSeconds = Key<Double>("notchActionableDwellSeconds", default: 6.0)
     // Alert-history cap (GW-139 spec: 100 entries / 7 days, configurable)
     static let alertHistoryMaxEntries = Key<Int>("alertHistoryMaxEntries", default: 100)
     static let alertHistoryMaxAgeDays = Key<Int>("alertHistoryMaxAgeDays", default: 7)
@@ -252,6 +345,28 @@ extension Defaults.Keys {
     // Cap mirrors the alert-history pattern: 100 entries / 7 days, configurable.
     static let clipboardHistoryMaxEntries = Key<Int>("clipboardHistoryMaxEntries", default: 100)
     static let clipboardHistoryMaxAgeDays = Key<Int>("clipboardHistoryMaxAgeDays", default: 7)
+
+    // MARK: Voice capture (GW-229)
+    // Master switch for the voice hotkey (record → clipboard + Shelf, paste into
+    // a focused field) and the GW-270 hold-to-talk tap. OFF by default (GW-270):
+    // onboarding's voice step turns it on (and downloads/warms the model then), so
+    // the ~600MB model pull happens on explicit intent, not for users who skip it.
+    static let voiceCaptureEnabled = Key<Bool>("voiceCaptureEnabled", default: false)
+    // When on, a finished transcript pastes into the focused editable field (if
+    // any); otherwise it always goes to the clipboard + Shelf. On by default.
+    static let voicePasteIntoFocusedField = Key<Bool>("voicePasteIntoFocusedField", default: true)
+    // Selected speech engine/model: a VoiceModel rawValue (default "nemotronEN",
+    // on-device FluidAudio) or "apple" for the built-in engine.
+    static let voiceModel = Key<String>("voiceModel", default: "nemotronEN")
+    // VoiceModel rawValues whose on-device model has been downloaded (so the
+    // Settings UI can show "Downloaded ✓" across launches without re-checking).
+    static let voiceDownloadedModels = Key<[String]>("voiceDownloadedModels", default: [])
+    // GW-270: push-to-talk (hold-to-talk) modifier key, a HoldToTalkKey rawValue.
+    // Default Right Option — it exists on every Apple keyboard (unlike Right Control,
+    // which Apple omits), a bare hold triggers no macOS behavior, and it needs no
+    // event suppression. "off" disables the hold gesture; the ⌃⇧Space toggle is
+    // independent and always available.
+    static let voiceHoldToTalkKey = Key<String>("voiceHoldToTalkKey", default: HoldToTalkKey.rightOption.rawValue)
     // GW-218: what a double-click on a unified card does. Default: copy.
     static let cardDoubleClickAction = Key<CardDoubleClickAction>("cardDoubleClickAction", default: .copy)
 
@@ -259,6 +374,75 @@ extension Defaults.Keys {
     // Media's toggle only hides its settings pane (the player is core);
     // the other modules reuse their feature master keys (see SettingsModule).
     static let mediaModuleEnabled = Key<Bool>("mediaModuleEnabled", default: true)
-    static let notchTabOrder = Key<[String]>("notchTabOrder", default: ["agents", "dashboard", "shelf"])
+    static let notchTabOrder = Key<[String]>("notchTabOrder", default: ["agents", "dashboard", "shelf", "feed"])
     static let hiddenNotchTabs = Key<Set<String>>("hiddenNotchTabs", default: [])
+
+    // MARK: Dashboard feed curation (GW-259)
+    // User-curated order of feed cards, persisted as stable FeedCard ids (same
+    // idiom as notchTabOrder). FeedCardStore applies this to the live card set:
+    // known ids hold position, new ids append, vanished ids drop out.
+    static let feedCardOrder = Key<[String]>("feedCardOrder", default: [])
+    // GW-261: marks the one-time clear of orders that were never user-authored
+    // (written by setCards from a partial, race-ordered card set).
+    static let feedCardOrderMigrated = Key<Bool>("feedCardOrderMigrated", default: false)
+    // How many of the ordered cards mirror into the notch's top-N row.
+    static let feedNotchVisibleCount = Key<Int>("feedNotchVisibleCount", default: 8)
+
+    // MARK: Feed ranking mode (GW-182)
+    // What is allowed to move a card in the notch row. Default `.alerts`: the
+    // user's order holds, and the only thing that reorders it is a card that is
+    // literally waiting on them — which says so on its own face, so the reason
+    // for the move is always visible. See `FeedRankingMode`.
+    static let feedRankingMode = Key<FeedRankingMode>("feedRankingMode", default: .alerts)
+
+    // MARK: Built-in feed sources (GW-261)
+    // Module master key (SettingsModule.feed): off = no built-in source polls
+    // and the feed falls back to whatever other Sources provide.
+    static let feedSourcesEnabled = Key<Bool>("feedSourcesEnabled", default: true)
+    // The keyless catalog: all default ON because none needs an account, a
+    // token, or a TCC permission — they're what makes a fresh install show a
+    // real feed instead of placeholders.
+    // Ghostwire's own numbers (quota, live agents) — local reads, no network.
+    static let feedLocalStatsSourceEnabled = Key<Bool>("feedLocalStatsSourceEnabled", default: true)
+    static let feedCryptoSourceEnabled = Key<Bool>("feedCryptoSourceEnabled", default: true)
+    static let feedCryptoSymbols = Key<[String]>("feedCryptoSymbols", default: ["BTC", "ETH", "SOL"])
+    static let feedRSSSourceEnabled = Key<Bool>("feedRSSSourceEnabled", default: true)
+    static let feedRSSURLs = Key<[String]>(
+        "feedRSSURLs",
+        default: [
+            "https://news.ycombinator.com/rss",
+            "https://github.com/anthropics/claude-code/releases.atom",
+        ]
+    )
+
+    // MARK: MCP feed sources (GW-214)
+    // Default ON, and safe to be: an MCP server contributes NOTHING until the
+    // user allowlists a tool AND binds it to the feed (MCPServerConfig.feedTools),
+    // so this toggle governs an opt-in set that starts empty. It exists to stop
+    // every bound server at once without unbinding them one by one.
+    static let feedMCPSourcesEnabled = Key<Bool>("feedMCPSourcesEnabled", default: true)
+    // Seconds between polls of every bound MCP tool. See
+    // MCPFeedSource.defaultRefreshInterval for why this is minutes, not seconds.
+    static let feedMCPRefreshSeconds = Key<Int>("feedMCPRefreshSeconds", default: 300)
+
+    // MARK: Ambient context (GW-172) — Tier-0 frontmost-app spine.
+    // SILENT: collects + persists which app is frontmost (identity only — no
+    // window titles or content) for Ghostwire's OWN future surfacing (ranking
+    // GW-182, display GW-214). Local-only — never narrated to a cloud agent.
+    //
+    // Master toggle, default ON (Tier 0 is free, zero-TCC). AmbientContextService
+    // follows this key live; SettingsModule.ambient exposes it as the sidebar
+    // module toggle.
+    static let ambientCaptureEnabled = Key<Bool>("ambientCaptureEnabled", default: true)
+    // Default 7 days: plenty for the interim substrate, light on disk; retention
+    // has no RAM/perf effect (the in-memory ring is capped independently), so
+    // this is purely a how-much-history-to-bank choice. Bump when GW-182's
+    // pattern logic wants a longer lookback.
+    static let ambientRetention = Key<AmbientRetention>("ambientRetention", default: .days7)
+    // Apps whose activity is never recorded (capture-suppressing). Empty by
+    // default: the spine records app identity only (no window titles, no
+    // content), so there's little to protect yet — users add their own apps in
+    // Settings → Activity. (Revisit the seed when Tier-1 window titles land in
+    // GW-182+, where the privacy stakes are higher.)
+    static let ambientAppDenylist = Key<[String]>("ambientAppDenylist", default: [])
 }

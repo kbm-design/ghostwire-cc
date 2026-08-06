@@ -16,6 +16,10 @@ struct AgentUsageDetailView: View {
     /// GW-203: per-model weeklies + extra-usage spend now ride the .quota
     /// case - the view reads them off `display`, no agent-name side channel.
     let display: AgentUsageDisplay
+    /// GW-314: non-nil when the quota snapshot is stale - the last successful
+    /// server fetch, rendered as "updated Xm ago" under the bars (the summary
+    /// row only dims; the words live here).
+    var staleDate: Date? = nil
     let onBack: () -> Void
 
     private var tint: Color { AgentIdentity.tint(for: agent) }
@@ -65,12 +69,13 @@ struct AgentUsageDetailView: View {
                 quotaBar(label: "Weekly", period: sd, resetPrefix: "refills")
             }
 
-            // GW-201: per-model weekly sub-limits (only non-null on the wire)
+            // GW-201: per-model weekly sub-limits. GW-314: sourced from the
+            // limits[] weekly_scoped entries (legacy opus/sonnet as fallback)
             ForEach(perModel, id: \.label) { entry in
                 UsageBar(
                     label: entry.label,
                     percent: entry.period.utilization / 100,
-                    detail: "\(Int(entry.period.utilization))%",
+                    detail: UsageFormat.percent(entry.period.utilization),
                     color: barColor(entry.period.utilization)
                 )
             }
@@ -90,6 +95,13 @@ struct AgentUsageDetailView: View {
                         .foregroundStyle(.tertiary)
                 }
             }
+
+            // GW-314: staleness words - the summary row dims, this explains
+            if let staleDate {
+                Text("\(UsageFormat.updatedAgo(staleDate)) · retrying")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
         }
     }
 
@@ -98,7 +110,7 @@ struct AgentUsageDetailView: View {
             UsageBar(
                 label: label,
                 percent: period.utilization / 100,
-                detail: "\(Int(period.utilization))%",
+                detail: UsageFormat.percent(period.utilization),
                 color: barColor(period.utilization)
             )
             if let resetsAt = period.resetsAt {

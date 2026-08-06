@@ -11,6 +11,7 @@ struct GhostwireHeader: View {
     @EnvironmentObject var vm: GhostwireViewModel
     @ObservedObject var batteryModel = BatteryStatusViewModel.shared
     @ObservedObject var coordinator = GhostwireViewCoordinator.shared
+    @ObservedObject var voice = VoiceCaptureViewModel.shared
     @StateObject var tvm = ShelfStateViewModel.shared
 
     // Observed so the bar live-updates when tab settings change (GW-144)
@@ -60,44 +61,37 @@ struct GhostwireHeader: View {
 
             HStack(spacing: 4) {
                 if vm.notchState == .open {
+                    // GW-229: live recording control — a pulsing red dot that
+                    // becomes a Stop (red square) on hover. Non-modal, so the
+                    // notch stays usable while recording.
+                    if voice.stage == .recording {
+                        NotchRecordingButton { Task { await voice.stopRecording() } }
+                    }
                     if isHUDType(coordinator.sneakPeek.type) && coordinator.sneakPeek.show && Defaults[.showOpenNotchHUD] {
                         OpenNotchHUD(type: $coordinator.sneakPeek.type, value: $coordinator.sneakPeek.value, icon: $coordinator.sneakPeek.icon)
                             .transition(.scale(scale: 0.8).combined(with: .opacity))
                     } else {
-                        if Defaults[.showMirror] {
-                            Button(action: {
-                                vm.toggleCameraPreview()
-                            }) {
-                                Capsule()
-                                    .fill(.black)
-                                    .frame(width: 30, height: 30)
-                                    .overlay {
-                                        Image(systemName: "web.camera")
-                                            .foregroundColor(.white)
-                                            .padding()
-                                            .imageScale(.medium)
-                                    }
+                        // GW-223: detach the Shelf into a full resizable window.
+                        // Always shown while the notch is open — it's a destination
+                        // opener, not a shelf-only action — in the same 30×30 capsule
+                        // vocabulary as the gear/camera buttons.
+                        // (In-notch expand is GW-222; this is the simple opener.)
+                        NotchHeaderIconButton(systemName: "macwindow", help: "Open Shelf in window") {
+                            DispatchQueue.main.async {
+                                ShelfWindowController.shared.showWindow()
                             }
-                            .buttonStyle(PlainButtonStyle())
+                        }
+                        if Defaults[.showMirror] {
+                            NotchHeaderIconButton(systemName: "web.camera", help: "Toggle camera preview") {
+                                vm.toggleCameraPreview()
+                            }
                         }
                         if Defaults[.settingsIconInNotch] {
-                            Button(action: {
+                            NotchHeaderIconButton(systemName: "gear", help: "Open Settings") {
                                 DispatchQueue.main.async {
                                     SettingsWindowController.shared.showWindow()
                                 }
-                                
-                            }) {
-                                Capsule()
-                                    .fill(.black)
-                                    .frame(width: 30, height: 30)
-                                    .overlay {
-                                        Image(systemName: "gear")
-                                            .foregroundColor(.white)
-                                            .padding()
-                                            .imageScale(.medium)
-                                    }
                             }
-                            .buttonStyle(PlainButtonStyle())
                         }
                         if Defaults[.showBatteryIndicator] {
                             GhostwireBatteryView(
@@ -131,6 +125,74 @@ struct GhostwireHeader: View {
         default:
             return false
         }
+    }
+}
+
+/// GW-223: notch-header action button (detach / camera / settings). Dimmed to
+/// grey at rest so it reads as an inactive affordance like the tabs, brightening
+/// to full white on hover. Same 30×30 black capsule vocabulary as before.
+private struct NotchHeaderIconButton: View {
+    let systemName: String
+    var help: String?
+    let action: () -> Void
+
+    @State private var hovering = false
+
+    var body: some View {
+        let button = Button(action: action) {
+            Capsule()
+                .fill(.black)
+                .frame(width: 30, height: 30)
+                .overlay {
+                    Image(systemName: systemName)
+                        .foregroundColor(.white.opacity(hovering ? 1.0 : 0.5))
+                        .padding()
+                        .imageScale(.medium)
+                }
+        }
+        .buttonStyle(PlainButtonStyle())
+        .onHover { hovering = $0 }
+        .animation(.easeOut(duration: 0.12), value: hovering)
+
+        // Only attach a tooltip when one is provided — .help("") shows a
+        // blank tooltip bubble.
+        if let help {
+            button.help(help)
+        } else {
+            button
+        }
+    }
+}
+
+/// GW-229: recording indicator in the notch header. At rest, a pulsing red dot;
+/// on hover, a red square (Stop). Click stops the recording. Same 30×30 black
+/// capsule vocabulary as the other header buttons.
+private struct NotchRecordingButton: View {
+    let onStop: () -> Void
+
+    @State private var hovering = false
+    @State private var pulse = false
+
+    var body: some View {
+        Button(action: onStop) {
+            Capsule()
+                .fill(hovering ? Color.red.opacity(0.18) : .black)
+                .frame(width: 30, height: 30)
+                .overlay {
+                    // One shape that morphs dot → rounded square (smooth corner
+                    // animation), so hover clearly reads as "this stops it".
+                    RoundedRectangle(cornerRadius: hovering ? 2.5 : 5, style: .continuous)
+                        .fill(Color.red)
+                        .frame(width: hovering ? 11 : 10, height: hovering ? 11 : 10)
+                        .opacity(hovering ? 1.0 : (pulse ? 1.0 : 0.45))
+                }
+        }
+        .buttonStyle(PlainButtonStyle())
+        .onHover { hovering = $0 }
+        .help("Stop recording")
+        .animation(.easeInOut(duration: 0.18), value: hovering)
+        .animation(.easeInOut(duration: 0.7).repeatForever(autoreverses: true), value: pulse)
+        .onAppear { pulse = true }
     }
 }
 

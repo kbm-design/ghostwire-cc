@@ -27,7 +27,7 @@ enum SettingsSearchIndex {
             keywords: [
                 "menu bar", "launch", "login", "display", "screen", "height",
                 "notch", "hover", "haptics", "gesture", "tabs", "reorder",
-                "lock screen", "recording",
+                "lock screen", "recording", "voice", "dictation", "speech",
             ]
         ),
         SettingsSearchEntry(
@@ -47,7 +47,14 @@ enum SettingsSearchIndex {
         ),
         SettingsSearchEntry(
             id: "Shortcuts", label: "Shortcuts", icon: "keyboard",
-            keywords: ["keyboard", "hotkey", "sneak peek", "clipboard"]
+            keywords: ["keyboard", "hotkey", "sneak peek", "clipboard", "voice", "capture", "dictation"]
+        ),
+        SettingsSearchEntry(
+            id: "MCP", label: "MCP Servers", icon: "server.rack",
+            keywords: [
+                "mcp", "model context protocol", "data", "tools", "server",
+                "connect", "allowlist", "stdio", "oauth",
+            ]
         ),
         SettingsSearchEntry(
             id: "Advanced", label: "Advanced", icon: "gearshape.2",
@@ -83,6 +90,14 @@ enum SettingsSearchIndex {
         "Battery": ["charge", "power", "percentage", "low power"],
         "Shelf": ["files", "drag", "drop", "quick share", "airdrop", "tray", "clipboard", "history", "copy", "paste"],
         "Mirror": ["camera", "webcam", "face", "shape"],
+        "Activity": [
+            "activity", "context", "ambient", "capture", "frontmost",
+            "retention", "denylist", "excluded apps", "privacy", "history",
+        ],
+        "Feed": [
+            "feed", "cards", "sources", "crypto", "price", "bitcoin", "btc",
+            "hyperliquid", "rss", "atom", "news", "releases", "dashboard",
+        ],
     ]
 
     /// Pane ids matching a query (case-insensitive substring over label +

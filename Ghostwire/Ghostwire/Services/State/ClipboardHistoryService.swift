@@ -290,6 +290,15 @@ final class ClipboardHistoryService {
         lastChangeCount = pasteboard.changeCount
     }
 
+    /// Put plain text on the pasteboard as our own write (GW-229 voice
+    /// transcript) so it's the live clipboard / pasteable, WITHOUT the poller
+    /// re-capturing it into clipboard history — the Shelf is the durable record.
+    func stagePlainTextForPaste(_ string: String) {
+        let marker = NSPasteboard.PasteboardType(ClipboardSnapshot.ghostwireMarkerType)
+        stageString(string, marker: marker)
+        lastChangeCount = pasteboard.changeCount
+    }
+
     private func stageString(_ string: String, marker: NSPasteboard.PasteboardType) {
         pasteboard.declareTypes([.string, marker], owner: nil)
         pasteboard.setString(string, forType: .string)

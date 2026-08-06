@@ -48,28 +48,6 @@ struct HookEvent: Codable, Sendable {
         case transcriptPath = "transcript_path"
     }
 
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-
-        // Safety boundary: only these required fields may drop an event.
-        sessionId = try container.decode(String.self, forKey: .sessionId)
-        cwd = try container.decode(String.self, forKey: .cwd)
-        event = try container.decode(String.self, forKey: .event)
-        status = try container.decode(String.self, forKey: .status)
-
-        pid = container.decodeLossy(Int.self, forKey: .pid)
-        tty = container.decodeLossy(String.self, forKey: .tty)
-        tool = container.decodeLossy(String.self, forKey: .tool)
-        toolInput = container.decodeToolInput(forKey: .toolInput)
-        toolUseId = container.decodeLossy(String.self, forKey: .toolUseId)
-        notificationType = container.decodeLossy(String.self, forKey: .notificationType)
-        message = container.decodeLossy(String.self, forKey: .message)
-        cmuxWorkspace = container.decodeLossy(String.self, forKey: .cmuxWorkspace)
-        cmuxSurface = container.decodeLossy(String.self, forKey: .cmuxSurface)
-        source = container.decodeLossy(String.self, forKey: .source)
-        transcriptPath = container.decodeLossy(String.self, forKey: .transcriptPath)
-    }
-
     /// Create a copy with updated toolUseId
     init(sessionId: String, cwd: String, event: String, status: String, pid: Int?, tty: String?, tool: String?, toolInput: [String: AnyCodable]?, toolUseId: String?, notificationType: String?, message: String?, cmuxWorkspace: String? = nil, cmuxSurface: String? = nil, source: String? = nil, transcriptPath: String? = nil) {
         self.sessionId = sessionId
@@ -87,6 +65,59 @@ struct HookEvent: Codable, Sendable {
         self.cmuxSurface = cmuxSurface
         self.source = source
         self.transcriptPath = transcriptPath
+    }
+
+    /// GW-341: hand-rolled so ONE odd optional field can't drop a whole event.
+    ///
+    /// The synthesized decoder is all-or-nothing, and Cursor's
+    /// `beforeMCPExecution` sends `tool_input` JSON-encoded as a *string*
+    /// ("tool_input": "{\"nodeId\":\"1-0\"}"). That threw a typeMismatch, the
+    /// event was discarded, and because these events are PermissionRequests the
+    /// socket closed with no verdict — the hook fails open and the tool runs
+    /// with the human never seeing it. Cursor's hook stream is also its only
+    /// source of truth (GW-311), so the session lost its identity too.
+    ///
+    /// So: the four fields that make an event usable at all still throw;
+    /// everything else is best-effort and degrades to nil.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+
+        sessionId = try c.decode(String.self, forKey: .sessionId)
+        cwd = try c.decode(String.self, forKey: .cwd)
+        event = try c.decode(String.self, forKey: .event)
+        status = try c.decode(String.self, forKey: .status)
+
+        pid = try? c.decodeIfPresent(Int.self, forKey: .pid)
+        tty = try? c.decodeIfPresent(String.self, forKey: .tty)
+        tool = try? c.decodeIfPresent(String.self, forKey: .tool)
+        toolUseId = try? c.decodeIfPresent(String.self, forKey: .toolUseId)
+        notificationType = try? c.decodeIfPresent(String.self, forKey: .notificationType)
+        message = try? c.decodeIfPresent(String.self, forKey: .message)
+        cmuxWorkspace = try? c.decodeIfPresent(String.self, forKey: .cmuxWorkspace)
+        cmuxSurface = try? c.decodeIfPresent(String.self, forKey: .cmuxSurface)
+        source = try? c.decodeIfPresent(String.self, forKey: .source)
+        transcriptPath = try? c.decodeIfPresent(String.self, forKey: .transcriptPath)
+        toolInput = Self.decodeToolInput(from: c)
+    }
+
+    /// Accepts `tool_input` as an object (Claude, Codex, Cursor's shell gate) or
+    /// as a JSON-encoded string (Cursor's MCP gate). A string that isn't JSON is
+    /// kept under `input` rather than dropped — GW-139 says the human approves
+    /// what they can see, so losing the payload is worse than labelling it.
+    private static func decodeToolInput(
+        from c: KeyedDecodingContainer<CodingKeys>
+    ) -> [String: AnyCodable]? {
+        if let object = try? c.decodeIfPresent([String: AnyCodable].self, forKey: .toolInput) {
+            return object
+        }
+        guard let encoded = try? c.decodeIfPresent(String.self, forKey: .toolInput),
+              !encoded.isEmpty else { return nil }
+        if let decoded = try? JSONDecoder().decode(
+            [String: AnyCodable].self, from: Data(encoded.utf8)
+        ) {
+            return decoded
+        }
+        return ["input": AnyCodable(encoded)]
     }
 
     var sessionPhase: SessionPhase {
@@ -146,9 +177,6 @@ struct PendingPermission: Sendable {
 /// Callback for hook events
 typealias HookEventHandler = @Sendable (HookEvent) -> Void
 
-/// Callback for permission response failures (socket died)
-typealias PermissionFailureHandler = @Sendable (_ sessionId: String, _ toolUseId: String) -> Void
-
 /// Unix domain socket server that receives events from Claude Code hooks
 /// Uses GCD DispatchSource for non-blocking I/O
 class HookSocketServer {
@@ -158,7 +186,6 @@ class HookSocketServer {
     private var serverSocket: Int32 = -1
     private var acceptSource: DispatchSourceRead?
     private var eventHandler: HookEventHandler?
-    private var permissionFailureHandler: PermissionFailureHandler?
     private let queue = DispatchQueue(label: "com.ghostwire.notch.socket", qos: .userInitiated)
 
     /// Pending permission requests indexed by toolUseId
@@ -173,18 +200,39 @@ class HookSocketServer {
 
     private init() {}
 
-    /// Start the socket server
-    func start(onEvent: @escaping HookEventHandler, onPermissionFailure: PermissionFailureHandler? = nil) {
-        queue.async { [weak self] in
-            self?.startServer(onEvent: onEvent, onPermissionFailure: onPermissionFailure)
+    /// GW-341: turn a DecodingError into "which field, and what was wrong with
+    /// it" — the detail the old warning omitted. `localizedDescription` on a
+    /// DecodingError is famously "The data couldn't be read…", which is what
+    /// let a systematic drop hide in plain sight.
+    static func describe(_ error: Error) -> String {
+        func path(_ keys: [CodingKey]) -> String {
+            keys.isEmpty ? "<root>" : keys.map(\.stringValue).joined(separator: ".")
+        }
+        switch error {
+        case let DecodingError.typeMismatch(type, ctx):
+            return "field '\(path(ctx.codingPath))' had the wrong type (expected \(type)): \(ctx.debugDescription)"
+        case let DecodingError.valueNotFound(type, ctx):
+            return "field '\(path(ctx.codingPath))' was null but \(type) is required"
+        case let DecodingError.keyNotFound(key, ctx):
+            return "required field '\(key.stringValue)' missing at '\(path(ctx.codingPath))'"
+        case let DecodingError.dataCorrupted(ctx):
+            return "malformed JSON at '\(path(ctx.codingPath))': \(ctx.debugDescription)"
+        default:
+            return "\(error)"
         }
     }
 
-    private func startServer(onEvent: @escaping HookEventHandler, onPermissionFailure: PermissionFailureHandler?) {
+    /// Start the socket server
+    func start(onEvent: @escaping HookEventHandler) {
+        queue.async { [weak self] in
+            self?.startServer(onEvent: onEvent)
+        }
+    }
+
+    private func startServer(onEvent: @escaping HookEventHandler) {
         guard serverSocket < 0 else { return }
 
         eventHandler = onEvent
-        permissionFailureHandler = onPermissionFailure
 
         unlink(Self.socketPath)
 
@@ -266,13 +314,6 @@ class HookSocketServer {
         queue.async { [weak self] in
             let ok = self?.sendPermissionResponse(toolUseId: toolUseId, decision: decision, reason: reason) ?? false
             delivered?(ok)
-        }
-    }
-
-    /// Respond to permission by sessionId (finds the most recent pending for that session)
-    func respondToPermissionBySession(sessionId: String, decision: String, reason: String? = nil) {
-        queue.async { [weak self] in
-            self?.sendPermissionResponseBySession(sessionId: sessionId, decision: decision, reason: reason)
         }
     }
 
@@ -482,8 +523,21 @@ class HookSocketServer {
 
         let data = allData
 
-        guard let event = try? JSONDecoder().decode(HookEvent.self, from: data) else {
-            logger.warning("Failed to parse event: \(String(data: data, encoding: .utf8) ?? "?", privacy: .public)")
+        let event: HookEvent
+        do {
+            event = try JSONDecoder().decode(HookEvent.self, from: data)
+        } catch {
+            // GW-341: the old message said an event failed but not which field
+            // or why, so a systematic Cursor drop went unnoticed for weeks.
+            // Name the field and the reason — and say out loud that a dropped
+            // PermissionRequest means the hook fails open.
+            let raw = String(data: data, encoding: .utf8) ?? "<non-utf8>"
+            let cost = raw.contains("waiting_for_approval")
+                ? "APPROVAL LOST (hook fails open — the tool runs unseen)"
+                : "telemetry lost"
+            logger.error(
+                "Dropped hook event: \(cost, privacy: .public) — \(Self.describe(error), privacy: .public) | raw: \(raw, privacy: .public)"
+            )
             if Self.payloadLooksLikePermissionRequest(data) {
                 sendImmediateDeny(
                     to: clientSocket,
@@ -494,7 +548,10 @@ class HookSocketServer {
             return
         }
 
-        logger.debug("Received: \(event.event, privacy: .public) for \(event.sessionId.prefix(8), privacy: .public)")
+        // GW-341: source belongs in this line. Identity bugs are per-event —
+        // one mis-sourced event in a stream re-stamps the whole session — and
+        // without it there was no way to tell which event did it.
+        logger.debug("Received: \(event.event, privacy: .public) for \(event.sessionId.prefix(8), privacy: .public) source=\(event.source ?? "<none>", privacy: .public)")
 
         if event.event == "PreToolUse" {
             cacheToolUseId(event: event)
@@ -595,42 +652,6 @@ class HookSocketServer {
             closeClientSocket(pending.clientSocket, cleanupPending: true)
         }
         return writeSucceeded
-    }
-
-    private func sendPermissionResponseBySession(sessionId: String, decision: String, reason: String?) {
-        permissionsLock.lock()
-        let matchingPending = pendingPermissions.values
-            .filter { $0.sessionId == sessionId }
-            .sorted { $0.receivedAt > $1.receivedAt }
-            .first
-
-        guard let pending = matchingPending else {
-            permissionsLock.unlock()
-            logger.debug("No pending permission for session: \(sessionId.prefix(8), privacy: .public)")
-            return
-        }
-
-        pendingPermissions.removeValue(forKey: pending.toolUseId)
-        permissionsLock.unlock()
-
-        let response = hookResponse(for: pending, decision: decision, reason: reason)
-        guard let data = encode(response) else {
-            closeClientSocket(pending.clientSocket, cleanupPending: true)
-            permissionFailureHandler?(sessionId, pending.toolUseId)
-            return
-        }
-
-        let age = Date().timeIntervalSince(pending.receivedAt)
-        logger.info("Sending response: \(decision, privacy: .public) for \(sessionId.prefix(8), privacy: .public) tool:\(pending.toolUseId.prefix(12), privacy: .public) (age: \(String(format: "%.1f", age), privacy: .public)s)")
-
-        let writeSuccess = write(data, to: pending.clientSocket)
-
-        if writeSuccess {
-            Darwin.close(pending.clientSocket)
-        } else {
-            closeClientSocket(pending.clientSocket, cleanupPending: true)
-            permissionFailureHandler?(sessionId, pending.toolUseId)
-        }
     }
 
     private func hookResponse(for pending: PendingPermission, decision: String, reason: String?) -> HookResponse {
@@ -746,29 +767,6 @@ struct AnyCodable: Codable, @unchecked Sendable {
         default:
             throw EncodingError.invalidValue(value, EncodingError.Context(codingPath: [], debugDescription: "Cannot encode value"))
         }
-    }
-}
-
-private extension KeyedDecodingContainer where Key == HookEvent.CodingKeys {
-    func decodeLossy<T: Decodable>(_ type: T.Type, forKey key: Key) -> T? {
-        try? decodeIfPresent(type, forKey: key)
-    }
-
-    func decodeToolInput(forKey key: Key) -> [String: AnyCodable]? {
-        if let object = try? decodeIfPresent([String: AnyCodable].self, forKey: key) {
-            return object
-        }
-
-        guard let string = try? decodeIfPresent(String.self, forKey: key) else {
-            return nil
-        }
-
-        if let data = string.data(using: .utf8),
-           let object = try? JSONDecoder().decode([String: AnyCodable].self, from: data) {
-            return object
-        }
-
-        return ["input": AnyCodable(string)]
     }
 }
 

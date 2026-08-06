@@ -227,28 +227,12 @@ actor AgentInjectionService {
     }
 
     /// Activate the session's owning terminal app, then VERIFY it became
-    /// frontmost (with a short settle wait, since `activate()` is async). Only
-    /// returns true once the terminal's bundle id matches the frontmost app —
-    /// the precondition for a safe ⌘V. Live-verify only.
+    /// frontmost — the precondition for a safe ⌘V. Routes through the shared
+    /// TerminalActivator so the GW-266 fix (`.activateAllWindows`, fully
+    /// frontmost) applies to paste and to the "Go to terminal" button alike.
     @MainActor
     private static func activateAndVerifyTerminal(forSessionPid pid: Int) async -> Bool {
-        let tree = ProcessTreeBuilder.shared.buildTree()
-        guard let terminalPid = ProcessTreeBuilder.shared.findTerminalPid(forProcess: pid, tree: tree),
-              let app = NSRunningApplication(processIdentifier: pid_t(terminalPid)),
-              let bundleId = app.bundleIdentifier else {
-            return false
-        }
-
-        app.activate()
-
-        // Poll briefly for the activation to take — frontmost updates async.
-        for _ in 0..<10 {
-            if NSWorkspace.shared.frontmostApplication?.bundleIdentifier == bundleId {
-                return true
-            }
-            try? await Task.sleep(for: .milliseconds(20))
-        }
-        return false
+        await TerminalActivator.activateAndVerify(forSessionPid: pid) != nil
     }
 
     /// Put `text` on the pasteboard and synthesize ⌘V (and Return when

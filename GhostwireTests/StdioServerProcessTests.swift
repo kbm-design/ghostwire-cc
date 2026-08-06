@@ -34,4 +34,18 @@ final class StdioServerProcessTests: XCTestCase {
         XCTAssertTrue(process.stderrTail.contains("boom"))
         process.terminate()
     }
+
+    func testStderrTailRedactsInjectedEnvironmentSecrets() throws {
+        let process = StdioServerProcess()
+        try process.start(
+            executablePath: "/bin/sh",
+            arguments: ["-c", "echo $GHOSTWIRE_TEST_SECRET >&2; sleep 30"],
+            environment: ["GHOSTWIRE_TEST_SECRET": "super-secret-token"]
+        )
+        let deadline = Date().addingTimeInterval(3)
+        while process.stderrTail.isEmpty && Date() < deadline { usleep(50_000) }
+        XCTAssertFalse(process.stderrTail.contains("super-secret-token"))
+        XCTAssertTrue(process.stderrTail.contains("[redacted]"))
+        process.terminate()
+    }
 }

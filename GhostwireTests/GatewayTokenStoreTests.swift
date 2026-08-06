@@ -28,6 +28,13 @@ final class GatewayTokenStoreTests: XCTestCase {
         GatewayTokenStore(fileURL: tempURL, keychain: keychain)
     }
 
+    private func store(
+        keychain: MCPSecretStore = InMemoryMCPSecretStore(),
+        temporaryName: @escaping @Sendable (String) -> String
+    ) -> GatewayTokenStore {
+        GatewayTokenStore(fileURL: tempURL, keychain: keychain, temporaryName: temporaryName)
+    }
+
     private func fileContents() -> String? {
         (try? Data(contentsOf: tempURL)).flatMap { String(data: $0, encoding: .utf8) }
     }
@@ -156,5 +163,41 @@ final class GatewayTokenStoreTests: XCTestCase {
         let dir = tempURL.deletingLastPathComponent()
         let entries = try FileManager.default.contentsOfDirectory(atPath: dir.path)
         XCTAssertEqual(entries, [tempURL.lastPathComponent])
+    }
+
+    func testUnreadableExistingFileIsNotClobberedWithFreshToken() throws {
+        let dir = tempURL.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try Data("registered-token".utf8).write(to: tempURL)
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: tempURL.path)
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: tempURL.path)
+        }
+
+        let loaded = store().loadOrCreate()
+
+        XCTAssertFalse(loaded.isEmpty)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: tempURL.path)
+        XCTAssertEqual(fileContents(), "registered-token")
+    }
+
+    func testTemporarySymlinkIsNotFollowedWhenWritingToken() throws {
+        let dir = tempURL.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let victim = dir.appendingPathComponent("victim.txt")
+        try Data("do-not-touch".utf8).write(to: victim)
+        let tempName = ".gateway-token.fixed"
+        let temp = dir.appendingPathComponent(tempName)
+        try FileManager.default.createSymbolicLink(at: temp, withDestinationURL: victim)
+
+        let keychain = InMemoryMCPSecretStore()
+        keychain.setString("legacy-token", account: MCPSecretAccount.gatewayToken)
+
+        let loaded = store(keychain: keychain) { _ in tempName }.loadOrCreate()
+
+        XCTAssertEqual(loaded, "legacy-token")
+        let victimContents = try String(contentsOf: victim, encoding: .utf8)
+        XCTAssertEqual(victimContents, "do-not-touch")
+        XCTAssertNil(fileContents(), "write should fail closed instead of following a symlink")
     }
 }

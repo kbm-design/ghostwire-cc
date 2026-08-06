@@ -14,9 +14,22 @@
 import Foundation
 import MCP
 
-enum GatewayError: Error, Equatable {
+enum GatewayError: LocalizedError, Equatable {
     /// The host called an exposed name that resolves to no downstream tool.
     case unknownTool(String)
+    /// `call_tool` is intentionally read-only-only; mutating tools must be
+    /// called by their directly advertised names so the host can gate them by
+    /// specific capability instead of one generic execute tool.
+    case metaToolRequiresDirectCall(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .unknownTool(let name):
+            return "Unknown gateway tool: \(name)"
+        case .metaToolRequiresDirectCall(let name):
+            return "\(name) is not read-only. Call it by its directly advertised tool name so the host can ask for tool-specific approval."
+        }
+    }
 }
 
 /// Maps an exposed (namespaced) tool name back to its downstream server + the
@@ -24,6 +37,17 @@ enum GatewayError: Error, Equatable {
 struct GatewayRoute: Sendable {
     let serverID: UUID
     let originalName: String
+    let capability: MCPToolCapability
+
+    init(
+        serverID: UUID,
+        originalName: String,
+        capability: MCPToolCapability = .unclassified
+    ) {
+        self.serverID = serverID
+        self.originalName = originalName
+        self.capability = capability
+    }
 }
 
 /// The gateway's merged tool surface plus the routing table behind it.
@@ -88,14 +112,15 @@ struct MCPGatewayCore: Sendable {
             annotations: .init(readOnlyHint: true))
     }
 
-    /// call_tool: invoke any exposed tool by name (e.g. one returned by
-    /// search_tools), including tools outside the working set.
+    /// call_tool: invoke read-only tools by name (e.g. one returned by
+    /// search_tools), including read-only tools outside the working set.
     static var callToolDefinition: Tool {
         Tool(
             name: callToolName,
             description: """
-                Invoke any connected MCP tool by its exposed name (as returned by search_tools), \
-                including tools that are not in the working set.
+                Invoke a read-only connected MCP tool by its exposed name (as returned by search_tools), \
+                including read-only tools that are not in the working set. Mutating tools must be \
+                called directly by their advertised tool name.
                 """,
             inputSchema: .object([
                 "type": .string("object"),
@@ -117,16 +142,11 @@ struct MCPGatewayCore: Sendable {
     /// frequency) plus search_tools and call_tool. Recomputed per build; the
     /// full route map is retained so call_tool/search can still reach anything.
     ///
-    /// Gating tradeoff (GW-184): tools outside the working set are reachable only
-    /// via the generic `call_tool`, so a host that caches "always allow
-    /// call_tool" loses per-tool approval for the long tail (working-set tools
-    /// keep per-name host gating). This matches every major aggregator
-    /// (Composio/Pipedream/Zapier/Klavis), which all relax host per-tool consent
-    /// behind a generic execute tool and lean on server-side authz instead. Our
-    /// authz floor is `MCPServerConfig.allowedTools` (default-deny): call_tool
-    /// can only reach tools the user already allowlisted in the notch. Restoring
-    /// granular gating for the long tail (pin sensitive tools to always-exposed,
-    /// or notch-side per-call prompts) is a tracked fast-follow.
+    /// Gating tradeoff (GW-184): tools outside the working set are reachable via
+    /// the generic `call_tool` only when they classify as read-only. Tools that
+    /// write, destroy, or remain unclassified must be called by a directly
+    /// advertised name so the host's per-tool consent does not collapse into a
+    /// blanket approval of `call_tool`.
     func publicExposure() async -> GatewayExposure {
         let full = await buildExposure()
         let snapshot = await usage.snapshot()
@@ -158,7 +178,11 @@ struct MCPGatewayCore: Sendable {
                         annotations: tool.annotations,
                         outputSchema: tool.outputSchema
                     ))
-                routes[exposedName] = GatewayRoute(serverID: server.id, originalName: tool.name)
+                let capability = MCPToolClassifier.classify(
+                    tool: MCPToolInfo(tool: tool), serverName: server.displayName
+                ).capability
+                routes[exposedName] = GatewayRoute(
+                    serverID: server.id, originalName: tool.name, capability: capability)
             }
         }
         return GatewayExposure(tools: tools, routes: routes)
@@ -175,7 +199,10 @@ struct MCPGatewayCore: Sendable {
             guard let inner = arguments?["name"]?.stringValue else {
                 throw GatewayError.unknownTool(Self.callToolName)
             }
-            return try await route(exposedName: inner, arguments: arguments?["arguments"]?.objectValue)
+            return try await route(
+                exposedName: inner,
+                arguments: arguments?["arguments"]?.objectValue,
+                requireMetaCallable: true)
         default:
             return try await route(exposedName: exposedName, arguments: arguments)
         }
@@ -183,11 +210,18 @@ struct MCPGatewayCore: Sendable {
 
     /// Resolve an exposed name to its downstream, log the use (feeds the working
     /// set), and forward the call.
-    private func route(exposedName: String, arguments: [String: Value]?) async throws
+    private func route(
+        exposedName: String,
+        arguments: [String: Value]?,
+        requireMetaCallable: Bool = false
+    ) async throws
         -> MCPToolCallOutput {
         let routes = await buildExposure().routes
         guard let route = routes[exposedName] else {
             throw GatewayError.unknownTool(exposedName)
+        }
+        if requireMetaCallable, route.capability != .readOnly {
+            throw GatewayError.metaToolRequiresDirectCall(exposedName)
         }
         await usage.record(exposedName)
         return try await source.call(

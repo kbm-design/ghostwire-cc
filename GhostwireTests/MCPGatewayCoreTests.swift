@@ -176,21 +176,55 @@ final class MCPGatewayCoreTests: XCTestCase {
     func testCallToolMetaRoutesAndLogsInnerTool() async throws {
         let serverID = UUID()
         let source = FakeSource([
-            GatewayUpstreamServer(id: serverID, displayName: "Linear", tools: [bareTool("create_issue")])
+            GatewayUpstreamServer(
+                id: serverID, displayName: "Linear",
+                tools: [
+                    Tool(
+                        name: "list_issues", description: "",
+                        inputSchema: .object(["type": .string("object")]),
+                        annotations: .init(readOnlyHint: true))
+                ])
         ])
         let usage = FakeUsage()
         let core = MCPGatewayCore(source: source, usage: usage)
 
         _ = try await core.call(
             exposedName: "call_tool",
-            arguments: ["name": .string("linear_create_issue"),
-                        "arguments": .object(["title": .string("Bug")])])
+            arguments: ["name": .string("linear_list_issues"),
+                        "arguments": .object(["limit": .int(10)])])
 
         XCTAssertEqual(source.recorded?.serverID, serverID)
-        XCTAssertEqual(source.recorded?.tool, "create_issue")
-        XCTAssertEqual(source.recorded?.arguments?["title"], .string("Bug"))
+        XCTAssertEqual(source.recorded?.tool, "list_issues")
+        XCTAssertEqual(source.recorded?.arguments?["limit"], .int(10))
         let logged = await usage.recordedNames()
-        XCTAssertEqual(logged, ["linear_create_issue"])  // the inner tool, not "call_tool"
+        XCTAssertEqual(logged, ["linear_list_issues"])  // the inner tool, not "call_tool"
+    }
+
+    func testCallToolMetaRejectsMutatingInnerTool() async {
+        let source = FakeSource([
+            server("Linear", [
+                Tool(
+                    name: "create_issue", description: "",
+                    inputSchema: .object(["type": .string("object")]),
+                    annotations: .init(readOnlyHint: false, destructiveHint: false))
+            ])
+        ])
+        let usage = FakeUsage()
+        let core = MCPGatewayCore(source: source, usage: usage)
+
+        do {
+            _ = try await core.call(
+                exposedName: "call_tool",
+                arguments: ["name": .string("linear_create_issue")])
+            XCTFail("expected call_tool to reject mutating tools")
+        } catch GatewayError.metaToolRequiresDirectCall(let name) {
+            XCTAssertEqual(name, "linear_create_issue")
+            XCTAssertNil(source.recorded)
+            let logged = await usage.recordedNames()
+            XCTAssertTrue(logged.isEmpty)
+        } catch {
+            XCTFail("wrong error: \(error)")
+        }
     }
 
     func testCallToolMetaUnknownInnerThrows() async {

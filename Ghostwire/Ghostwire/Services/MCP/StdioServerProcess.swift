@@ -21,6 +21,7 @@ final class StdioServerProcess {
 
     /// Last ~2KB of stderr — surfaced in the server detail view on failure.
     private(set) var stderrTail = ""
+    private var stderrRedactor = StdioSecretRedactor(values: [])
     var onTermination: ((Int32) -> Void)?
 
     var isRunning: Bool { process.isRunning }
@@ -45,6 +46,7 @@ final class StdioServerProcess {
         var env = ProcessInfo.processInfo.environment
         environment.forEach { env[$0.key] = $0.value }
         process.environment = env
+        stderrRedactor = StdioSecretRedactor(values: Array(environment.values))
         process.standardInput = stdinPipe
         process.standardOutput = stdoutPipe
         process.standardError = stderrPipe
@@ -53,7 +55,8 @@ final class StdioServerProcess {
             guard let self, let chunk = String(data: handle.availableData, encoding: .utf8),
                 !chunk.isEmpty
             else { return }
-            self.stderrTail = String((self.stderrTail + chunk).suffix(2048))
+            self.stderrTail = String(
+                (self.stderrTail + self.stderrRedactor.redact(chunk)).suffix(2048))
         }
         process.terminationHandler = { [weak self] proc in
             self?.stderrPipe.fileHandleForReading.readabilityHandler = nil
@@ -79,5 +82,22 @@ final class StdioServerProcess {
                 kill(process.processIdentifier, SIGKILL)
             }
         }
+    }
+}
+
+private struct StdioSecretRedactor {
+    private let secrets: [String]
+
+    init(values: [String]) {
+        self.secrets = Array(Set(values.filter { $0.count >= 8 }))
+            .sorted { $0.count > $1.count }
+    }
+
+    func redact(_ input: String) -> String {
+        var output = input
+        for secret in secrets {
+            output = output.replacingOccurrences(of: secret, with: "[redacted]")
+        }
+        return output
     }
 }

@@ -52,13 +52,13 @@ actor GatewayHTTPListener {
     /// the app's live connections (runs in-process, so it can reach them).
     typealias ServerFactory = @Sendable (String, StatefulHTTPServerTransport) async throws -> Server
 
-    /// Optional per-request gate (bearer token). Returns nil to allow, or an
+    /// Mandatory per-request gate (bearer token). Returns nil to allow, or an
     /// `HTTPResponse` to reject. Runs before session routing.
     typealias RequestGate = @Sendable (HTTPRequest) -> HTTPResponse?
 
     private let configuration: Configuration
     private let serverFactory: ServerFactory
-    private let gate: RequestGate?
+    private let gate: RequestGate
     private var channel: Channel?
     private var group: MultiThreadedEventLoopGroup?
     private var sessions: [String: SessionContext] = [:]
@@ -74,7 +74,7 @@ actor GatewayHTTPListener {
 
     init(
         configuration: Configuration = Configuration(),
-        gate: RequestGate? = nil,
+        gate: @escaping RequestGate,
         serverFactory: @escaping ServerFactory
     ) {
         self.configuration = configuration
@@ -121,7 +121,7 @@ actor GatewayHTTPListener {
     // MARK: - Request routing
 
     func handleHTTPRequest(_ request: HTTPRequest) async -> HTTPResponse {
-        if let gate, let rejection = gate(request) {
+        if let rejection = gate(request) {
             return rejection
         }
 

@@ -102,6 +102,69 @@ final class GatewayRegistrationAuditTests: XCTestCase {
         XCTAssertTrue(status.needsReconnect)
     }
 
+    // Codex adversarial review, 2026-08-06: an entry we can't read a token out
+    // of is BROKEN, not absent. Skipping it reported `.notRegistered` — or
+    // `.current`, if another scope matched — while Claude kept using that entry
+    // and 401ing. That is the exact silent failure this audit exists to catch.
+
+    func testEntryWithNoHeadersIsStaleNotAbsent() throws {
+        let url = try write([
+            "mcpServers": [
+                GatewayRegistration.serverName: [
+                    "type": "http", "url": "http://127.0.0.1:51762/mcp",
+                ]
+            ]
+        ])
+        XCTAssertEqual(
+            GatewayRegistrationAudit.status(liveToken: "live", configURL: url),
+            .stale(scopes: ["user"]))
+    }
+
+    func testEntryWithoutAnAuthorizationHeaderIsStale() throws {
+        let url = try write([
+            "mcpServers": [
+                GatewayRegistration.serverName: [
+                    "type": "http", "headers": ["X-Other": "value"],
+                ]
+            ]
+        ])
+        XCTAssertEqual(
+            GatewayRegistrationAudit.status(liveToken: "live", configURL: url),
+            .stale(scopes: ["user"]))
+    }
+
+    func testEntryWithNonStringHeaderValueIsStale() throws {
+        let url = try write([
+            "mcpServers": [
+                GatewayRegistration.serverName: [
+                    "type": "http", "headers": ["Authorization": 12345],
+                ]
+            ]
+        ])
+        XCTAssertEqual(
+            GatewayRegistrationAudit.status(liveToken: "live", configURL: url),
+            .stale(scopes: ["user"]))
+    }
+
+    /// The nastiest shape: a healthy user-scoped entry masking a broken
+    /// project-scoped one. Reporting `.current` here would tell the user
+    /// everything is fine while a real registration keeps failing.
+    func testBrokenProjectEntryIsNotMaskedByAHealthyUserEntry() throws {
+        let url = try write([
+            "mcpServers": [GatewayRegistration.serverName: entry(token: "live")],
+            "projects": [
+                "/Users/someone": [
+                    "mcpServers": [
+                        GatewayRegistration.serverName: ["type": "http"]  // no headers
+                    ]
+                ]
+            ],
+        ])
+        let status = GatewayRegistrationAudit.status(liveToken: "live", configURL: url)
+        XCTAssertEqual(status, .stale(scopes: ["/Users/someone"]))
+        XCTAssertTrue(status.needsReconnect)
+    }
+
     func testConfigWithoutOurServerIsNotRegistered() throws {
         let url = try write(["mcpServers": ["something-else": entry(token: "live")]])
         XCTAssertEqual(

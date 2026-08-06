@@ -146,13 +146,33 @@ enum MCPToolClassifier {
     /// Verb inference. 97.6% coverage on the measured 246-name corpus; the
     /// misses are verb-less UI helpers (`ui_evaluate`, `pine_compile`), which
     /// correctly land in `.unclassified`.
+    ///
+    /// **Scans every token and keeps the most dangerous** — it must not return
+    /// on the first verb it recognises. `get_or_create_issue` and
+    /// `read_write_file` both lead with a read verb and then mutate; returning
+    /// early classified them `.readOnly`, and with section-level bulk allow that
+    /// is not a cosmetic badge error — the whole Read-only section goes into
+    /// `allowedTools`, which is the gateway's authorization floor. A tool that
+    /// mutates would have ridden in on one click.
+    ///
+    /// The asymmetry is deliberate: a false "destructive" costs the user one
+    /// manual toggle, a false "read-only" silently grants a mutating capability.
+    /// Measured cost on the 246-name corpus: **3 names change, all of them to a
+    /// stricter class** (`draw_clear`, `draw_remove_one`, `replay_stop`), and
+    /// the unclassified share is unchanged at 2.4%.
     static func inferredCapability(for name: String, serverName: String) -> MCPToolCapability {
+        var strongest: MCPToolCapability?
         for token in nameTokens(name, serverName: serverName) {
-            if destructiveVerbs.contains(token) { return .destructive }
-            if writeVerbs.contains(token) { return .writes }
-            if readVerbs.contains(token) { return .readOnly }
+            if destructiveVerbs.contains(token) {
+                return .destructive  // nothing outranks this, so stop
+            }
+            if writeVerbs.contains(token) {
+                strongest = .writes
+            } else if readVerbs.contains(token), strongest == nil {
+                strongest = .readOnly
+            }
         }
-        return .unclassified
+        return strongest ?? .unclassified
     }
 
     static func classify(

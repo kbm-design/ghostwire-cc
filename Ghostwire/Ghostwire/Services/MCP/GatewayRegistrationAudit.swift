@@ -65,12 +65,17 @@ enum GatewayRegistrationAudit {
             guard let servers = servers as? [String: Any],
                 let entry = servers[GatewayRegistration.serverName] as? [String: Any]
             else { return }
-            guard let registered = bearerToken(from: entry) else { return }
-            if registered == liveToken {
-                currentScopes.append(scope)
-            } else {
+            // A registration we can't read a token out of is BROKEN, not absent.
+            // Skipping it reported `.notRegistered` — or worse `.current`, if
+            // another scope happened to match — while Claude went on using that
+            // entry and 401ing against us. That is precisely the silent failure
+            // this audit exists to surface, so an unparseable entry counts as
+            // stale for its scope.
+            guard let registered = bearerToken(from: entry), registered == liveToken else {
                 staleScopes.append(scope)
+                return
             }
+            currentScopes.append(scope)
         }
 
         inspect(root["mcpServers"], scope: userScopeLabel)

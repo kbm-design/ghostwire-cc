@@ -14,11 +14,7 @@ struct MusicControllerSelectionView: View {
     @Default(.mediaController) var mediaController
     
     private var availableMediaControllers: [MediaControllerType] {
-        if MusicManager.shared.isNowPlayingDeprecated {
-            return MediaControllerType.allCases.filter { $0 != .nowPlaying }
-        } else {
-            return MediaControllerType.allCases
-        }
+        MediaControllerType.allCases
     }
     
     @State private var selectedMediaController: MediaControllerType = Defaults[.mediaController]
@@ -95,11 +91,6 @@ struct ControllerOptionView: View {
                     .font(.subheadline)
                     .foregroundColor(.secondary)
                 
-                if controller == .youtubeMusic, let url = URL(string: "https://github.com/pear-devs/pear-desktop") {
-                    Link("View on GitHub: pear-devs/pear-desktop", destination: url)
-                        .font(.subheadline)
-                        .padding(.top, 2)
-                }
             }
             
             Spacer()
@@ -121,14 +112,10 @@ struct ControllerOptionView: View {
 extension MediaControllerType {
     var description: String {
         switch self {
-        case .nowPlaying:
-            return "Works with most media apps, including browsers, to detect what's playing. Note: This may be removed in a future macOS version."
         case .spotify:
             return "Connects directly to the Spotify app."
         case .appleMusic:
             return "Connects directly to the Apple Music app."
-        case .youtubeMusic:
-            return "Requires a third-party client with API plugin enabled."
         }
     }
 }

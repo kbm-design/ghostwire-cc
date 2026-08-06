@@ -721,27 +721,12 @@ struct Media: View {
             } header: {
                 Text("Media Source")
             } footer: {
-                if MusicManager.shared.isNowPlayingDeprecated {
-                    HStack {
-                        Text("YouTube Music requires this third-party app to be installed: ")
-                            .foregroundStyle(.secondary)
-                            .font(.caption)
-                        Link(
-                            "https://github.com/pear-devs/pear-desktop",
-                            destination: URL(string: "https://github.com/pear-devs/pear-desktop")!
-                        )
-                        .font(.caption)
-                        .foregroundColor(.blue)  // Ensures it's visibly a link
-                    }
-                    .leadingFooter()
-                } else {
-                    Text(
-                        "'Now Playing' was the only option on previous versions and works with all media apps."
-                    )
-                    .foregroundStyle(.secondary)
-                    .font(.caption)
-                    .leadingFooter()
-                }
+                Text(
+                    "Ghostwire reads playback from the app itself, so the app needs to be running. Audio playing elsewhere — a browser tab, for example — won't appear."
+                )
+                .foregroundStyle(.secondary)
+                .font(.caption)
+                .leadingFooter()
             }
             
             Section {
@@ -802,13 +787,8 @@ struct Media: View {
         .navigationTitle("Media")
     }
 
-    // Only show controller options that are available on this macOS version
     private var availableMediaControllers: [MediaControllerType] {
-        if MusicManager.shared.isNowPlayingDeprecated {
-            return MediaControllerType.allCases.filter { $0 != .nowPlaying }
-        } else {
-            return MediaControllerType.allCases
-        }
+        MediaControllerType.allCases
     }
 }
 

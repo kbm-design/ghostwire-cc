@@ -40,13 +40,14 @@ extension Notification.Name {
     static let mediaControllerChanged = Notification.Name("mediaControllerChanged")
 }
 
-// Media controller types for selection in settings
+// Media controller types for selection in settings.
+// `nowPlaying` (MediaRemoteAdapter) and `youtubeMusic` were removed — see
+// `defaultMediaController` below. Stored preferences naming either value no
+// longer decode and fall back to the key default, which is the intent.
 enum MediaControllerType: String, CaseIterable, Identifiable, Defaults.Serializable {
-    case nowPlaying = "Now Playing"
     case appleMusic = "Apple Music"
     case spotify = "Spotify"
-    case youtubeMusic = "YouTube Music"
-    
+
     var id: String { self.rawValue }
 }
 
@@ -274,13 +275,25 @@ extension Defaults.Keys {
     // Show or hide the title bar
     static let hideTitleBar = Key<Bool>("hideTitleBar", default: true)
     
-    // Helper to determine the default media controller based on NowPlaying deprecation status
+    // Spotify is the preferred default (~36% US streaming share vs Apple Music's ~30.7%,
+    // and the skew is stronger among developers), but only when it is actually installed.
+    // `createController(for:)` never returns nil for either remaining case, so the
+    // Apple-Music fallback in MusicManager can't rescue a bad default — the choice has to
+    // be right here. Apple Music ships with macOS, so it is always a safe landing spot.
+    //
+    // The former default was `.nowPlaying`, backed by the bundled MediaRemoteAdapter
+    // framework. That framework was linked into the app even though we only ever
+    // drove it out-of-process via `mediaremote-adapter.pl`, so its in-process code
+    // ran on a dispatch queue and trapped (EXC_BREAKPOINT) 8–40 minutes after launch
+    // — 28 crashes on 2026-08-05 alone. Spotify and Apple Music are driven by
+    // AppleScript against the apps themselves and carry no such dependency.
+    //
+    // Trade-off accepted when this shipped: system-wide detection is gone, so audio
+    // playing anywhere else (notably a browser tab) no longer surfaces in the notch.
     static var defaultMediaController: MediaControllerType {
-        if MusicManager.shared.isNowPlayingDeprecated {
-            return .appleMusic
-        } else {
-            return .nowPlaying
-        }
+        let spotifyInstalled = NSWorkspace.shared
+            .urlForApplication(withBundleIdentifier: "com.spotify.client") != nil
+        return spotifyInstalled ? .spotify : .appleMusic
     }
 
     static let didClearLegacyURLCacheV1 = Key<Bool>("didClearLegacyURLCache_v1", default: false)

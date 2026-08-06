@@ -40,3 +40,18 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="-" \
             | xcpretty || exit ${PIPESTATUS[0]}
+
+      - name: Python hook tests
+        run: python3 -m unittest GhostwireTests/ghostwire_hook_tests.py
+
+      - name: Swift tests
+        run: |
+          xcodebuild test \
+            -scheme "$SCHEME" \
+            -destination 'platform=macOS' \
+            -configuration Debug \
+            -clonedSourcePackagesDirPath .spm \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="-" \
+            | xcpretty || exit ${PIPESTATUS[0]}

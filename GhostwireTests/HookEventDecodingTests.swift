@@ -2,15 +2,16 @@
 //  HookEventDecodingTests.swift
 //  GhostwireTests
 //
-//  GW-341: Cursor's beforeMCPExecution sends `tool_input` JSON-ENCODED AS A
-//  STRING ("tool_input": "{\"nodeId\":\"1-0\"}"), not as an object. A decoder
-//  that insists on an object throws and the whole event is dropped — and for a
-//  PermissionRequest that means the socket closes with no verdict, so the hook
-//  fails open and the tool runs without the human ever seeing it.
+//  GW-341 plus hook-hardening regression coverage.
 //
-//  The contract these tests pin down: required fields (session_id, cwd, event,
-//  status) still decide whether an event is valid; every OPTIONAL field is
-//  best-effort and must never take an approval down with it.
+//  Cursor's beforeMCPExecution sends `tool_input` JSON-encoded as a string
+//  ("tool_input": "{\"nodeId\":\"1-0\"}"), not as an object. A decoder that
+//  insists on an object throws and drops the whole event; for PermissionRequest
+//  that means the socket closes with no verdict and the hook can fail open.
+//
+//  Contract pinned here: required fields (session_id, cwd, event, status) still
+//  decide whether an event is valid. Optional fields are best-effort and must
+//  never take an approval down.
 //
 
 import XCTest
@@ -22,9 +23,9 @@ final class HookEventDecodingTests: XCTestCase {
         try JSONDecoder().decode(HookEvent.self, from: Data(json.utf8))
     }
 
-    // MARK: - The GW-341 payload, verbatim from the hook log
+    // MARK: - Cursor string-encoded tool input
 
-    /// Captured 2026-07-29 01:05:48 from `log stream … category == "Hooks"`.
+    /// Captured 2026-07-29 01:05:48 from `log stream ... category == "Hooks"`.
     func testCursorMCPGateWithStringEncodedToolInputDecodes() throws {
         let event = try decode(#"""
         {"session_id": "5757d4e4-3ba7-499a-beb0-4cb73a49ab98",
@@ -37,17 +38,14 @@ final class HookEventDecodingTests: XCTestCase {
          "tool_use_id": "ghostwire-92a57c257d9f4c1f81b8524fe09d182a"}
         """#)
 
-        // Identity — the half the user sees as a wrong-coloured tag.
         XCTAssertEqual(event.source, "cursor")
         XCTAssertEqual(event.sessionId, "5757d4e4-3ba7-499a-beb0-4cb73a49ab98")
-
-        // The approval half: the event has to survive AND stay decidable.
         XCTAssertTrue(event.expectsResponse)
         XCTAssertEqual(event.toolUseId, "ghostwire-92a57c257d9f4c1f81b8524fe09d182a")
         XCTAssertEqual(event.toolInput?["nodeId"]?.value as? String, "1-0")
     }
 
-    /// The string-encoded object can itself contain arrays (get_font_family_info).
+    /// The string-encoded object can itself contain arrays.
     func testStringEncodedToolInputWithNestedArrayDecodes() throws {
         let event = try decode(#"""
         {"session_id": "s", "cwd": "/tmp", "event": "PermissionRequest",
@@ -61,8 +59,7 @@ final class HookEventDecodingTests: XCTestCase {
         XCTAssertEqual(names?.first as? String, "Geist")
     }
 
-    /// GW-139 rule: the human approves what they can see. A `tool_input` that
-    /// isn't JSON at all must still reach the approval surface, not vanish.
+    /// A `tool_input` that is not JSON must still reach the approval surface.
     func testNonJSONStringToolInputIsPreservedNotDropped() throws {
         let event = try decode(#"""
         {"session_id": "s", "cwd": "/tmp", "event": "PermissionRequest",
@@ -73,7 +70,7 @@ final class HookEventDecodingTests: XCTestCase {
         XCTAssertEqual(event.toolInput?["input"]?.value as? String, "rm -rf build")
     }
 
-    // MARK: - Regressions: the shapes that already worked
+    // MARK: - Regressions: previously valid shapes
 
     func testClaudeObjectToolInputStillDecodes() throws {
         let event = try decode(#"""
@@ -98,10 +95,8 @@ final class HookEventDecodingTests: XCTestCase {
         XCTAssertEqual(event.source, "cursor")
     }
 
-    // MARK: - No optional field may take the whole event down
+    // MARK: - Optional field drift must not drop the event
 
-    /// The generalised GW-341 lesson: shape drift in any optional field costs
-    /// at most that field. Anything stricter silently drops approvals.
     func testUnexpectedlyShapedOptionalFieldsDoNotDropTheEvent() throws {
         let event = try decode(#"""
         {"session_id": "s", "cwd": "/tmp", "event": "PermissionRequest",
@@ -115,11 +110,53 @@ final class HookEventDecodingTests: XCTestCase {
         XCTAssertEqual(event.toolInput?["a"]?.value as? Int, 1)
         XCTAssertNil(event.pid)
         XCTAssertNil(event.tty)
+        XCTAssertNil(event.toolUseId)
     }
 
-    /// Required fields still gate validity — a payload with no event name is
-    /// genuinely unusable and should fail loudly rather than half-register.
+    func testOptionalGarbageDoesNotDropPermissionRequest() throws {
+        let event = try decode(#"""
+        {
+          "session_id": "decode-session",
+          "cwd": "/tmp/ghostwire",
+          "event": "PermissionRequest",
+          "status": "waiting_for_approval",
+          "pid": {"unexpected": true},
+          "tty": ["not", "a", "string"],
+          "tool": "Bash",
+          "tool_input": "rm -rf /tmp/example",
+          "tool_use_id": 12345,
+          "notification_type": {"bad": "shape"},
+          "message": ["bad"],
+          "source": {"bad": "shape"},
+          "transcript_path": false
+        }
+        """#)
+
+        XCTAssertEqual(event.sessionId, "decode-session")
+        XCTAssertEqual(event.event, "PermissionRequest")
+        XCTAssertEqual(event.status, "waiting_for_approval")
+        XCTAssertNil(event.pid)
+        XCTAssertNil(event.tty)
+        XCTAssertEqual(event.tool, "Bash")
+        XCTAssertEqual(event.toolInput?["input"]?.value as? String, "rm -rf /tmp/example")
+        XCTAssertNil(event.toolUseId)
+        XCTAssertTrue(event.expectsResponse)
+    }
+
+    // MARK: - Required fields still gate validity
+
     func testMissingRequiredFieldStillThrows() {
         XCTAssertThrowsError(try decode(#"{"cwd": "/tmp", "event": "Stop", "status": "idle"}"#))
+    }
+
+    func testRequiredFieldTypeMismatchStillThrows() {
+        XCTAssertThrowsError(try decode(#"""
+        {
+          "session_id": 123,
+          "cwd": "/tmp/ghostwire",
+          "event": "PermissionRequest",
+          "status": "waiting_for_approval"
+        }
+        """#))
     }
 }

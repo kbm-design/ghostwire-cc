@@ -169,5 +169,21 @@ final class SessionApprovalPhaseTests: XCTestCase {
 
         let phase = await phase(of: sessionId)
         XCTAssertEqual(phase?.isWaitingForApproval, false)
+        let session = await SessionStore.shared.session(for: sessionId)
+        XCTAssertEqual(session?.pendingPermissions.isEmpty, true)
+    }
+
+    func testTerminalApprovalClearsPendingPermissionQueue() async {
+        let sessionId = "audit-terminal-approve-\(UUID().uuidString)"
+        await setupPendingApproval(sessionId: sessionId, toolUseId: "toolu_parent_bash")
+
+        await SessionStore.shared.process(.hookReceived(makeEvent(
+            sessionId: sessionId, event: "PostToolUse", status: "processing",
+            tool: "Bash", toolUseId: "toolu_parent_bash"
+        )))
+
+        let session = await SessionStore.shared.session(for: sessionId)
+        XCTAssertEqual(session?.phase.isWaitingForApproval, false)
+        XCTAssertEqual(session?.pendingPermissions.isEmpty, true)
     }
 }

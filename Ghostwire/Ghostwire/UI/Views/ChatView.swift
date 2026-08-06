@@ -56,6 +56,10 @@ struct ChatView: View {
         session.phase.approvalToolName
     }
 
+    private var approvalToolId: String? {
+        session.pendingToolId
+    }
+
     
     var body: some View {
         ZStack {
@@ -81,7 +85,7 @@ struct ChatView: View {
                 .frame(maxHeight: hasPendingChoice ? Self.contextStripHeight : .infinity)
 
                 // Approval bar, interactive prompt, or Input bar
-                if let tool = approvalTool {
+                if let tool = approvalTool, let toolUseId = approvalToolId {
                     if tool == "AskUserQuestion" {
                         // GW-321 State B: render the actual question + options when
                         // the payload parses. The "answer in terminal" bar is now
@@ -132,7 +136,7 @@ struct ChatView: View {
                             removal: .opacity
                         ))
                     } else {
-                        approvalBar(tool: tool)
+                        approvalBar(tool: tool, toolUseId: toolUseId)
                             .transition(.asymmetric(
                                 insertion: .opacity.combined(with: .move(edge: .bottom)),
                                 removal: .opacity
@@ -639,7 +643,7 @@ struct ChatView: View {
 
     // MARK: - Approval Bar
 
-    private func approvalBar(tool: String) -> some View {
+    private func approvalBar(tool: String, toolUseId: String) -> some View {
         ChatApprovalBar(
             tool: tool,
             toolInput: session.pendingToolInput,
@@ -647,8 +651,8 @@ struct ChatView: View {
             // mode renders this untruncated; the lossy `toolInput` is only
             // the compact inline fallback.
             toolRawInput: session.pendingToolRawInput,
-            onApprove: { approvePermission() },
-            onDeny: { denyPermission() }
+            onApprove: { approvePermission(toolUseId: toolUseId) },
+            onDeny: { denyPermission(toolUseId: toolUseId) }
         )
     }
 
@@ -688,12 +692,12 @@ struct ChatView: View {
         }
     }
 
-    private func approvePermission() {
-        sessionMonitor.approvePermission(sessionId: sessionId)
+    private func approvePermission(toolUseId: String) {
+        sessionMonitor.approvePermission(sessionId: sessionId, toolUseId: toolUseId)
     }
 
-    private func denyPermission() {
-        sessionMonitor.denyPermission(sessionId: sessionId, reason: nil)
+    private func denyPermission(toolUseId: String) {
+        sessionMonitor.denyPermission(sessionId: sessionId, toolUseId: toolUseId, reason: nil)
     }
 
     /// GW-321 State B: deliver a Choice answer over the socket already held open
@@ -706,8 +710,13 @@ struct ChatView: View {
     /// into `decision.message`, and the model reads it as the answer.
     private func answerChoice(_ request: AskUserQuestionRequest, answers: [String: String],
                               completion: @escaping (Bool) -> Void) {
+        guard let toolUseId = session.pendingToolId else {
+            completion(false)
+            return
+        }
         sessionMonitor.denyPermission(
             sessionId: sessionId,
+            toolUseId: toolUseId,
             reason: request.replyMessage(answers: answers),
             delivered: { wasDelivered in
                 Task { @MainActor in completion(wasDelivered) }
@@ -725,8 +734,13 @@ struct ChatView: View {
     /// row. Measured in GW-322; worth keeping, because the notch must not be a
     /// quieter way to hand an agent broader permissions than the terminal would.
     private func acceptPlan(completion: @escaping (Bool) -> Void) {
+        guard let toolUseId = session.pendingToolId else {
+            completion(false)
+            return
+        }
         sessionMonitor.approvePermission(
             sessionId: sessionId,
+            toolUseId: toolUseId,
             delivered: { wasDelivered in
                 Task { @MainActor in completion(wasDelivered) }
             }
@@ -740,8 +754,13 @@ struct ChatView: View {
     /// this works for sessions State D can't reach.
     private func revisePlan(_ request: ExitPlanModeRequest, feedback: String,
                             completion: @escaping (Bool) -> Void) {
+        guard let toolUseId = session.pendingToolId else {
+            completion(false)
+            return
+        }
         sessionMonitor.denyPermission(
             sessionId: sessionId,
+            toolUseId: toolUseId,
             reason: request.reviseMessage(feedback: feedback),
             delivered: { wasDelivered in
                 Task { @MainActor in completion(wasDelivered) }

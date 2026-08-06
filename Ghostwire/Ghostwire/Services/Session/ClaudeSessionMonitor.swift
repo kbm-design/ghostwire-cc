@@ -63,25 +63,6 @@ class ClaudeSessionMonitor: ObservableObject {
                 if event.event == "PostToolUse", let toolUseId = event.toolUseId {
                     HookSocketServer.shared.cancelPendingPermission(toolUseId: toolUseId)
                 }
-            },
-            onPermissionFailure: { sessionId, toolUseId in
-                // GW-207: a held permission socket that can no longer be written
-                // (hook process gone / its wait elapsed) is the provable
-                // "timed out" signal. Stamp the matching history alert. Pending
-                // permissions cleared by a plain Stop with no verdict carry no
-                // such signal — they stay unanswered (the absence state).
-                Task { @MainActor in
-                    AlertHistoryStore.shared.markPermissionOutcome(
-                        sessionId: sessionId,
-                        toolUseId: toolUseId,
-                        outcome: "timedOut"
-                    )
-                }
-                Task {
-                    await SessionStore.shared.process(
-                        .permissionSocketFailed(sessionId: sessionId, toolUseId: toolUseId)
-                    )
-                }
             }
         )
     }
@@ -95,6 +76,14 @@ class ClaudeSessionMonitor: ObservableObject {
     /// GW-322: `delivered` mirrors `denyPermission` — it reports whether the
     /// verdict actually reached the held hook socket, so an Accept can show
     /// sent/failed instead of assuming it landed.
+    ///
+    /// GW-362: the session event is emitted **from inside** that completion and
+    /// branches on the write result. It used to be sent unconditionally right
+    /// after the call, so a verdict that never reached the agent still recorded
+    /// as an approval — `AlertHistoryStore` said `timedOut` while `SessionStore`
+    /// said approved, about the same event. Worse, `.permissionApproved` clears
+    /// `waitingForApproval`, which tears down the plan-review bar and takes its
+    /// failed/Terminal affordance with it on the one path where it matters.
     func approvePermission(sessionId: String,
                            delivered: (@Sendable (Bool) -> Void)? = nil) {
         Task {
@@ -119,18 +108,26 @@ class ClaudeSessionMonitor: ObservableObject {
                         outcome: wasDelivered ? "allowed" : "timedOut"
                     )
                 }
+                Task {
+                    await SessionStore.shared.process(
+                        wasDelivered
+                            ? .permissionApproved(sessionId: sessionId, toolUseId: toolUseId)
+                            : .permissionSocketFailed(sessionId: sessionId, toolUseId: toolUseId)
+                    )
+                }
                 delivered?(wasDelivered)
             }
-
-            await SessionStore.shared.process(
-                .permissionApproved(sessionId: sessionId, toolUseId: permission.toolUseId)
-            )
         }
     }
 
     /// GW-321: `delivered` reports whether the verdict actually reached the held
     /// hook socket, so a Choice answer can show sent/failed rather than assuming
     /// it landed. A stale socket means the agent never got it.
+    ///
+    /// GW-362: same conditional emit as `approvePermission`, and it matters more
+    /// here — this one call is the transport for three affordances (plain Deny,
+    /// State B's Choice answer, and State C's Revise), so the unconditional
+    /// `.permissionDenied` was the same defect across A, B and C.
     func denyPermission(sessionId: String, reason: String?,
                         delivered: (@Sendable (Bool) -> Void)? = nil) {
         Task {
@@ -155,12 +152,17 @@ class ClaudeSessionMonitor: ObservableObject {
                         outcome: wasDelivered ? "denied" : "timedOut"
                     )
                 }
+                Task {
+                    await SessionStore.shared.process(
+                        wasDelivered
+                            ? .permissionDenied(sessionId: sessionId,
+                                                toolUseId: toolUseId,
+                                                reason: reason)
+                            : .permissionSocketFailed(sessionId: sessionId, toolUseId: toolUseId)
+                    )
+                }
                 delivered?(wasDelivered)
             }
-
-            await SessionStore.shared.process(
-                .permissionDenied(sessionId: sessionId, toolUseId: permission.toolUseId, reason: reason)
-            )
         }
     }
 

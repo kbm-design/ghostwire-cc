@@ -47,10 +47,23 @@ struct ChatChoiceBar: View {
     /// Which questions are in free-text mode.
     @State private var freeTextActive: Set<String> = []
 
-    /// Locked once the reply is in flight or delivered — the socket reply is
-    /// one-shot per gate. Re-enabled only on confirmed failure (spec §5).
+    /// Locked once the reply is in flight, delivered, **or confirmed failed** —
+    /// the socket reply is one-shot per gate, and a failure means the gate is
+    /// gone rather than retryable.
+    ///
+    /// GW-362: spec §5's "re-enable only on confirmed failure" cannot work
+    /// against this socket — `sendPermissionResponse` drops the pending entry
+    /// before the write and closes the fd on the failure branch too, so a retry
+    /// is guaranteed to fail. See `ChatPlanReviewBar.isLocked`; the two bars
+    /// share this state machine deliberately.
     private var isLocked: Bool {
-        delivery == .sending || delivery == .sent
+        delivery != .idle
+    }
+
+    /// The escape hatch outlives the verdict — after a failed delivery it is
+    /// the only thing that can still resolve the gate.
+    private var isTerminalActionEnabled: Bool {
+        delivery != .sending
     }
 
     private var current: AskUserQuestion {
@@ -347,14 +360,20 @@ struct ChatChoiceBar: View {
                     Text("Terminal")
                         .font(.system(size: 12, weight: .medium))
                 }
-                .foregroundColor(.white.opacity(0.6))
+                // GW-362: promoted on a failed delivery — it is the only live
+                // control left once the held socket is gone.
+                .foregroundColor(delivery == .failed ? .black : .white.opacity(0.6))
                 .padding(.horizontal, 12)
                 .padding(.vertical, 7)
-                .background(Color.white.opacity(0.08), in: Capsule())
+                .background(delivery == .failed
+                            ? Color.white.opacity(0.95)
+                            : Color.white.opacity(0.08), in: Capsule())
             }
             .buttonStyle(.plain)
-            .disabled(isLocked)
-            .help("Answer in the terminal instead")
+            .disabled(!isTerminalActionEnabled)
+            .help(delivery == .failed
+                  ? "The answer didn't reach \(agentName) — answer in the terminal"
+                  : "Answer in the terminal instead")
 
             if delivery != .idle {
                 deliveryStatus
@@ -395,7 +414,8 @@ struct ChatChoiceBar: View {
         case .idle:    return "Send"
         case .sending: return "Sending..."
         case .sent:    return "Sent"
-        case .failed:  return "Retry"
+        // Not "Retry" (GW-362) — this gate's socket is gone; see isLocked.
+        case .failed:  return "Didn't send"
         }
     }
 
@@ -415,10 +435,12 @@ struct ChatChoiceBar: View {
         case .failed:
             HStack(spacing: 4) {
                 Image(systemName: "exclamationmark.triangle.fill")
-                Text("Didn't reach \(agentName)")
+                // GW-362: name where the question now lives, not just the failure.
+                Text("Didn't reach \(agentName) — answer in the terminal")
             }
             .font(.system(size: 11, weight: .medium))
             .foregroundColor(.yellow.opacity(0.9))
+            .fixedSize(horizontal: false, vertical: true)
         case .sending, .idle:
             EmptyView()
         }

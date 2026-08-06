@@ -170,9 +170,6 @@ struct PendingPermission: Sendable {
 /// Callback for hook events
 typealias HookEventHandler = @Sendable (HookEvent) -> Void
 
-/// Callback for permission response failures (socket died)
-typealias PermissionFailureHandler = @Sendable (_ sessionId: String, _ toolUseId: String) -> Void
-
 /// Unix domain socket server that receives events from Claude Code hooks
 /// Uses GCD DispatchSource for non-blocking I/O
 class HookSocketServer {
@@ -182,7 +179,6 @@ class HookSocketServer {
     private var serverSocket: Int32 = -1
     private var acceptSource: DispatchSourceRead?
     private var eventHandler: HookEventHandler?
-    private var permissionFailureHandler: PermissionFailureHandler?
     private let queue = DispatchQueue(label: "com.ghostwire.notch.socket", qos: .userInitiated)
 
     /// Pending permission requests indexed by toolUseId
@@ -220,17 +216,16 @@ class HookSocketServer {
     }
 
     /// Start the socket server
-    func start(onEvent: @escaping HookEventHandler, onPermissionFailure: PermissionFailureHandler? = nil) {
+    func start(onEvent: @escaping HookEventHandler) {
         queue.async { [weak self] in
-            self?.startServer(onEvent: onEvent, onPermissionFailure: onPermissionFailure)
+            self?.startServer(onEvent: onEvent)
         }
     }
 
-    private func startServer(onEvent: @escaping HookEventHandler, onPermissionFailure: PermissionFailureHandler?) {
+    private func startServer(onEvent: @escaping HookEventHandler) {
         guard serverSocket < 0 else { return }
 
         eventHandler = onEvent
-        permissionFailureHandler = onPermissionFailure
 
         unlink(Self.socketPath)
 
@@ -312,13 +307,6 @@ class HookSocketServer {
         queue.async { [weak self] in
             let ok = self?.sendPermissionResponse(toolUseId: toolUseId, decision: decision, reason: reason) ?? false
             delivered?(ok)
-        }
-    }
-
-    /// Respond to permission by sessionId (finds the most recent pending for that session)
-    func respondToPermissionBySession(sessionId: String, decision: String, reason: String? = nil) {
-        queue.async { [weak self] in
-            self?.sendPermissionResponseBySession(sessionId: sessionId, decision: decision, reason: reason)
         }
     }
 
@@ -680,57 +668,6 @@ class HookSocketServer {
         return writeSucceeded
     }
 
-    private func sendPermissionResponseBySession(sessionId: String, decision: String, reason: String?) {
-        permissionsLock.lock()
-        let matchingPending = pendingPermissions.values
-            .filter { $0.sessionId == sessionId }
-            .sorted { $0.receivedAt > $1.receivedAt }
-            .first
-
-        guard let pending = matchingPending else {
-            permissionsLock.unlock()
-            logger.debug("No pending permission for session: \(sessionId.prefix(8), privacy: .public)")
-            return
-        }
-
-        pendingPermissions.removeValue(forKey: pending.toolUseId)
-        permissionsLock.unlock()
-
-        let response = HookResponse(decision: decision, reason: reason)
-        guard let data = try? JSONEncoder().encode(response) else {
-            closeClientSocket(pending.clientSocket, cleanupPending: true)
-            permissionFailureHandler?(sessionId, pending.toolUseId)
-            return
-        }
-
-        let age = Date().timeIntervalSince(pending.receivedAt)
-        logger.info("Sending response: \(decision, privacy: .public) for \(sessionId.prefix(8), privacy: .public) tool:\(pending.toolUseId.prefix(12), privacy: .public) (age: \(String(format: "%.1f", age), privacy: .public)s)")
-
-        let writeSuccess = data.withUnsafeBytes { bytes -> Bool in
-            guard let baseAddress = bytes.baseAddress else {
-                logger.error("Failed to get data buffer address")
-                return false
-            }
-            let result = write(pending.clientSocket, baseAddress, data.count)
-            if result == data.count {
-                logger.debug("Write succeeded: \(result) bytes")
-                return true
-            }
-            if result < 0 {
-                logger.error("Write failed with errno: \(errno)")
-            } else {
-                logger.error("Short write: \(result) of \(data.count) bytes")
-            }
-            return false
-        }
-
-        if writeSuccess {
-            Darwin.close(pending.clientSocket)
-        } else {
-            closeClientSocket(pending.clientSocket, cleanupPending: true)
-            permissionFailureHandler?(sessionId, pending.toolUseId)
-        }
-    }
 }
 
 // MARK: - AnyCodable for tool_input

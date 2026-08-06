@@ -26,6 +26,11 @@ actor SessionStore {
     /// Pending file syncs (debounced)
     private var pendingSyncs: [String: Task<Void, Never>] = [:]
 
+    /// GW-362: deferred cleanup for gates whose verdict never reached the agent,
+    /// keyed by toolUseId. Without these, a socket failure could hold
+    /// `waitingForApproval` — and the persistent glow — forever.
+    private var undeliveredGateSweeps: [String: Task<Void, Never>] = [:]
+
     /// Sessions archived or ended this app run (GW-194). Their transcripts
     /// keep a fresh mtime, so without a tombstone the next discovery rescan
     /// would resurrect them as provisional rows. Cleared by a real hook event.
@@ -428,6 +433,11 @@ actor SessionStore {
 
     private func processPermissionApproved(sessionId: String, toolUseId: String) async {
         guard var session = sessions[sessionId] else { return }
+        guard isUnansweredGate(session, toolUseId: toolUseId) else {
+            // GW-362: a late allow for a gate the terminal already resolved.
+            Self.logger.debug("Dropping stale approval for \(toolUseId.prefix(12), privacy: .public) - gate already answered")
+            return
+        }
 
         // Update tool status in chat history first
         updateToolStatus(in: &session, toolId: toolUseId, status: .running)
@@ -518,6 +528,31 @@ actor SessionStore {
     }
 
     /// Find the next tool waiting for approval (excluding a specific tool ID)
+    /// Whether `toolUseId` is still an unanswered gate in this session.
+    ///
+    /// GW-362 (Codex adversarial review, finding 1). Verdict outcomes are now
+    /// emitted from the socket-write completion, which runs on the socket queue
+    /// and is therefore **unordered** against the hook stream. If the user
+    /// answers in the terminal first, `PostToolUse` clears the gate and marks
+    /// the tool succeeded — and a delivery completion arriving after that would
+    /// otherwise walk a finished tool back to `.running` (allow) or `.error`
+    /// (socket failure), showing a resolved plan as failed.
+    ///
+    /// True when it is the live permission context, or when it still sits in
+    /// `chatItems` awaiting approval — multi-tool gates can be answered out of
+    /// order, so the phase context alone is too narrow.
+    private func isUnansweredGate(_ session: SessionState, toolUseId: String) -> Bool {
+        if case .waitingForApproval(let ctx) = session.phase, ctx.toolUseId == toolUseId {
+            return true
+        }
+        for item in session.chatItems where item.id == toolUseId {
+            if case .toolCall(let tool) = item.type {
+                return tool.status == .waitingForApproval
+            }
+        }
+        return false
+    }
+
     private func findNextPendingTool(in session: SessionState, excluding toolId: String) -> (id: String, name: String, timestamp: Date)? {
         for item in session.chatItems {
             if item.id == toolId { continue }
@@ -530,6 +565,11 @@ actor SessionStore {
 
     private func processPermissionDenied(sessionId: String, toolUseId: String, reason: String?) async {
         guard var session = sessions[sessionId] else { return }
+        guard isUnansweredGate(session, toolUseId: toolUseId) else {
+            // GW-362: see processPermissionApproved.
+            Self.logger.debug("Dropping stale denial for \(toolUseId.prefix(12), privacy: .public) - gate already answered")
+            return
+        }
 
         // Update tool status in chat history first
         updateToolStatus(in: &session, toolId: toolUseId, status: .error)
@@ -564,15 +604,114 @@ actor SessionStore {
         sessions[sessionId] = session
     }
 
+    /// A verdict that could not be written to the held hook socket.
+    ///
+    /// GW-362 decided what this means for the UI, and it is deliberately *not*
+    /// a resolution. The agent never got the verdict, so the gate is still open
+    /// — it just cannot be answered from the notch any more: `sendPermissionResponse`
+    /// drops the pending entry and closes the fd even on the failure branch, so
+    /// there is no socket left to retry against. The decision has moved to the
+    /// terminal.
+    ///
+    /// So the phase is **held** at `waitingForApproval`, which keeps the State
+    /// B/C bar on screen to say "didn't reach the agent — answer in the
+    /// terminal" instead of vanishing as if the verdict had landed. It clears
+    /// itself the moment the agent moves on: `mayExitWaitingForApproval` already
+    /// releases on a matching `PostToolUse`, on `Stop`, and on `ended`, which is
+    /// spec §5's "resolved in-terminal → the notch affordance self-invalidates".
+    ///
+    /// This used to drop the phase to `.idle`, but nothing ever reached it — its
+    /// only trigger was `respondToPermissionBySession`, which had no callers.
     private func processSocketFailure(sessionId: String, toolUseId: String) async {
         guard var session = sessions[sessionId] else { return }
+        guard isUnansweredGate(session, toolUseId: toolUseId) else {
+            // GW-362 (review finding 1): the terminal already resolved this
+            // gate. Marking it .error now would show a finished plan as failed.
+            Self.logger.debug("Dropping stale socket failure for \(toolUseId.prefix(12), privacy: .public) - gate already answered")
+            return
+        }
 
         // Mark the failed tool's status as error
         updateToolStatus(in: &session, toolId: toolUseId, status: .error)
 
-        // Check if there are other tools still waiting for approval
+        // A tool whose verdict never landed does not release the gate, so there
+        // is no "move to the next pending tool" here — the failed one is still
+        // the pending one. Hold the phase exactly as it is.
+        sessions[sessionId] = session
+
+        // GW-362 (review finding 2): holding the gate depends on a later hook
+        // event to release it, and the socket-failure case is exactly when that
+        // event may never come — the hook already exited, and the user may kill
+        // the agent, close the terminal, or simply never answer. Bound it.
+        if let pid = session.pid, !Self.processIsAlive(pid) {
+            Self.logger.info("Undelivered gate for a dead agent (pid \(pid)) - releasing immediately")
+            releaseUndeliveredGate(sessionId: sessionId, toolUseId: toolUseId)
+            return
+        }
+        scheduleUndeliveredGateSweep(sessionId: sessionId, toolUseId: toolUseId)
+    }
+
+    // MARK: - Undelivered gate cleanup (GW-362)
+
+    /// Is the agent process still there to answer in its terminal? A gate whose
+    /// agent is gone can never be resolved, so it must not keep glowing.
+    private nonisolated static func processIsAlive(_ pid: Int) -> Bool {
+        guard pid > 0 else { return false }
+        // ESRCH means gone; EPERM means alive but not ours to signal.
+        return kill(pid_t(pid), 0) == 0 || errno == EPERM
+    }
+
+    /// Backstop for an undelivered gate whose agent is still alive: the user may
+    /// yet answer in the terminal, so give them a window rather than yanking the
+    /// bar away — but don't hold it forever if they never do.
+    ///
+    /// Ten minutes, deliberately generous. What a held gate actually costs while
+    /// it waits is one row in the Agents tab and a *static* 0.32 edge-glow floor
+    /// (`ContentView.effectiveGlowOpacity`) — the pulse animation fires only when
+    /// a permission first arrives, so nothing re-nudges the user. A cheap standing
+    /// cue is worth more than a short deadline that clears a gate out from under
+    /// someone who stepped away mid-task. The dead-agent check below handles the
+    /// case that actually needs prompt cleanup.
+    private var undeliveredGateTTLSeconds: Double = 600
+
+    /// Test seam — 180s is unusable in a unit test.
+    func setUndeliveredGateTTLForTesting(_ seconds: Double) {
+        undeliveredGateTTLSeconds = seconds
+    }
+
+    private func scheduleUndeliveredGateSweep(sessionId: String, toolUseId: String) {
+        undeliveredGateSweeps[toolUseId]?.cancel()
+        let ttl = undeliveredGateTTLSeconds
+        undeliveredGateSweeps[toolUseId] = Task {
+            try? await Task.sleep(nanoseconds: UInt64(ttl * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            await self.sweepUndeliveredGate(sessionId: sessionId, toolUseId: toolUseId)
+        }
+    }
+
+    private func sweepUndeliveredGate(sessionId: String, toolUseId: String) {
+        undeliveredGateSweeps.removeValue(forKey: toolUseId)
+        guard let session = sessions[sessionId],
+              isUnansweredGate(session, toolUseId: toolUseId) else {
+            // Released normally by a hook event — nothing to do. This is the
+            // expected path when the user answers in the terminal.
+            return
+        }
+        Self.logger.info("Undelivered gate \(toolUseId.prefix(12), privacy: .public) unanswered after \(self.undeliveredGateTTLSeconds)s - releasing")
+        releaseUndeliveredGate(sessionId: sessionId, toolUseId: toolUseId)
+        publishState()
+    }
+
+    /// Drop a gate that can no longer be answered. The tool keeps its `.error`
+    /// status (the verdict genuinely never landed); only the phase is released,
+    /// so the session stops demanding attention it can't act on.
+    private func releaseUndeliveredGate(sessionId: String, toolUseId: String) {
+        guard var session = sessions[sessionId] else { return }
+        guard case .waitingForApproval(let ctx) = session.phase, ctx.toolUseId == toolUseId else {
+            return
+        }
         if let nextPending = findNextPendingTool(in: session, excluding: toolUseId) {
-            // Another tool is waiting - switch to that tool's context
+            // Another gate is still genuinely open — hand off rather than idle.
             let newPhase = SessionPhase.waitingForApproval(PermissionContext(
                 toolUseId: nextPending.id,
                 toolName: nextPending.name,
@@ -581,18 +720,10 @@ actor SessionStore {
             ))
             if session.phase.canTransition(to: newPhase) {
                 session.phase = newPhase
-                Self.logger.debug("Switched to next pending tool after socket failure: \(nextPending.id.prefix(12), privacy: .public)")
             }
         } else {
-            // No more pending tools - clear permission state
-            if case .waitingForApproval(let ctx) = session.phase, ctx.toolUseId == toolUseId {
-                session.phase = .idle
-            } else if case .waitingForApproval = session.phase {
-                // The failed tool wasn't in phase context, but no others pending
-                session.phase = .idle
-            }
+            session.phase = .idle
         }
-
         sessions[sessionId] = session
     }
 

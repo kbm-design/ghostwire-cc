@@ -33,6 +33,19 @@ struct MCPServerRuntime {
         case needsTrust
         case needsAuth
         case failed(reason: String)
+
+        /// GW-255: the Settings state vocabulary (§8.4), so the mapping lives in
+        /// one place instead of being re-derived in every view that shows a dot.
+        /// (`isConnected` already lives on this type — see `MCPFeedSource`.)
+        var severity: SettingsStateSeverity {
+            switch self {
+            case .connected: return .ok
+            case .connecting: return .pending
+            case .needsTrust, .needsAuth: return .attention
+            case .failed: return .error
+            case .disconnected: return .inert
+            }
+        }
     }
 
     var status: Status = .disconnected
@@ -181,14 +194,27 @@ final class MCPClientService: ObservableObject {
     }
 
     func setToolAllowed(serverID: UUID, tool: String, allowed: Bool) {
-        guard var config = store.server(id: serverID) else { return }
+        setToolsAllowed(serverID: serverID, tools: [tool], allowed: allowed)
+    }
+
+    /// Bulk form, for GW-255's "Allow all read-only" / per-category selection.
+    ///
+    /// This exists because the obvious loop over `setToolAllowed` is O(n) DISK
+    /// WRITES: each call ends in `store.update`, which persists
+    /// `mcp-servers.json`. Allowing Linear's 36 read-only tools that way meant
+    /// 36 serialize-and-write cycles, 36 `objectWillChange` invalidations of a
+    /// list currently on screen, and 36 feed-config signals — for one click.
+    /// Mutate once, persist once, signal once.
+    func setToolsAllowed(serverID: UUID, tools: [String], allowed: Bool) {
+        guard !tools.isEmpty, var config = store.server(id: serverID) else { return }
         if allowed {
-            config.allowedTools.insert(tool)
+            config.allowedTools.formUnion(tools)
         } else {
-            config.allowedTools.remove(tool)
+            config.allowedTools.subtract(tools)
             // Disallowing implies unbinding (GW-214): a binding left behind would
             // sit in Settings looking active while failing closed on every poll.
-            config.feedTools?.removeAll { $0.tool == tool }
+            let removed = Set(tools)
+            config.feedTools?.removeAll { removed.contains($0.tool) }
         }
         store.update(config)
         objectWillChange.send()

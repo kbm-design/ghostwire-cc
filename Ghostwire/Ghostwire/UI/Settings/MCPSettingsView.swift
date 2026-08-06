@@ -2,13 +2,25 @@
 //  MCPSettingsView.swift
 //  Ghostwire
 //
-//  GW-219 deliverable surface (debug-grade, simple first pass — the full
-//  settings redesign comes later). List + manual add.
+//  GW-219 shipped this debug-grade ("the full settings redesign comes later").
+//  GW-255 is that redesign, and the first consumer of the GW-356 §8 vocabulary.
 //
-//  GW-332 Phase 1: import replaces paste as the top of the funnel. Most people
-//  running Ghostwire already have MCP servers configured for Claude Code, so
-//  the first thing offered is the list they already have, not a blank field.
-//  Manual add stays as the escape hatch.
+//  Three structural changes:
+//
+//  1. It's a `Form` now. Every other detail pane is one; this was a bare `List`
+//     and inherited none of the grouped styling the rest of Settings shares
+//     (§8 "The frame").
+//  2. The server detail is a DRILL-IN, not a sheet (§8.6) — every control in it
+//     writes through immediately, so there was never anything for Cancel to
+//     mean. The Settings shell is a `NavigationSplitView` switching on a
+//     sidebar string, so there is no navigation bar to come back through; the
+//     pane supplies its own back control instead.
+//  3. The gateway gets a real section, at the top, because what it exposes is
+//     the list underneath it.
+//
+//  GW-332 Phase 1 stands: import is the top of the funnel, manual add is the
+//  escape hatch. Most people running Ghostwire already have MCP servers
+//  configured for Claude Code.
 //
 
 import SwiftUI
@@ -17,18 +29,24 @@ struct MCPSettingsView: View {
     @ObservedObject private var service = MCPClientService.shared
     @State private var showingAddSheet = false
     @State private var showingImportSheet = false
-    @State private var selectedServer: IdentifiableUUID?
+    @State private var openServerID: UUID?
 
     /// Whether there's a Claude Code config to read at all. Checked once per
     /// appearance rather than per redraw — this is a stat() in a view body.
     @State private var canImport = false
 
+    /// The drill-in target, resolved fresh each render: a server removed from
+    /// under us must fall back to the list rather than render an empty pane.
+    private var openServer: MCPServerConfig? {
+        openServerID.flatMap { service.store.server(id: $0) }
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            if service.store.servers.isEmpty {
-                emptyState
+        Group {
+            if let openServer {
+                detail(for: openServer)
             } else {
-                serverList
+                root
             }
         }
         .onAppear { canImport = AgentMCPConfigImporter.claudeCodeConfigExists }
@@ -45,19 +63,51 @@ struct MCPSettingsView: View {
                 } label: {
                     Label("Add Server", systemImage: "plus")
                 }
+                // Adding a server from inside one server's page is incoherent —
+                // the drill-in is a place, not a list.
+                .disabled(openServer != nil)
             }
         }
-        .sheet(isPresented: $showingAddSheet) {
-            MCPAddServerSheet()
-        }
-        .sheet(isPresented: $showingImportSheet) {
-            MCPImportSheet()
-        }
-        .sheet(item: $selectedServer) { wrapped in
-            MCPServerDetailView(serverID: wrapped.id)
-        }
+        .sheet(isPresented: $showingAddSheet) { MCPAddServerSheet() }
+        .sheet(isPresented: $showingImportSheet) { MCPImportSheet() }
     }
 
+    // MARK: - Root
+
+    @ViewBuilder private var root: some View {
+        Form {
+            GatewaySection()
+
+            Section {
+                if service.store.servers.isEmpty {
+                    emptyState
+                } else {
+                    ForEach(service.store.servers) { server in
+                        MCPServerRow(server: server, runtime: service.runtime(id: server.id))
+                            .contentShape(Rectangle())
+                            // §8.2: the whole row taps ONLY because the tap
+                            // drills in. It carries no control of its own.
+                            .onTapGesture { openServerID = server.id }
+                    }
+                }
+            } header: {
+                Text("Servers")
+            } footer: {
+                if !service.store.servers.isEmpty {
+                    Text(
+                        "Local servers run a program on this Mac. Hosted servers are reached "
+                        + "over the network. Open one to choose which of its tools Ghostwire may call."
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .leadingFooter()
+                }
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    /// §8.3 / GW-367: state the section's JOB, not its emptiness.
     private var emptyState: some View {
         VStack(spacing: 8) {
             Image(systemName: "server.rack")
@@ -78,65 +128,82 @@ struct MCPSettingsView: View {
                 Button("Add manually…") { showingAddSheet = true }
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding()
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 24)
     }
 
-    private var serverList: some View {
-        List {
-            ForEach(service.store.servers) { server in
-                MCPServerRow(server: server, runtime: service.runtime(id: server.id))
-                    .contentShape(Rectangle())
-                    .onTapGesture { selectedServer = IdentifiableUUID(id: server.id) }
+    // MARK: - Drill-in
+
+    private func detail(for server: MCPServerConfig) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // The back affordance the Settings shell can't provide. Kept
+            // outside the Form so it reads as navigation chrome rather than a
+            // row you could mistake for a setting.
+            Button {
+                openServerID = nil
+            } label: {
+                Label("Servers", systemImage: "chevron.left")
+                    .labelStyle(.titleAndIcon)
+                    .font(.callout)
             }
+            .buttonStyle(.link)
+            .padding(.horizontal, 20)
+            .padding(.top, 12)
+            .padding(.bottom, 2)
+            .accessibilityLabel("Back to servers")
+            .keyboardShortcut("[", modifiers: .command)
+
+            MCPServerDetailView(serverID: server.id, onRemoved: { openServerID = nil })
         }
     }
 }
 
-private struct IdentifiableUUID: Identifiable {
-    let id: UUID
-}
+// MARK: - Server row
 
 struct MCPServerRow: View {
     let server: MCPServerConfig
     let runtime: MCPServerRuntime?
 
+    private var severity: SettingsStateSeverity { runtime?.status.severity ?? .inert }
+
     var body: some View {
         HStack(spacing: 8) {
-            statusDot
+            if runtime?.status == .connecting {
+                ProgressView().controlSize(.small).frame(width: 8, height: 8)
+            } else {
+                SettingsStateDot(severity: severity, caption: statusCaption ?? "Connected")
+            }
             VStack(alignment: .leading, spacing: 2) {
                 Text(server.name)
-                // Every non-idle state gets WORDS, not just a dot colour
-                // (docs/macos-conventions.md §6 — never signal by colour
-                // alone). Before this, a freshly imported stdio server showed
+                // §8.4: every non-default state gets WORDS, not just a dot
+                // colour. Before this, a freshly imported stdio server showed
                 // an unlabelled grey dot and read as "the import didn't work".
                 if let caption = statusCaption {
                     Text(caption)
                         .font(.caption)
-                        .foregroundStyle(statusColor)
+                        .foregroundStyle(severity.color)
                         .lineLimit(1)
                 }
             }
             Spacer()
+            // The allowed count, not the tool count: a connected server with an
+            // empty allowlist can't be called, and "41 tools" implied otherwise.
             if case .connected(let count) = runtime?.status {
-                Text("\(count) tools").font(.caption).foregroundStyle(.secondary)
+                Text("\(server.allowedTools.count) of \(count) allowed")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
             }
-            Text(server.transport.displayBadge)
-                .font(.caption2.monospaced())
-                .padding(.horizontal, 5).padding(.vertical, 2)
-                .background(RoundedRectangle(cornerRadius: 4).fill(.quaternary))
+            MCPTransportBadge(transport: server.transport)
+            Image(systemName: "chevron.right")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
         }
         .padding(.vertical, 2)
     }
 
-    private var statusDot: some View {
-        Circle().frame(width: 8, height: 8)
-            .foregroundStyle(statusColor)
-            .accessibilityLabel(statusCaption ?? "Connected")
-    }
-
-    /// nil for the two states that need no explanation: connected (the tool
-    /// count already says so) and never-touched.
+    /// nil for the two states that need no explanation: connected (the count
+    /// already says so) and never-touched.
     private var statusCaption: String? {
         switch runtime?.status {
         case .failed(let reason): return reason
@@ -146,17 +213,9 @@ struct MCPServerRow: View {
         case .connected, .disconnected, nil: return nil
         }
     }
-
-    private var statusColor: Color {
-        switch runtime?.status {
-        case .connected: return .green
-        case .connecting: return .yellow
-        case .needsAuth, .needsTrust: return .orange
-        case .failed: return .red
-        case .disconnected, nil: return .gray
-        }
-    }
 }
+
+// MARK: - Add sheet
 
 struct MCPAddServerSheet: View {
     @Environment(\.dismiss) private var dismiss
@@ -190,9 +249,7 @@ struct MCPAddServerSheet: View {
     @State private var oauthPort = ""
     @State private var oauthPath = ""
 
-    private var detectedTransport: String {
-        detectMCPTransportKind(from: input) == .http ? "http" : "stdio"
-    }
+    private var detectedTransport: MCPTransportKind { detectMCPTransportKind(from: input) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -200,24 +257,27 @@ struct MCPAddServerSheet: View {
             TextField("Name", text: $name)
             TextField("Hosted URL or command (e.g. npx -y @example/server)", text: $input)
                 .font(.body.monospaced())
-            if detectedTransport == "stdio" && !input.isEmpty {
+            if detectedTransport == .stdio && !input.isEmpty {
                 envSection
                 Label(
                     "This runs a program on your Mac. Only add commands you trust.",
                     systemImage: "exclamationmark.shield"
                 )
-                .font(.caption).foregroundStyle(.orange)
+                .font(.caption).foregroundStyle(SettingsStateColors.attention)
             }
-            if detectedTransport == "http" && !input.isEmpty {
+            if detectedTransport == .http && !input.isEmpty {
                 httpAuthSection
             }
             if let errorMessage {
-                Text(errorMessage).font(.caption).foregroundStyle(.red)
+                Text(errorMessage).font(.caption).foregroundStyle(SettingsStateColors.error)
             }
             HStack {
                 Spacer()
+                // §8.1: `.cancelAction` ALWAYS set explicitly. Without it Esc
+                // behaved differently in this sheet than in the other two.
                 Button("Cancel") { dismiss() }
-                Button(detectedTransport == "stdio" ? "Trust & Connect" : "Connect") {
+                    .keyboardShortcut(.cancelAction)
+                Button(detectedTransport == .stdio ? "Trust & Connect" : "Connect") {
                     Task { await addAndConnect() }
                 }
                 .keyboardShortcut(.defaultAction)
@@ -225,7 +285,9 @@ struct MCPAddServerSheet: View {
             }
         }
         .padding(20)
-        .frame(width: 440)
+        // §8.1 rung S: one decision, few fields, no list. Was 440 — one of the
+        // three independent guesses the ladder replaced.
+        .frame(width: 420)
     }
 
     private var envSection: some View {
@@ -302,7 +364,7 @@ struct MCPAddServerSheet: View {
         errorMessage = nil
 
         var config: MCPServerConfig
-        if detectedTransport == "http" {
+        if detectedTransport == .http {
             guard let url = URL(string: input.trimmingCharacters(in: .whitespaces)) else {
                 errorMessage = "Invalid URL."
                 return

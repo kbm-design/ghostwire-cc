@@ -50,6 +50,12 @@ struct MCPSettingsView: View {
             }
         }
         .onAppear { canImport = AgentMCPConfigImporter.claudeCodeConfigExists }
+        // Every other detail pane sets one; this pane never did, so the window
+        // kept whichever title was set last and read "General" while MCP was
+        // selected. Stable across the drill-in on purpose — the back control
+        // already says where you are, and retitling the window mid-pane is the
+        // kind of movement that makes a flow feel jumpy.
+        .navigationTitle("MCP Servers")
         .toolbar {
             ToolbarItem {
                 // A plain menu, NOT `Menu(primaryAction:)`. The split-button

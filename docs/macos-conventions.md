@@ -61,6 +61,10 @@ constraint:
 - **Settings** is the one surface that **follows system light/dark** — build both.
   Use native SwiftUI **`Form`** with **`Toggle` / `Picker` / `Slider`**; don't
   hand-roll controls there. `NavigationSplitView` with a searchable sidebar.
+  That covers *which control*. For everything in Settings that isn't a `Form`
+  row — sheet widths, list-row anatomy, empty/loading/error states, status
+  vocabulary, inline security copy, and the light-mode `state/` tokens — see
+  [`design-system.md`](./design-system.md) **§8**.
 - Use **SF Symbols** for iconography (weight `.medium`); use `.rounded` numerals
   for HUD/usage.
 - **Keyboard:** global hotkeys open/jump the notch; approval Approve/Deny/Open-

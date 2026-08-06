@@ -91,4 +91,41 @@ final class HookSocketServerCacheTests: XCTestCase {
         let popped = server.popCachedToolUseId(event: makeEvent(sessionId: sessionId, event: "PermissionRequest"))
         XCTAssertEqual(popped, "toolu_x")
     }
+
+    func testNestedToolInputKeyOrderIsCanonical() {
+        let sessionId = "audit-nested-cache-\(UUID().uuidString)"
+        let server = HookSocketServer.shared
+
+        let preInput: [String: AnyCodable] = [
+            "question": AnyCodable([
+                "beta": "2",
+                "alpha": "1",
+                "nested": ["z": "last", "a": "first"],
+            ] as [String: Any])
+        ]
+        let permissionInput: [String: AnyCodable] = [
+            "question": AnyCodable([
+                "nested": ["a": "first", "z": "last"],
+                "alpha": "1",
+                "beta": "2",
+            ] as [String: Any])
+        ]
+
+        server.cacheToolUseId(event: makeEvent(
+            sessionId: sessionId,
+            event: "PreToolUse",
+            tool: "AskUserQuestion",
+            toolInput: preInput,
+            toolUseId: "toolu_nested"
+        ))
+
+        let popped = server.popCachedToolUseId(event: makeEvent(
+            sessionId: sessionId,
+            event: "PermissionRequest",
+            tool: "AskUserQuestion",
+            toolInput: permissionInput
+        ))
+
+        XCTAssertEqual(popped, "toolu_nested")
+    }
 }

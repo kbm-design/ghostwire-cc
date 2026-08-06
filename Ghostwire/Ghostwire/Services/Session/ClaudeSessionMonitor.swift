@@ -61,6 +61,13 @@ class ClaudeSessionMonitor: ObservableObject {
                 }
 
                 if event.event == "PostToolUse", let toolUseId = event.toolUseId {
+                    Task { @MainActor in
+                        AlertHistoryStore.shared.markPermissionOutcome(
+                            sessionId: event.sessionId,
+                            toolUseId: toolUseId,
+                            outcome: "allowed"
+                        )
+                    }
                     HookSocketServer.shared.cancelPendingPermission(toolUseId: toolUseId)
                 }
             },
@@ -92,14 +99,14 @@ class ClaudeSessionMonitor: ObservableObject {
 
     // MARK: - Permission Handling
 
-    func approvePermission(sessionId: String) {
+    func approvePermission(sessionId: String, toolUseId: String) {
         Task {
             guard let session = await SessionStore.shared.session(for: sessionId),
-                  let permission = session.activePermission else {
+                  session.pendingPermissions.contains(where: { $0.toolUseId == toolUseId })
+                    || session.activePermission?.toolUseId == toolUseId else {
                 return
             }
 
-            let toolUseId = permission.toolUseId
             HookSocketServer.shared.respondToPermission(
                 toolUseId: toolUseId,
                 decision: "allow"
@@ -117,19 +124,19 @@ class ClaudeSessionMonitor: ObservableObject {
             }
 
             await SessionStore.shared.process(
-                .permissionApproved(sessionId: sessionId, toolUseId: permission.toolUseId)
+                .permissionApproved(sessionId: sessionId, toolUseId: toolUseId)
             )
         }
     }
 
-    func denyPermission(sessionId: String, reason: String?) {
+    func denyPermission(sessionId: String, toolUseId: String, reason: String?) {
         Task {
             guard let session = await SessionStore.shared.session(for: sessionId),
-                  let permission = session.activePermission else {
+                  session.pendingPermissions.contains(where: { $0.toolUseId == toolUseId })
+                    || session.activePermission?.toolUseId == toolUseId else {
                 return
             }
 
-            let toolUseId = permission.toolUseId
             HookSocketServer.shared.respondToPermission(
                 toolUseId: toolUseId,
                 decision: "deny",
@@ -147,7 +154,7 @@ class ClaudeSessionMonitor: ObservableObject {
             }
 
             await SessionStore.shared.process(
-                .permissionDenied(sessionId: sessionId, toolUseId: permission.toolUseId, reason: reason)
+                .permissionDenied(sessionId: sessionId, toolUseId: toolUseId, reason: reason)
             )
         }
     }

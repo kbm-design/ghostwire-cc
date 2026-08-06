@@ -142,6 +142,40 @@ def send_event(state):
         return None
 
 
+def permission_output(decision):
+    return {
+        "hookSpecificOutput": {
+            "hookEventName": "PermissionRequest",
+            "decision": decision,
+        }
+    }
+
+
+def emit_allow(updated_input=None):
+    decision = {"behavior": "allow"}
+    if updated_input is not None:
+        decision["updatedInput"] = updated_input
+    print(json.dumps(permission_output(decision)))
+    sys.exit(0)
+
+
+def emit_deny(message):
+    output = permission_output({
+        "behavior": "deny",
+        "message": message,
+    })
+    print(json.dumps(output))
+    sys.exit(0)
+
+
+def fail_closed_message(session_id, tool_name, detail):
+    request_marker = f"{session_id}:{tool_name or 'unknown'}:{os.getpid()}"
+    return (
+        f"Denied by Ghostwire: {detail} "
+        f"(request {request_marker})."
+    )
+
+
 def main():
     try:
         data = json.load(sys.stdin)
@@ -220,32 +254,20 @@ def main():
             reason = response.get("reason", "")
 
             if decision == "allow":
-                # Output JSON to approve
-                output = {
-                    "hookSpecificOutput": {
-                        "hookEventName": "PermissionRequest",
-                        "decision": {"behavior": "allow"},
-                    }
-                }
-                print(json.dumps(output))
-                sys.exit(0)
+                emit_allow(response.get("updatedInput"))
 
             elif decision == "deny":
-                # Output JSON to deny
-                output = {
-                    "hookSpecificOutput": {
-                        "hookEventName": "PermissionRequest",
-                        "decision": {
-                            "behavior": "deny",
-                            "message": reason or "Denied by user via Ghostwire",
-                        },
-                    }
-                }
-                print(json.dumps(output))
-                sys.exit(0)
+                emit_deny(reason or fail_closed_message(
+                    session_id,
+                    state.get("tool"),
+                    "the request was denied by the user",
+                ))
 
-        # No response or "ask" - let Claude Code show its normal UI
-        sys.exit(0)
+        emit_deny(fail_closed_message(
+            session_id,
+            state.get("tool"),
+            "Ghostwire did not return an approval decision, so the tool was not run unseen",
+        ))
 
     elif event == "Notification":
         notification_type = data.get("notification_type")

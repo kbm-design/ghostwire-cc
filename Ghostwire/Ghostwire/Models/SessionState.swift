@@ -39,6 +39,10 @@ struct SessionState: Equatable, Identifiable, Sendable {
     /// Current phase in the session lifecycle
     var phase: SessionPhase
 
+    /// Live permission sockets known to the app, in arrival order. This is the
+    /// authoritative queue for approval prompts; transcript chat rows are not.
+    var pendingPermissions: [PermissionContext]
+
     // MARK: - Chat History
 
     /// All chat items for this session (replaces ChatHistoryManager.histories)
@@ -86,6 +90,7 @@ struct SessionState: Equatable, Identifiable, Sendable {
         agent: String? = nil,
         isProvisional: Bool = false,
         phase: SessionPhase = .idle,
+        pendingPermissions: [PermissionContext] = [],
         chatItems: [ChatHistoryItem] = [],
         toolTracker: ToolTracker = ToolTracker(),
         subagentState: SubagentState = SubagentState(),
@@ -107,6 +112,7 @@ struct SessionState: Equatable, Identifiable, Sendable {
         self.agent = agent
         self.isProvisional = isProvisional
         self.phase = phase
+        self.pendingPermissions = pendingPermissions
         self.chatItems = chatItems
         self.toolTracker = toolTracker
         self.subagentState = subagentState

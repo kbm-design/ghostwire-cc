@@ -48,6 +48,28 @@ struct HookEvent: Codable, Sendable {
         case transcriptPath = "transcript_path"
     }
 
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+
+        // Safety boundary: only these required fields may drop an event.
+        sessionId = try container.decode(String.self, forKey: .sessionId)
+        cwd = try container.decode(String.self, forKey: .cwd)
+        event = try container.decode(String.self, forKey: .event)
+        status = try container.decode(String.self, forKey: .status)
+
+        pid = container.decodeLossy(Int.self, forKey: .pid)
+        tty = container.decodeLossy(String.self, forKey: .tty)
+        tool = container.decodeLossy(String.self, forKey: .tool)
+        toolInput = container.decodeToolInput(forKey: .toolInput)
+        toolUseId = container.decodeLossy(String.self, forKey: .toolUseId)
+        notificationType = container.decodeLossy(String.self, forKey: .notificationType)
+        message = container.decodeLossy(String.self, forKey: .message)
+        cmuxWorkspace = container.decodeLossy(String.self, forKey: .cmuxWorkspace)
+        cmuxSurface = container.decodeLossy(String.self, forKey: .cmuxSurface)
+        source = container.decodeLossy(String.self, forKey: .source)
+        transcriptPath = container.decodeLossy(String.self, forKey: .transcriptPath)
+    }
+
     /// Create a copy with updated toolUseId
     init(sessionId: String, cwd: String, event: String, status: String, pid: Int?, tty: String?, tool: String?, toolInput: [String: AnyCodable]?, toolUseId: String?, notificationType: String?, message: String?, cmuxWorkspace: String? = nil, cmuxSurface: String? = nil, source: String? = nil, transcriptPath: String? = nil) {
         self.sessionId = sessionId
@@ -103,6 +125,13 @@ struct HookEvent: Codable, Sendable {
 struct HookResponse: Codable {
     let decision: String // "allow", "deny", or "ask"
     let reason: String?
+    let updatedInput: [String: AnyCodable]?
+
+    init(decision: String, reason: String?, updatedInput: [String: AnyCodable]? = nil) {
+        self.decision = decision
+        self.reason = reason
+        self.updatedInput = updatedInput
+    }
 }
 
 /// Pending permission request waiting for user decision
@@ -321,23 +350,9 @@ class HookSocketServer {
 
     // MARK: - Tool Use ID Cache
 
-    /// Encoder with sorted keys for deterministic cache keys
-    private static let sortedEncoder: JSONEncoder = {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = .sortedKeys
-        return encoder
-    }()
-
     /// Generate cache key from event properties
     private func cacheKey(sessionId: String, toolName: String?, toolInput: [String: AnyCodable]?) -> String {
-        let inputStr: String
-        if let input = toolInput,
-           let data = try? Self.sortedEncoder.encode(input),
-           let str = String(data: data, encoding: .utf8) {
-            inputStr = str
-        } else {
-            inputStr = "{}"
-        }
+        let inputStr = toolInput.map { CanonicalJSON.render($0) } ?? "{}"
         return "\(sessionId):\(toolName ?? "unknown"):\(inputStr)"
     }
 
@@ -469,6 +484,12 @@ class HookSocketServer {
 
         guard let event = try? JSONDecoder().decode(HookEvent.self, from: data) else {
             logger.warning("Failed to parse event: \(String(data: data, encoding: .utf8) ?? "?", privacy: .public)")
+            if Self.payloadLooksLikePermissionRequest(data) {
+                sendImmediateDeny(
+                    to: clientSocket,
+                    reason: "Ghostwire could not decode this permission request. Denying so the tool does not run unseen."
+                )
+            }
             close(clientSocket)
             return
         }
@@ -496,8 +517,11 @@ class HookSocketServer {
                 toolUseId = cachedToolUseId
             } else {
                 logger.warning("Permission request missing tool_use_id for \(event.sessionId.prefix(8), privacy: .public) - no cache hit")
+                sendImmediateDeny(
+                    to: clientSocket,
+                    reason: "Ghostwire could not match this permission request to a tool_use_id. Denying so the tool does not run unseen."
+                )
                 close(clientSocket)
-                eventHandler?(event)
                 return
             }
 
@@ -554,8 +578,8 @@ class HookSocketServer {
         }
         permissionsLock.unlock()
 
-        let response = HookResponse(decision: decision, reason: reason)
-        guard let data = try? JSONEncoder().encode(response) else {
+        let response = hookResponse(for: pending, decision: decision, reason: reason)
+        guard let data = encode(response) else {
             closeClientSocket(pending.clientSocket, cleanupPending: true)
             return false
         }
@@ -563,23 +587,7 @@ class HookSocketServer {
         let age = Date().timeIntervalSince(pending.receivedAt)
         logger.info("Sending response: \(decision, privacy: .public) for \(pending.sessionId.prefix(8), privacy: .public) tool:\(toolUseId.prefix(12), privacy: .public) (age: \(String(format: "%.1f", age), privacy: .public)s)")
 
-        let writeSucceeded = data.withUnsafeBytes { bytes -> Bool in
-            guard let baseAddress = bytes.baseAddress else {
-                logger.error("Failed to get data buffer address")
-                return false
-            }
-            let result = write(pending.clientSocket, baseAddress, data.count)
-            if result == data.count {
-                logger.debug("Write succeeded: \(result) bytes")
-                return true
-            }
-            if result < 0 {
-                logger.error("Write failed with errno: \(errno)")
-            } else {
-                logger.error("Short write: \(result) of \(data.count) bytes")
-            }
-            return false
-        }
+        let writeSucceeded = write(data, to: pending.clientSocket)
 
         if writeSucceeded {
             Darwin.close(pending.clientSocket)
@@ -605,8 +613,8 @@ class HookSocketServer {
         pendingPermissions.removeValue(forKey: pending.toolUseId)
         permissionsLock.unlock()
 
-        let response = HookResponse(decision: decision, reason: reason)
-        guard let data = try? JSONEncoder().encode(response) else {
+        let response = hookResponse(for: pending, decision: decision, reason: reason)
+        guard let data = encode(response) else {
             closeClientSocket(pending.clientSocket, cleanupPending: true)
             permissionFailureHandler?(sessionId, pending.toolUseId)
             return
@@ -615,12 +623,48 @@ class HookSocketServer {
         let age = Date().timeIntervalSince(pending.receivedAt)
         logger.info("Sending response: \(decision, privacy: .public) for \(sessionId.prefix(8), privacy: .public) tool:\(pending.toolUseId.prefix(12), privacy: .public) (age: \(String(format: "%.1f", age), privacy: .public)s)")
 
-        let writeSuccess = data.withUnsafeBytes { bytes -> Bool in
+        let writeSuccess = write(data, to: pending.clientSocket)
+
+        if writeSuccess {
+            Darwin.close(pending.clientSocket)
+        } else {
+            closeClientSocket(pending.clientSocket, cleanupPending: true)
+            permissionFailureHandler?(sessionId, pending.toolUseId)
+        }
+    }
+
+    private func hookResponse(for pending: PendingPermission, decision: String, reason: String?) -> HookResponse {
+        let updatedInput: [String: AnyCodable]?
+        if decision == "allow", pending.event.tool == "ExitPlanMode" {
+            updatedInput = pending.event.toolInput
+        } else {
+            updatedInput = nil
+        }
+        return HookResponse(decision: decision, reason: reason, updatedInput: updatedInput)
+    }
+
+    private func sendImmediateDeny(to clientSocket: Int32, reason: String) {
+        let response = HookResponse(decision: "deny", reason: reason)
+        guard let data = encode(response) else { return }
+        _ = write(data, to: clientSocket)
+    }
+
+    private func encode(_ response: HookResponse) -> Data? {
+        do {
+            return try JSONEncoder().encode(response)
+        } catch {
+            logger.error("Failed to encode hook response: \(String(describing: error), privacy: .public)")
+            return nil
+        }
+    }
+
+    private func write(_ data: Data, to clientSocket: Int32) -> Bool {
+        data.withUnsafeBytes { bytes -> Bool in
             guard let baseAddress = bytes.baseAddress else {
                 logger.error("Failed to get data buffer address")
                 return false
             }
-            let result = write(pending.clientSocket, baseAddress, data.count)
+            let result = Darwin.write(clientSocket, baseAddress, data.count)
             if result == data.count {
                 logger.debug("Write succeeded: \(result) bytes")
                 return true
@@ -632,13 +676,15 @@ class HookSocketServer {
             }
             return false
         }
+    }
 
-        if writeSuccess {
-            Darwin.close(pending.clientSocket)
-        } else {
-            closeClientSocket(pending.clientSocket, cleanupPending: true)
-            permissionFailureHandler?(sessionId, pending.toolUseId)
+    private static func payloadLooksLikePermissionRequest(_ data: Data) -> Bool {
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return false
         }
+        return object["event"] as? String == "PermissionRequest"
+            || object["hook_event_name"] as? String == "PermissionRequest"
+            || object["status"] as? String == "waiting_for_approval"
     }
 }
 
@@ -700,5 +746,74 @@ struct AnyCodable: Codable, @unchecked Sendable {
         default:
             throw EncodingError.invalidValue(value, EncodingError.Context(codingPath: [], debugDescription: "Cannot encode value"))
         }
+    }
+}
+
+private extension KeyedDecodingContainer where Key == HookEvent.CodingKeys {
+    func decodeLossy<T: Decodable>(_ type: T.Type, forKey key: Key) -> T? {
+        try? decodeIfPresent(type, forKey: key)
+    }
+
+    func decodeToolInput(forKey key: Key) -> [String: AnyCodable]? {
+        if let object = try? decodeIfPresent([String: AnyCodable].self, forKey: key) {
+            return object
+        }
+
+        guard let string = try? decodeIfPresent(String.self, forKey: key) else {
+            return nil
+        }
+
+        if let data = string.data(using: .utf8),
+           let object = try? JSONDecoder().decode([String: AnyCodable].self, from: data) {
+            return object
+        }
+
+        return ["input": AnyCodable(string)]
+    }
+}
+
+private enum CanonicalJSON {
+    static func render(_ dictionary: [String: AnyCodable]) -> String {
+        renderDictionary(dictionary.mapValues(\.value))
+    }
+
+    private static func renderValue(_ value: Any) -> String {
+        switch value {
+        case is NSNull:
+            return "null"
+        case let bool as Bool:
+            return bool ? "true" : "false"
+        case let int as Int:
+            return String(int)
+        case let double as Double:
+            return String(double)
+        case let string as String:
+            return renderString(string)
+        case let array as [Any]:
+            return "[" + array.map(renderValue).joined(separator: ",") + "]"
+        case let array as [AnyCodable]:
+            return "[" + array.map { renderValue($0.value) }.joined(separator: ",") + "]"
+        case let dictionary as [String: Any]:
+            return renderDictionary(dictionary)
+        case let dictionary as [String: AnyCodable]:
+            return renderDictionary(dictionary.mapValues(\.value))
+        default:
+            return renderString(String(describing: value))
+        }
+    }
+
+    private static func renderDictionary(_ dictionary: [String: Any]) -> String {
+        let pairs = dictionary.keys.sorted().map { key in
+            "\(renderString(key)):\(renderValue(dictionary[key] ?? NSNull()))"
+        }
+        return "{\(pairs.joined(separator: ","))}"
+    }
+
+    private static func renderString(_ string: String) -> String {
+        if let data = try? JSONEncoder().encode(string),
+           let encoded = String(data: data, encoding: .utf8) {
+            return encoded
+        }
+        return "\"\(string)\""
     }
 }

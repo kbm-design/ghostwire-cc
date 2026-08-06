@@ -173,14 +173,26 @@ actor SessionStore {
 
         if event.event == "PermissionRequest", let toolUseId = event.toolUseId {
             Self.logger.debug("Setting tool \(toolUseId.prefix(12), privacy: .public) status to waitingForApproval")
+            let context = PermissionContext(
+                toolUseId: toolUseId,
+                toolName: event.tool ?? "unknown",
+                toolInput: event.toolInput,
+                receivedAt: Date()
+            )
+            setPendingPermission(context, in: &session)
             updateToolStatus(in: &session, toolId: toolUseId, status: .waitingForApproval)
         }
 
         processToolTracking(event: event, session: &session)
         processSubagentTracking(event: event, session: &session)
 
+        if event.event == "PostToolUse", let toolUseId = event.toolUseId {
+            removePendingPermission(toolUseId: toolUseId, from: &session)
+        }
+
         if event.event == "Stop" {
             session.subagentState = SubagentState()
+            session.pendingPermissions.removeAll()
         }
 
         sessions[sessionId] = session
@@ -246,6 +258,7 @@ actor SessionStore {
                 cwd: event.cwd,
                 agent: session.agent,
                 phase: session.phase,
+                pendingPermissions: session.pendingPermissions,
                 chatItems: session.chatItems,
                 toolTracker: session.toolTracker,
                 subagentState: session.subagentState,
@@ -392,24 +405,29 @@ actor SessionStore {
 
     // MARK: - Permission Processing
 
+    private func setPendingPermission(_ context: PermissionContext, in session: inout SessionState) {
+        removePendingPermission(toolUseId: context.toolUseId, from: &session)
+        session.pendingPermissions.append(context)
+    }
+
+    private func removePendingPermission(toolUseId: String, from session: inout SessionState) {
+        session.pendingPermissions.removeAll { $0.toolUseId == toolUseId }
+    }
+
     private func processPermissionApproved(sessionId: String, toolUseId: String) async {
         guard var session = sessions[sessionId] else { return }
 
         // Update tool status in chat history first
         updateToolStatus(in: &session, toolId: toolUseId, status: .running)
+        removePendingPermission(toolUseId: toolUseId, from: &session)
 
         // Check if there are other tools still waiting for approval
-        if let nextPending = findNextPendingTool(in: session, excluding: toolUseId) {
+        if let nextPending = session.pendingPermissions.first {
             // Another tool is waiting - stay in waitingForApproval with that tool's context
-            let newPhase = SessionPhase.waitingForApproval(PermissionContext(
-                toolUseId: nextPending.id,
-                toolName: nextPending.name,
-                toolInput: nil,  // We don't have the input stored in chatItems
-                receivedAt: nextPending.timestamp
-            ))
+            let newPhase = SessionPhase.waitingForApproval(nextPending)
             if session.phase.canTransition(to: newPhase) {
                 session.phase = newPhase
-                Self.logger.debug("Switched to next pending tool: \(nextPending.id.prefix(12), privacy: .public)")
+                Self.logger.debug("Switched to next pending tool: \(nextPending.toolUseId.prefix(12), privacy: .public)")
             }
         } else {
             // No more pending tools - transition to processing
@@ -463,16 +481,12 @@ actor SessionStore {
 
         // Update session phase if needed
         // If the completed tool was the one in the phase context, switch to next pending or processing
+        removePendingPermission(toolUseId: toolUseId, from: &session)
         if case .waitingForApproval(let ctx) = session.phase, ctx.toolUseId == toolUseId {
-            if let nextPending = findNextPendingTool(in: session, excluding: toolUseId) {
-                let newPhase = SessionPhase.waitingForApproval(PermissionContext(
-                    toolUseId: nextPending.id,
-                    toolName: nextPending.name,
-                    toolInput: nil,
-                    receivedAt: nextPending.timestamp
-                ))
+            if let nextPending = session.pendingPermissions.first {
+                let newPhase = SessionPhase.waitingForApproval(nextPending)
                 session.phase = newPhase
-                Self.logger.debug("Switched to next pending tool after completion: \(nextPending.id.prefix(12), privacy: .public)")
+                Self.logger.debug("Switched to next pending tool after completion: \(nextPending.toolUseId.prefix(12), privacy: .public)")
             } else {
                 if session.phase.canTransition(to: .processing) {
                     session.phase = .processing
@@ -483,35 +497,20 @@ actor SessionStore {
         sessions[sessionId] = session
     }
 
-    /// Find the next tool waiting for approval (excluding a specific tool ID)
-    private func findNextPendingTool(in session: SessionState, excluding toolId: String) -> (id: String, name: String, timestamp: Date)? {
-        for item in session.chatItems {
-            if item.id == toolId { continue }
-            if case .toolCall(let tool) = item.type, tool.status == .waitingForApproval {
-                return (id: item.id, name: tool.name, timestamp: item.timestamp)
-            }
-        }
-        return nil
-    }
-
     private func processPermissionDenied(sessionId: String, toolUseId: String, reason: String?) async {
         guard var session = sessions[sessionId] else { return }
 
         // Update tool status in chat history first
         updateToolStatus(in: &session, toolId: toolUseId, status: .error)
+        removePendingPermission(toolUseId: toolUseId, from: &session)
 
         // Check if there are other tools still waiting for approval
-        if let nextPending = findNextPendingTool(in: session, excluding: toolUseId) {
+        if let nextPending = session.pendingPermissions.first {
             // Another tool is waiting - stay in waitingForApproval with that tool's context
-            let newPhase = SessionPhase.waitingForApproval(PermissionContext(
-                toolUseId: nextPending.id,
-                toolName: nextPending.name,
-                toolInput: nil,
-                receivedAt: nextPending.timestamp
-            ))
+            let newPhase = SessionPhase.waitingForApproval(nextPending)
             if session.phase.canTransition(to: newPhase) {
                 session.phase = newPhase
-                Self.logger.debug("Switched to next pending tool after denial: \(nextPending.id.prefix(12), privacy: .public)")
+                Self.logger.debug("Switched to next pending tool after denial: \(nextPending.toolUseId.prefix(12), privacy: .public)")
             }
         } else {
             // No more pending tools - transition to processing (Claude will handle denial)
@@ -535,19 +534,15 @@ actor SessionStore {
 
         // Mark the failed tool's status as error
         updateToolStatus(in: &session, toolId: toolUseId, status: .error)
+        removePendingPermission(toolUseId: toolUseId, from: &session)
 
         // Check if there are other tools still waiting for approval
-        if let nextPending = findNextPendingTool(in: session, excluding: toolUseId) {
+        if let nextPending = session.pendingPermissions.first {
             // Another tool is waiting - switch to that tool's context
-            let newPhase = SessionPhase.waitingForApproval(PermissionContext(
-                toolUseId: nextPending.id,
-                toolName: nextPending.name,
-                toolInput: nil,
-                receivedAt: nextPending.timestamp
-            ))
+            let newPhase = SessionPhase.waitingForApproval(nextPending)
             if session.phase.canTransition(to: newPhase) {
                 session.phase = newPhase
-                Self.logger.debug("Switched to next pending tool after socket failure: \(nextPending.id.prefix(12), privacy: .public)")
+                Self.logger.debug("Switched to next pending tool after socket failure: \(nextPending.toolUseId.prefix(12), privacy: .public)")
             }
         } else {
             // No more pending tools - clear permission state

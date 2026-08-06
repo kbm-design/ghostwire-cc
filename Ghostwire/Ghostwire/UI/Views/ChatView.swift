@@ -56,6 +56,10 @@ struct ChatView: View {
         session.phase.approvalToolName
     }
 
+    private var approvalToolId: String? {
+        session.pendingToolId
+    }
+
     
     var body: some View {
         ZStack {
@@ -73,7 +77,7 @@ struct ChatView: View {
                 }
 
                 // Approval bar, interactive prompt, or Input bar
-                if let tool = approvalTool {
+                if let tool = approvalTool, let toolUseId = approvalToolId {
                     if tool == "AskUserQuestion" {
                         // Interactive tools - show prompt to answer in terminal
                         interactivePromptBar
@@ -82,7 +86,7 @@ struct ChatView: View {
                                 removal: .opacity
                             ))
                     } else {
-                        approvalBar(tool: tool)
+                        approvalBar(tool: tool, toolUseId: toolUseId)
                             .transition(.asymmetric(
                                 insertion: .opacity.combined(with: .move(edge: .bottom)),
                                 removal: .opacity
@@ -454,7 +458,7 @@ struct ChatView: View {
 
     // MARK: - Approval Bar
 
-    private func approvalBar(tool: String) -> some View {
+    private func approvalBar(tool: String, toolUseId: String) -> some View {
         ChatApprovalBar(
             tool: tool,
             toolInput: session.pendingToolInput,
@@ -462,8 +466,8 @@ struct ChatView: View {
             // mode renders this untruncated; the lossy `toolInput` is only
             // the compact inline fallback.
             toolRawInput: session.pendingToolRawInput,
-            onApprove: { approvePermission() },
-            onDeny: { denyPermission() }
+            onApprove: { approvePermission(toolUseId: toolUseId) },
+            onDeny: { denyPermission(toolUseId: toolUseId) }
         )
     }
 
@@ -503,12 +507,12 @@ struct ChatView: View {
         }
     }
 
-    private func approvePermission() {
-        sessionMonitor.approvePermission(sessionId: sessionId)
+    private func approvePermission(toolUseId: String) {
+        sessionMonitor.approvePermission(sessionId: sessionId, toolUseId: toolUseId)
     }
 
-    private func denyPermission() {
-        sessionMonitor.denyPermission(sessionId: sessionId, reason: nil)
+    private func denyPermission(toolUseId: String) {
+        sessionMonitor.denyPermission(sessionId: sessionId, toolUseId: toolUseId, reason: nil)
     }
 
     private func sendMessage() {

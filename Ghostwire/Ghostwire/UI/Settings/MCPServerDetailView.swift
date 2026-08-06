@@ -179,7 +179,7 @@ struct MCPServerDetailView: View {
             Section {
                 if section.isCategorized {
                     ForEach(section.categories) { group in
-                        categoryHeaderRow(group: group, config: config)
+                        categoryHeaderRow(group: group, section: section, config: config)
                         ForEach(group.tools) { item in
                             toolRow(item: item, config: config, indented: true)
                         }
@@ -207,23 +207,24 @@ struct MCPServerDetailView: View {
                 .foregroundStyle(.tertiary)
                 .monospacedDigit()
             Spacer()
-            // Bulk select lives in the header because that is the scope it
-            // applies to. §8.1 only specifies `Select All` in a sheet's button
-            // bar; a per-section control is new vocabulary (flagged to GW-356).
-            Button(bulkTitle(section: section, allOn: allOn)) {
-                setAllowed(names, allowed: !allOn)
+            if section.canBulkAllow {
+                // Bulk allow exists only for read-only tools. `allowedTools` is
+                // also the gateway floor, so mutating and unknown tools need a
+                // visible one-tool decision.
+                Button(bulkTitle(section: section, allOn: allOn)) {
+                    setAllowed(names, allowed: !allOn)
+                }
+                .buttonStyle(.borderless)
+                .font(.caption)
             }
-            .buttonStyle(.borderless)
-            .font(.caption)
         }
     }
 
-    /// The read-only bulk action carries its count because that is the one most
-    /// people want and the number is the reassurance. The mutating sections
-    /// don't — "Allow all 17" reads like a recommendation.
+    /// The read-only bulk action carries its count because that is the only
+    /// section where bulk widening is offered, and the number is the reassurance.
     private func bulkTitle(section: MCPCapabilitySection, allOn: Bool) -> String {
         if allOn { return "Remove all" }
-        return section.capability == .readOnly ? "Allow all \(section.count)" : "Allow all"
+        return "Allow all \(section.count)"
     }
 
     @ViewBuilder
@@ -264,7 +265,9 @@ struct MCPServerDetailView: View {
         section.toolNames.filter { config.allowedTools.contains($0) }.count
     }
 
-    private func categoryHeaderRow(group: MCPToolCategoryGroup, config: MCPServerConfig)
+    private func categoryHeaderRow(
+        group: MCPToolCategoryGroup, section: MCPCapabilitySection, config: MCPServerConfig
+    )
         -> some View {
         let names = group.toolNames
         let allOn = names.allSatisfy { config.allowedTools.contains($0) }
@@ -279,8 +282,9 @@ struct MCPServerDetailView: View {
                 .monospacedDigit()
             Spacer()
             // The catch-all gets no bulk control: "Allow all 6 unrelated
-            // things" isn't a meaningful action.
-            if !group.isCatchAll {
+            // things" isn't a meaningful action. Mutating groups get no bulk
+            // control either, even when a resource category is coherent.
+            if group.canBulkAllow(in: section) {
                 Button(allOn ? "Remove all" : "Allow all \(group.tools.count)") {
                     setAllowed(names, allowed: !allOn)
                 }

@@ -127,6 +127,17 @@ final class MCPToolGroupingTests: XCTestCase {
         }
     }
 
+    /// Codex adversarial review, 2026-08-06. These verbs are action-oriented
+    /// enough that they must not ride in on "Allow all Read-only" when a server
+    /// supplies no annotations.
+    func testAmbiguousActionVerbsAreNotInferredReadOnly() {
+        for name in ["capture_payment", "extract_archive", "preview_deployment"] {
+            XCTAssertNotEqual(
+                MCPToolClassifier.inferredCapability(for: name, serverName: "X"), .readOnly,
+                "\(name) must require an explicit single-tool decision")
+        }
+    }
+
     /// The measured 2.4% — verb-less names must NOT be silently called readable.
     func testVerbLessNamesAreUnclassifiedRatherThanAssumedSafe() {
         for name in ["ui_evaluate", "ui_fullscreen", "pine_compile"] {
@@ -298,6 +309,47 @@ final class MCPToolGroupingTests: XCTestCase {
         let grouping = MCPToolGrouping.build(tools: [], serverName: "X")
         XCTAssertTrue(grouping.isEmpty)
         XCTAssertFalse(grouping.isCategorized)
+    }
+
+    // MARK: - Bulk allow eligibility
+
+    func testBulkAllowIsOnlyAvailableForReadOnlySections() {
+        let tools = [
+            tool("read_thing", readOnly: true),
+            tool("save_thing", readOnly: false),
+            tool("delete_thing", readOnly: false, destructive: true),
+            tool("mystery"),
+        ]
+        let grouping = MCPToolGrouping.build(tools: tools, serverName: "X")
+        let eligibility = Dictionary(
+            uniqueKeysWithValues: grouping.sections.map { ($0.capability, $0.canBulkAllow) })
+
+        XCTAssertEqual(eligibility[.readOnly], true)
+        XCTAssertEqual(eligibility[.writes], false)
+        XCTAssertEqual(eligibility[.destructive], false)
+        XCTAssertEqual(eligibility[.unclassified], false)
+    }
+
+    func testCategoryBulkAllowRequiresReadOnlyAndNamedGroup() {
+        let grouping = MCPToolGrouping.build(
+            tools: Self.linearTools.map { self.tool($0, readOnly: true) }, serverName: "Linear")
+        guard let read = grouping.sections.first(where: { $0.capability == .readOnly }) else {
+            return XCTFail("expected read-only section")
+        }
+        XCTAssertTrue(read.categories.contains { $0.canBulkAllow(in: read) })
+        XCTAssertEqual(
+            read.categories.last?.canBulkAllow(in: read), false,
+            "the catch-all must still have no bulk control")
+
+        let mutatingGroup = MCPToolGrouping.build(
+            tools: Self.linearTools.map { self.tool($0, readOnly: false) }, serverName: "Linear")
+        guard let writes = mutatingGroup.sections.first(where: { $0.capability == .writes }) else {
+            return XCTFail("expected writes section")
+        }
+        XCTAssertTrue(writes.isCategorized)
+        XCTAssertFalse(
+            writes.categories.contains { $0.canBulkAllow(in: writes) },
+            "mutating category groups must require per-tool approval")
     }
 
     // MARK: - Corpora (real tool names, captured 2026-08-06)

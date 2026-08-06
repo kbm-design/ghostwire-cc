@@ -27,6 +27,19 @@ enum SessionEvent: Sendable {
     /// Permission socket failed (connection died before response)
     case permissionSocketFailed(sessionId: String, toolUseId: String)
 
+    /// A gate the socket server could not show, because the payload would not
+    /// decode — there was no tool name or input to render, so there was nothing
+    /// to put in front of the user.
+    ///
+    /// GW-413: Ghostwire now hands this back (`ask`) instead of denying it, so
+    /// the agent's own prompt asks. This records that it happened — a finished,
+    /// non-actionable row, never a live gate — because a Ghostwire that silently
+    /// stops gating is indistinguishable from one that is working.
+    ///
+    /// An uncorrelatable gate no longer arrives here: as of GW-413 it is held on
+    /// a provisional id and shown normally.
+    case permissionBlocked(event: HookEvent, reason: String)
+
     // MARK: - File Events (from ConversationParser)
 
     /// JSONL file was updated with new content
@@ -146,7 +159,12 @@ extension HookEvent {
                 toolUseId: toolUseId ?? "",
                 toolName: tool,
                 toolInput: toolInput,
-                receivedAt: Date()
+                receivedAt: Date(),
+                // GW-413: the phase builds its own context, so the flag has to be
+                // carried here too — `mayExitWaitingForApproval` reads it off the
+                // *phase*, not the queue, and without it a provisional gate's bar
+                // never releases on the agent's real PostToolUse.
+                correlationIsProvisional: toolUseIdIsProvisional
             ))
         }
 
@@ -197,6 +215,8 @@ extension SessionEvent: CustomStringConvertible {
             return "permissionDenied(session: \(sessionId.prefix(8)), tool: \(toolUseId.prefix(12)))"
         case .permissionSocketFailed(let sessionId, let toolUseId):
             return "permissionSocketFailed(session: \(sessionId.prefix(8)), tool: \(toolUseId.prefix(12)))"
+        case .permissionBlocked(let event, _):
+            return "permissionBlocked(session: \(event.sessionId.prefix(8)), tool: \(event.tool ?? "unknown"))"
         case .fileUpdated(let payload):
             return "fileUpdated(session: \(payload.sessionId.prefix(8)), messages: \(payload.messages.count))"
         case .interruptDetected(let sessionId):

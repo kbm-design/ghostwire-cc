@@ -15,6 +15,13 @@ struct PermissionContext: Sendable {
     let toolInput: [String: AnyCodable]?
     let receivedAt: Date
 
+    /// GW-413: `toolUseId` was minted by Ghostwire because the request could not
+    /// be correlated to its `PreToolUse`. The gate is fully answerable — the id is
+    /// only ever a dictionary key, never a routing token — but the agent's own
+    /// `PostToolUse` id will never match it, so release has to fall back on tool
+    /// name. Defaulted so existing call sites are unaffected.
+    var correlationIsProvisional: Bool = false
+
     /// Format tool input for display.
     ///
     /// LOSSY ON PURPOSE — string values are clipped to 100 chars for the

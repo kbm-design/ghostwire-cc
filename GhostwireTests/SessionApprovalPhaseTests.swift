@@ -186,4 +186,89 @@ final class SessionApprovalPhaseTests: XCTestCase {
         XCTAssertEqual(session?.phase.isWaitingForApproval, false)
         XCTAssertEqual(session?.pendingPermissions.isEmpty, true)
     }
+
+    // MARK: - Provisional gates (GW-413)
+    //
+    // A gate the server could not correlate is now held on an id Ghostwire
+    // minted, rather than denied. That id means nothing to the agent, so the
+    // real PostToolUse can never match it — release falls back on tool name,
+    // and only when exactly one gate is in play.
+
+    private func provisionalGate(sessionId: String, toolUseId: String, tool: String = "Bash") -> HookEvent {
+        HookEvent(
+            sessionId: sessionId, cwd: "/tmp/gw413-tests", event: "PermissionRequest",
+            status: "waiting_for_approval", pid: nil, tty: nil, tool: tool,
+            toolInput: nil, toolUseId: toolUseId, notificationType: nil, message: nil,
+            toolUseIdIsProvisional: true
+        )
+    }
+
+    func testProvisionalGatePresentsAnActionableApprovalBar() async {
+        let sessionId = "gw413-actionable-\(UUID().uuidString)"
+
+        await SessionStore.shared.process(.hookReceived(provisionalGate(
+            sessionId: sessionId, toolUseId: "gw-gate-abc123"
+        )))
+
+        let session = await SessionStore.shared.session(for: sessionId)
+        XCTAssertEqual(session?.phase.isWaitingForApproval, true,
+                       "The whole point of GW-413: an uncorrelatable gate is still shown, not denied")
+        XCTAssertEqual(session?.pendingPermissions.count, 1)
+    }
+
+    func testRealPostToolUseReleasesALoneProvisionalGate() async {
+        let sessionId = "gw413-release-\(UUID().uuidString)"
+        await SessionStore.shared.process(.hookReceived(provisionalGate(
+            sessionId: sessionId, toolUseId: "gw-gate-lone"
+        )))
+
+        // The agent's own id — it cannot equal the one we minted.
+        await SessionStore.shared.process(.hookReceived(makeEvent(
+            sessionId: sessionId, event: "PostToolUse", status: "processing",
+            tool: "Bash", toolUseId: "toolu_real_and_different"
+        )))
+
+        let session = await SessionStore.shared.session(for: sessionId)
+        XCTAssertEqual(session?.phase.isWaitingForApproval, false,
+                       "Without the tool-name fallback the bar sticks until Stop over a tool that already ran")
+        XCTAssertEqual(session?.pendingPermissions.isEmpty, true,
+                       "The queue has to drop it too, or isUnansweredGate keeps answering true for a ghost")
+    }
+
+    /// Subagents share a session_id, so two concurrent same-tool gates is a real
+    /// shape. Guessing between them would release the one the user is looking at.
+    func testTwoProvisionalGatesAreNotGuessedBetween() async {
+        let sessionId = "gw413-ambiguous-\(UUID().uuidString)"
+        await SessionStore.shared.process(.hookReceived(provisionalGate(
+            sessionId: sessionId, toolUseId: "gw-gate-one"
+        )))
+        await SessionStore.shared.process(.hookReceived(provisionalGate(
+            sessionId: sessionId, toolUseId: "gw-gate-two"
+        )))
+
+        await SessionStore.shared.process(.hookReceived(makeEvent(
+            sessionId: sessionId, event: "PostToolUse", status: "processing",
+            tool: "Bash", toolUseId: "toolu_real"
+        )))
+
+        let session = await SessionStore.shared.session(for: sessionId)
+        XCTAssertEqual(session?.pendingPermissions.count, 2,
+                       "Ambiguity must abstain — Stop hands both back at turn end, which is safe")
+    }
+
+    func testUnrelatedToolDoesNotReleaseAProvisionalGate() async {
+        let sessionId = "gw413-unrelated-\(UUID().uuidString)"
+        await SessionStore.shared.process(.hookReceived(provisionalGate(
+            sessionId: sessionId, toolUseId: "gw-gate-bash"
+        )))
+
+        await SessionStore.shared.process(.hookReceived(makeEvent(
+            sessionId: sessionId, event: "PostToolUse", status: "processing",
+            tool: "Write", toolUseId: "toolu_write"
+        )))
+
+        let session = await SessionStore.shared.session(for: sessionId)
+        XCTAssertEqual(session?.pendingPermissions.count, 1,
+                       "A different tool finishing says nothing about this gate")
+    }
 }

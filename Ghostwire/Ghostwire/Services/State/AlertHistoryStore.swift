@@ -37,7 +37,9 @@ struct AgentAlert: Codable, Identifiable, Equatable {
     let folder: String?
     /// Permission alerts: the command/tool input, single-line. nil for ready.
     let command: String?
-    /// Resolved outcome: "allowed" | "denied" | "timedOut" | "responded".
+    /// Resolved outcome: "allowed" | "denied" | "timedOut" | "responded" |
+    /// "blocked" (GW-408: Ghostwire refused the gate itself — not a user
+    /// decision, and deliberately distinct from "denied").
     /// nil = unanswered (permission) or no user reply yet (ready).
     let outcome: String?
     /// tool_use_id of the pending permission, for outcome matching. nil for ready.

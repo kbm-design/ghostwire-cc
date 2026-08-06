@@ -104,9 +104,9 @@ enum MCPToolClassifier {
     /// defaulting to anything.
     static let readVerbs: Set<String> = [
         "get", "list", "find", "search", "fetch", "read", "query", "view", "describe",
-        "info", "status", "check", "analyze", "export", "download", "capture",
-        "whoami", "resolve", "show", "quote", "depth", "extract", "count", "inspect",
-        "preview", "diff", "summarize", "validate", "lookup",
+        "info", "status", "check", "analyze", "export", "download", "whoami",
+        "resolve", "show", "quote", "depth", "count", "inspect", "diff", "summarize",
+        "validate", "lookup",
     ]
 
     static let writeVerbs: Set<String> = [
@@ -265,6 +265,10 @@ struct MCPToolCategoryGroup: Identifiable, Equatable {
     /// The catch-all is never offered a bulk control — "Allow all 6 unrelated
     /// things" isn't a meaningful action.
     var isCatchAll: Bool { category == nil }
+
+    func canBulkAllow(in section: MCPCapabilitySection) -> Bool {
+        section.canBulkAllow && !isCatchAll
+    }
 }
 
 /// One capability section: always present when non-empty, sub-grouped only when
@@ -279,6 +283,11 @@ struct MCPCapabilitySection: Identifiable, Equatable {
     var isCategorized: Bool { !categories.isEmpty }
     var toolNames: [String] { tools.map(\.name) }
     var count: Int { tools.count }
+    /// Bulk allow is deliberately narrower than the store API. The store can
+    /// mutate many names at once, but the UI only widens authorization in bulk
+    /// for tools that are actually read-only. Writes, destructive and unknown
+    /// tools require one explicit per-tool toggle.
+    var canBulkAllow: Bool { capability == .readOnly }
     /// True when every tool here was guessed from its name — drives the section
     /// footer that says so.
     var isEntirelyInferred: Bool {

@@ -86,6 +86,47 @@ final class MCPToolGroupingTests: XCTestCase {
         }
     }
 
+    /// Codex adversarial review, 2026-08-06. Inference used to return on the
+    /// FIRST recognised verb, so a name that leads with a read verb and then
+    /// mutates was classified `.readOnly`. With section-level bulk allow that is
+    /// not a badge error — the whole Read-only section goes into `allowedTools`,
+    /// which is the gateway's authorization floor, so a mutating tool would have
+    /// ridden in on one click.
+    func testMixedVerbNamesTakeTheMostDangerousVerbNotTheFirst() {
+        let cases: [(String, MCPToolCapability)] = [
+            ("get_or_create_issue", .writes),
+            ("read_write_file", .writes),
+            ("fetch_or_update_record", .writes),
+            ("list_and_delete_stale", .destructive),
+            ("search_and_purge", .destructive),
+            ("get_and_remove_item", .destructive),
+        ]
+        for (name, expected) in cases {
+            XCTAssertEqual(
+                MCPToolClassifier.inferredCapability(for: name, serverName: "X"), expected,
+                "\(name) must not be inferred read-only")
+        }
+    }
+
+    /// Destructive outranks writes regardless of token order.
+    func testDestructiveOutranksWriteWhicheverComesFirst() {
+        XCTAssertEqual(
+            MCPToolClassifier.inferredCapability(for: "create_then_delete", serverName: "X"),
+            .destructive)
+        XCTAssertEqual(
+            MCPToolClassifier.inferredCapability(for: "delete_then_create", serverName: "X"),
+            .destructive)
+    }
+
+    /// The safe direction is preserved: a purely-read name stays read-only.
+    func testPurelyReadNamesAreStillReadOnly() {
+        for name in ["get_issue", "list_directory_with_sizes", "search_documentation"] {
+            XCTAssertEqual(
+                MCPToolClassifier.inferredCapability(for: name, serverName: "X"), .readOnly,
+                "\(name) should stay read-only")
+        }
+    }
+
     /// The measured 2.4% — verb-less names must NOT be silently called readable.
     func testVerbLessNamesAreUnclassifiedRatherThanAssumedSafe() {
         for name in ["ui_evaluate", "ui_fullscreen", "pine_compile"] {

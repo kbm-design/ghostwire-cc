@@ -133,9 +133,15 @@ struct FeedSettings: View {
 
                 if mcpEnabled {
                     if boundTools.isEmpty {
-                        Text("No tools bound yet.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                        // GW-367 / §8.3: state the section's JOB, not its
+                        // emptiness. "No tools bound yet." told the user
+                        // nothing they couldn't already see.
+                        Text(
+                            "Bind a read-only tool in MCP settings and its result shows up "
+                            + "here as a Feed card."
+                        )
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                     } else {
                         ForEach(boundTools, id: \.self) { label in
                             Text(label).font(.caption.monospaced()).lineLimit(1)

@@ -51,6 +51,54 @@ final class MCPClientServiceAllowlistTests: XCTestCase {
         return config
     }
 
+    // MARK: - GW-255 bulk selection
+
+    func testBulkAllowAddsEveryToolInOneWrite() {
+        let config = addHTTPServer()
+        service.setToolsAllowed(
+            serverID: config.id, tools: ["get_a", "get_b", "get_c"], allowed: true)
+        XCTAssertEqual(
+            service.store.server(id: config.id)?.allowedTools, ["get_a", "get_b", "get_c"])
+    }
+
+    func testBulkAllowIsAdditiveNotReplacing() {
+        let config = addHTTPServer(allowed: ["existing"])
+        service.setToolsAllowed(serverID: config.id, tools: ["get_a"], allowed: true)
+        XCTAssertEqual(service.store.server(id: config.id)?.allowedTools, ["existing", "get_a"])
+    }
+
+    func testBulkRemoveOnlySubtractsTheNamedTools() {
+        let config = addHTTPServer(allowed: ["a", "b", "c"])
+        service.setToolsAllowed(serverID: config.id, tools: ["a", "c"], allowed: false)
+        XCTAssertEqual(service.store.server(id: config.id)?.allowedTools, ["b"])
+    }
+
+    /// Disallowing implies unbinding (GW-214) — the bulk path must honour that
+    /// too, or a "Remove all" leaves feed bindings that fail closed every poll.
+    func testBulkRemoveUnbindsFeedToolsForEveryRemovedTool() {
+        var config = addHTTPServer(allowed: ["a", "b"])
+        config.feedTools = [MCPFeedToolBinding(tool: "a"), MCPFeedToolBinding(tool: "b")]
+        service.store.update(config)
+
+        service.setToolsAllowed(serverID: config.id, tools: ["a", "b"], allowed: false)
+        XCTAssertEqual(service.store.server(id: config.id)?.feedTools ?? [], [])
+    }
+
+    func testBulkWithNoToolsIsANoOp() {
+        let config = addHTTPServer(allowed: ["a"])
+        service.setToolsAllowed(serverID: config.id, tools: [], allowed: false)
+        XCTAssertEqual(service.store.server(id: config.id)?.allowedTools, ["a"])
+    }
+
+    /// The single-tool entry point is now a wrapper — it must keep behaving.
+    func testSingleToolPathStillWorksThroughTheBulkImplementation() {
+        let config = addHTTPServer()
+        service.setToolAllowed(serverID: config.id, tool: "only", allowed: true)
+        XCTAssertEqual(service.store.server(id: config.id)?.allowedTools, ["only"])
+        service.setToolAllowed(serverID: config.id, tool: "only", allowed: false)
+        XCTAssertEqual(service.store.server(id: config.id)?.allowedTools, [])
+    }
+
     func testCallToolDeniedByDefault() async {
         let config = addHTTPServer()  // empty allowlist
         await service.connect(id: config.id)

@@ -17,11 +17,32 @@ enum MCPTransportConfig: Codable, Equatable {
     /// Hosted server over Streamable HTTP (SSE when streaming).
     case http(endpoint: URL)
 
-    var displayBadge: String {
+    /// GW-255 terminology fix. `stdio` / `http` are protocol names — they told
+    /// the user nothing, and "remote server" told them less. The distinction
+    /// that actually matters to someone deciding whether to add a server is
+    /// whether it runs a program on their Mac.
+    var displayLabel: String {
         switch self {
-        case .stdio: return "stdio"
-        case .http: return "http"
+        case .stdio: return "Local"
+        case .http: return "Hosted"
         }
+    }
+
+    /// The one-line explanation, used as a section footer and as the badge's
+    /// tooltip so the label never has to carry the whole meaning alone.
+    var explanation: String {
+        switch self {
+        case .stdio:
+            return "Runs a program on this Mac. Ghostwire starts it when it needs to and "
+                + "stops it afterwards."
+        case .http:
+            return "Reached over the network. Nothing runs on this Mac."
+        }
+    }
+
+    var isLocal: Bool {
+        if case .stdio = self { return true }
+        return false
     }
 }
 

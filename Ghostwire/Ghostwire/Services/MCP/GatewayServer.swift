@@ -11,7 +11,9 @@ import Foundation
 import MCP
 
 enum GatewayServer {
-    static let serverName = "ghostwire-gateway"
+    /// GW-350: one definition, in `GatewayRegistration`. A second copy here let
+    /// the advertised name and the registered name drift apart.
+    static var serverName: String { GatewayRegistration.serverName }
 
     static func makeServer(source: GatewayUpstreamSource) async -> Server {
         let core = MCPGatewayCore(source: source)

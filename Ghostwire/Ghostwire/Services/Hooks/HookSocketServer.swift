@@ -184,6 +184,9 @@ class HookSocketServer {
     static let socketPath = "/tmp/com.ghostwire.notch.sock"
 
     private var serverSocket: Int32 = -1
+    /// GW-414: did *this* process bind the socket path? Only its owner may
+    /// unlink it. See `stop()`.
+    private var boundSocketPath = false
     private var acceptSource: DispatchSourceRead?
     private var eventHandler: HookEventHandler?
     private let queue = DispatchQueue(label: "com.ghostwire.notch.socket", qos: .userInitiated)
@@ -220,6 +223,16 @@ class HookSocketServer {
         default:
             return "\(error)"
         }
+    }
+
+    /// GW-414: removing a Unix socket path is destructive to whoever owns it,
+    /// and the path is a process-wide constant — so ownership has to be checked,
+    /// not assumed. Pure and takes its path so it can be tested against a temp
+    /// file instead of `/tmp/com.ghostwire.notch.sock`, which on a dev machine
+    /// is the live app's socket and precisely what must not be disturbed.
+    static func unlinkSocketPathIfOwned(_ path: String, owned: Bool) {
+        guard owned else { return }
+        unlink(path)
     }
 
     /// Start the socket server
@@ -278,6 +291,9 @@ class HookSocketServer {
         }
 
         logger.info("Listening on \(Self.socketPath, privacy: .public)")
+        // GW-414: from here on, this process is the socket path's owner and is
+        // the only one entitled to remove it.
+        boundSocketPath = true
 
         acceptSource = DispatchSource.makeReadSource(fileDescriptor: serverSocket, queue: queue)
         acceptSource?.setEventHandler { [weak self] in
@@ -296,7 +312,19 @@ class HookSocketServer {
     func stop() {
         acceptSource?.cancel()
         acceptSource = nil
-        unlink(Self.socketPath)
+        // GW-414: only remove the socket path if *this* process created it.
+        //
+        // The unlink used to be unconditional, which made `stop()` destructive
+        // from any process that had merely loaded the class. `xcodebuild test`
+        // boots the app as its XCTest host: `startMonitoring()` correctly
+        // no-ops under XCTest and never binds, but teardown still ran
+        // `applicationWillTerminate` -> `stopMonitoring()` -> here, deleting the
+        // *live* instance's socket. The live app kept its bound fd and looked
+        // healthy, while every new hook connection failed — and every gated
+        // tool call then fail-closed denied (GW-413's "socket: none anywhere on
+        // disk"). Nothing logged it.
+        Self.unlinkSocketPathIfOwned(Self.socketPath, owned: boundSocketPath)
+        boundSocketPath = false
 
         permissionsLock.lock()
         for (_, pending) in pendingPermissions {

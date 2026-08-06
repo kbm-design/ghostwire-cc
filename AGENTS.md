@@ -6,7 +6,7 @@ Full project context lives in the Obsidian vault: `keelo/projects/notch-command-
 
 ## Design system — read before ANY UI work
 UI (design or review) follows two repo docs:
-- **[`docs/design-system.md`](docs/design-system.md)** — type ramp · color tokens (`agent/` identity vs `terminal/` state) · spacing/shape · **motion & timing** · when-to-use. Dark-only (Settings follows system light/dark).
+- **[`docs/design-system.md`](docs/design-system.md)** — type ramp · color tokens (`agent/` identity vs `terminal/` state) · spacing/shape · **motion & timing** · when-to-use. §1–§6 are the **notch** (dark-only). **§8 is the Settings half** — sheet width ladder, list-row anatomy, empty/loading/error/all-done, status vocabulary, inline security copy, sheet-vs-drill-in — plus the §2 `state/` axis that resolves per appearance. The notch's white-opacity ladder (`terminal/dim`, `dimmer`, `surface/*`, `button/allow-fill`) composites to 1.00:1 on a light background and **must not be carried into Settings**.
 - **[`docs/macos-conventions.md`](docs/macos-conventions.md)** — `LSUIElement` / notch-`NSPanel` constraints (never present a dialog while the notch is open) · native controls · accessibility.
 
 Figma source of truth: fileKey `tgXXJAGWxqrojUNY7Hvroh` ("Ghostwire (dark)" tokens) — **Foundations** + **Components (V2)** pages; **Screens** / **Settings** / **Interactions** = surface captures. Build to these, don't invent new tokens/motion.

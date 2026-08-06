@@ -3,15 +3,24 @@
 //  GhostwireTests
 //
 //  GW-408: PR #77 made an uncorrelatable or undecodable PermissionRequest
-//  deny instead of falling through to the terminal. The deny was right; the
-//  silence was not — it removed `eventHandler?(event)` from the cache-miss
-//  branch, so a blocked tool left no trace anywhere in the app: no session
-//  row, no chat item, no alert history, no signal. Measured live: the deny
-//  went out on the socket and the `Session` log category stayed empty.
+//  deny instead of falling through to the terminal, and told nobody — it
+//  removed `eventHandler?(event)` from the cache-miss branch, so a blocked
+//  tool left no trace anywhere in the app: no session row, no chat item, no
+//  alert history, no signal. Measured live: the deny went out on the socket
+//  and the `Session` log category stayed empty.
 //
-//  These lock in that a blocked gate is always *visible*, and that it is
-//  never mistaken for a live one — the verdict is already on the wire, so an
-//  actionable approval bar would be offering a button that reaches nothing.
+//  GW-413 narrowed what reaches here. An *uncorrelatable* gate is no longer
+//  refused at all — it is held on a provisional id and shown normally (see
+//  GateCorrelationRecoveryTests + SessionApprovalPhaseTests). What remains is
+//  the one gate Ghostwire genuinely cannot render: a payload that would not
+//  decode, so there is no tool name or input to put in front of anyone.
+//
+//  That gate is now handed back to the terminal (`ask`) rather than denied.
+//  These tests lock in the half that did not change and matters most: it must
+//  still be *visible*, because a Ghostwire that has quietly stopped gating
+//  looks exactly like one that is working. And it must never be mistaken for a
+//  live gate — the socket is already released, so an actionable approval bar
+//  would offer a button that reaches nothing.
 //
 
 import XCTest
@@ -88,10 +97,10 @@ final class BlockedGateSurfacingTests: XCTestCase {
         let session = await SessionStore.shared.session(for: sessionId)
         XCTAssertNotEqual(
             session?.phase.isWaitingForApproval, true,
-            "The deny is already on the socket — an Allow/Deny bar here reaches a dead fd and lies to the user"
+            "The socket is already released — an Allow/Deny bar here reaches a dead fd and lies to the user"
         )
         XCTAssertTrue(session?.pendingPermissions.isEmpty ?? false,
-                      "A blocked gate is finished, so it must not queue as pending")
+                      "This gate is finished in Ghostwire's hands, so it must not queue as pending")
     }
 
     // MARK: - Degraded payloads

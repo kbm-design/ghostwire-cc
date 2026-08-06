@@ -68,7 +68,13 @@ class ClaudeSessionMonitor: ObservableObject {
                             outcome: "allowed"
                         )
                     }
-                    HookSocketServer.shared.cancelPendingPermission(toolUseId: toolUseId)
+                    // GW-413: session + tool let this also release a gate held on
+                    // a provisional id, which the real toolUseId can never match.
+                    HookSocketServer.shared.cancelPendingPermission(
+                        toolUseId: toolUseId,
+                        sessionId: event.sessionId,
+                        toolName: event.tool
+                    )
                 }
             },
             // GW-408: a gate the server refused outright. It never becomes a

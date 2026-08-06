@@ -65,12 +65,18 @@ def _connect_to_ghostwire():
         if not 0 < port_num <= 65535:
             raise OSError(f"GHOSTWIRE_HOST port {port_num} out of range (1-65535)")
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(TIMEOUT_SECONDS)
-        sock.connect((host, port_num))
+        target = (host, port_num)
     else:
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        target = GHOSTWIRE_SOCKET
+    # Close before re-raising: a failed connect otherwise leaks the fd for the
+    # life of the hook process.
+    try:
         sock.settimeout(TIMEOUT_SECONDS)
-        sock.connect(GHOSTWIRE_SOCKET)
+        sock.connect(target)
+    except Exception:
+        sock.close()
+        raise
     return sock
 
 
@@ -143,6 +149,7 @@ def get_cmux_surface():
 
 def send_event(state):
     """Send event to app, return response if any"""
+    sock = None
     try:
         sock = _connect_to_ghostwire()
         sock.sendall(json.dumps(state).encode())
@@ -152,15 +159,18 @@ def send_event(state):
             # A person has to look at this — give them as long as the agent does.
             sock.settimeout(DECISION_TIMEOUT_SECONDS)
             response = sock.recv(4096)
-            sock.close()
             if response:
                 return json.loads(response.decode())
-        else:
-            sock.close()
 
         return None
     except (socket.error, OSError, json.JSONDecodeError):
         return None
+    finally:
+        if sock is not None:
+            try:
+                sock.close()
+            except Exception:
+                pass
 
 
 def permission_output(decision):
@@ -181,6 +191,14 @@ def emit_allow(updated_input=None):
 
 
 def emit_deny(message):
+    """GW-413: reachable from exactly one place — an explicit `deny` from the app,
+    which the app in turn only ever sends when a person clicked Deny in the notch.
+
+    That invariant is the whole contract. Ghostwire is complimentary, never a
+    driver: it may not decide anything a human did not decide. If you find
+    yourself wanting to call this because something went wrong, you want
+    `emit_passthrough` instead.
+    """
     output = permission_output({
         "behavior": "deny",
         "message": message,
@@ -190,17 +208,18 @@ def emit_deny(message):
 
 
 def emit_passthrough():
-    """GW-408: Ghostwire declines to rule on this gate — the agent asks instead.
+    """Ghostwire steps aside — the agent's own approval flow handles this gate.
 
     Emitting nothing at all is how a permission hook says "no opinion", which
-    drops the decision back to the agent's own approval UI. That is strictly
-    better than a deny whenever Ghostwire simply could not take part: the tool
-    still does not run unattended, the user is still asked, and the turn is not
-    destroyed because the app quit or the socket was reclaimed.
+    drops the decision back to the agent's own prompt. This is the default for
+    every outcome that is not a human clicking a button, because the terminal
+    prompt — not Ghostwire — is the actual permission boundary. Stepping aside
+    never removes a gate from the user; it only moves where they answer it.
 
-    Only reached on an explicit `{"decision": "ask"}` from the app. A silent
-    socket still fails closed below — the app not answering at all is not the
-    same as the app saying "not mine to answer".
+    Reached on an explicit `{"decision": "ask"}` (the app is shutting down, the
+    turn ended, the tool resolved elsewhere, a newer gate superseded this one)
+    and on any failure to reach the app at all (GW-413). Silence used to deny
+    here, which meant quitting Ghostwire destroyed every tool call in flight.
     """
     sys.exit(0)
 
@@ -210,21 +229,8 @@ def _request_marker(session_id, tool_name):
 
 
 def user_denial_message(session_id, tool_name, detail):
-    """A person looked at this and said no."""
+    """A person looked at this and said no. The only denial Ghostwire ever writes."""
     return f"Denied by you in Ghostwire: {detail} (request {_request_marker(session_id, tool_name)})."
-
-
-def fail_closed_message(session_id, tool_name, detail):
-    """GW-408: nobody decided this — Ghostwire could not deliver the request.
-
-    Worded so the agent (and the user reading the terminal) can tell it apart
-    from a real denial. Conflating the two taught the model that the user had
-    rejected something they were never shown.
-    """
-    return (
-        f"Blocked by Ghostwire — this was not a decision by you: {detail} "
-        f"(request {_request_marker(session_id, tool_name)})."
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -448,8 +454,13 @@ def _handle_third_party(data, source, state):
 def main():
     try:
         data = json.load(sys.stdin)
-    except json.JSONDecodeError:
-        sys.exit(1)
+    except Exception:
+        # GW-413: a payload we cannot parse is a gate we cannot show. Step aside
+        # rather than exiting nonzero — a hook failure is not a verdict, and the
+        # agent must prompt exactly as it would with Ghostwire uninstalled.
+        # Deliberately broader than JSONDecodeError: a UnicodeDecodeError or a
+        # closed stdin used to traceback out with exit 1.
+        emit_passthrough()
 
     # Claude/Codex send session_id; Cursor sends conversation_id (its stable
     # per-conversation id, verified against Cursor's hooks docs 2026-07).
@@ -574,18 +585,12 @@ def main():
                     "the request was denied",
                 ))
 
-            elif decision == "ask":
-                # GW-408: the app is explicitly handing this gate back (it is
-                # shutting down, the turn ended, the tool resolved elsewhere, a
-                # newer request superseded this one). Let the agent ask.
-                emit_passthrough()
-
-        emit_deny(fail_closed_message(
-            session_id,
-            state.get("tool"),
-            "Ghostwire could not be reached for an approval decision, so the tool was blocked "
-            "rather than run unseen. Re-run it to be asked again",
-        ))
+        # GW-413: everything that is not an explicit allow/deny steps aside —
+        # an explicit `ask` (app shutting down, turn ended, tool resolved
+        # elsewhere, superseded gate), an unrecognised decision, and above all
+        # no reply at all. The terminal's own prompt is the permission boundary;
+        # Ghostwire failing must look exactly like Ghostwire not being installed.
+        emit_passthrough()
 
     elif event == "Notification":
         notification_type = data.get("notification_type")
@@ -625,4 +630,14 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except SystemExit:
+        # emit_allow / emit_deny / emit_passthrough all exit through here.
+        raise
+    except Exception:
+        # GW-413 backstop: no bug in this hook may ever cost the user a tool
+        # call. Whatever broke, the agent's own prompt is still the right
+        # outcome, and a nonzero exit is read as a block by the agents that
+        # gate on exit codes.
+        sys.exit(0)

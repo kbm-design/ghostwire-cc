@@ -216,7 +216,8 @@ actor SessionStore {
                 toolUseId: toolUseId,
                 toolName: event.tool ?? "unknown",
                 toolInput: event.toolInput,
-                receivedAt: Date()
+                receivedAt: Date(),
+                correlationIsProvisional: event.toolUseIdIsProvisional
             )
             setPendingPermission(context, in: &session)
             updateToolStatus(in: &session, toolId: toolUseId, status: .waitingForApproval)
@@ -227,6 +228,16 @@ actor SessionStore {
 
         if event.event == "PostToolUse", let toolUseId = event.toolUseId {
             removePendingPermission(toolUseId: toolUseId, from: &session)
+            // GW-413: the queue has to drop provisional gates the same way the
+            // phase does, or `isUnansweredGate` keeps answering true for a ghost
+            // entry the real id can never remove. Exactly-one-or-abstain, matching
+            // the server's release rule — never guess between two same-tool gates.
+            let provisional = session.pendingPermissions.filter {
+                $0.correlationIsProvisional && $0.toolName == event.tool
+            }
+            if provisional.count == 1, let match = provisional.first {
+                removePendingPermission(toolUseId: match.toolUseId, from: &session)
+            }
         }
 
         if event.event == "Stop" {
@@ -268,6 +279,10 @@ actor SessionStore {
         if newPhase.isWaitingForApproval { return true }
         if case .ended = newPhase { return true }
         if event.event == "PostToolUse", event.toolUseId == ctx.toolUseId { return true }
+        // GW-413: a provisional gate's id was minted here, so the agent's real
+        // PostToolUse id can never equal it. Fall back on the tool name, else the
+        // approval bar sticks until Stop over a tool that already ran.
+        if event.event == "PostToolUse", ctx.correlationIsProvisional, event.tool == ctx.toolName { return true }
         if event.event == "Stop" { return true }
         return false
     }
@@ -708,7 +723,7 @@ actor SessionStore {
         publishState()
 
         Self.logger.error(
-            "Blocked gate surfaced for \(sessionId.prefix(8), privacy: .public) tool=\(toolName, privacy: .public): \(reason, privacy: .public)"
+            "Gate handed back to the terminal for \(sessionId.prefix(8), privacy: .public) tool=\(toolName, privacy: .public): \(reason, privacy: .public)"
         )
 
         let agent = session.agent

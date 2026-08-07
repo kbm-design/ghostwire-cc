@@ -17,11 +17,22 @@
 # Usage: ./doctor.sh
 
 set -uo pipefail
-cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
+cd "$(dirname "${BASH_SOURCE[0]}")" || exit 1
 
 SOCKET=/tmp/com.ghostwire.notch.sock
 REPO_HOOK=Ghostwire/Ghostwire/Resources/ghostwire-hook.py
+SERVER=Ghostwire/Ghostwire/Services/Hooks/HookSocketServer.swift
 PROBLEMS=0
+
+# A file we cannot read must never read as a passing check. An earlier version
+# grepped these paths from the wrong directory: `grep -q` found no deny path
+# because there was no file, and reported the contract intact. Fail loudly.
+for required in "$REPO_HOOK" "$SERVER"; do
+  if [ ! -f "$required" ]; then
+    printf "\n\033[31mBAD\033[0m  %s not found — run this from inside the repo.\n\n" "$required"
+    exit 2
+  fi
+done
 
 bold=$'\033[1m'; red=$'\033[31m'; grn=$'\033[32m'; ylw=$'\033[33m'; dim=$'\033[2m'; off=$'\033[0m'
 ok()   { printf "  ${grn}ok${off}    %s\n" "$1"; }
@@ -103,7 +114,7 @@ if grep -q "fail_closed_message" "$REPO_HOOK" 2>/dev/null; then
 else
   ok "hook has no non-human deny path"
 fi
-if grep -q "func sendImmediateDeny" Ghostwire/Ghostwire/Services/Hooks/HookSocketServer.swift 2>/dev/null; then
+if grep -q "func sendImmediateDeny" "$SERVER" 2>/dev/null; then
   bad "sendImmediateDeny is back in the server — it lets Ghostwire deny without a click"
 else
   ok "server has no immediate-deny helper"

@@ -67,8 +67,13 @@ else
   ok "pid $PID  started $STARTED"
   note "$(echo "$RUNNING_BIN" | sed 's|.*/DerivedData/||')"
 
-  if [ "$STARTED_EPOCH" != "0" ] && [ -n "$HEAD_EPOCH" ] && [ "$STARTED_EPOCH" -lt "$HEAD_EPOCH" ]; then
-    bad "running app predates HEAD — it does NOT contain your latest commit"
+  # Compare against the last commit that touched *app source*, not HEAD.
+  # A docs or tooling commit does not stale the binary, and a check that cries
+  # wolf is a check people learn to skip.
+  SRC_EPOCH=$(git log -1 --format=%ct -- Ghostwire Ghostwire.xcodeproj 2>/dev/null)
+  if [ "$STARTED_EPOCH" != "0" ] && [ -n "${SRC_EPOCH:-}" ] && [ "$STARTED_EPOCH" -lt "$SRC_EPOCH" ]; then
+    bad "running app predates your latest app-source commit"
+    note "built before $(git log -1 --format='%h %s' -- Ghostwire Ghostwire.xcodeproj 2>/dev/null | cut -c1-56)"
     note "quit it and rebuild, or any test you run is testing old code"
   fi
 fi

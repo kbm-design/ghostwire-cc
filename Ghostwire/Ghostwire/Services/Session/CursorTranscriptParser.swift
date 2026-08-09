@@ -7,7 +7,7 @@
 //  without a second UI path (GW-311).
 //
 //  ⚠️ CURRENTLY UNWIRED (GW-311, 2026-07-27). Live Cursor chat is built from the
-//  hook event stream (SessionStore.applyCursorHookChat), not this file — Cursor
+//  hook event stream (SessionStore.applyHookStreamChat), not this file — Cursor
 //  writes its transcript lazily and often incompletely, so it is useless as a
 //  live mirror. This parser is retained as a HISTORY-BACKFILL candidate: the
 //  transcript IS eventually written, so it could populate chat when opening an

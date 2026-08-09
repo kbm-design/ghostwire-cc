@@ -162,4 +162,78 @@ final class CursorHookChatTests: XCTestCase {
         let items = await chat(sid)
         XCTAssertTrue(items.isEmpty, "hook-sourced chat must be Cursor-only")
     }
+
+    // MARK: - GW-174: the same path must serve gemini-cli
+
+    /// gemini-cli has Cursor's problem, not Claude's: there is no Claude-style
+    /// JSONL to mirror, so its chat can only come from the hook stream. When
+    /// this was gated on `agent == "cursor"` a gemini session had ZERO chat
+    /// items, so a `PermissionRequest` created no tool row and the notch had
+    /// nothing to render the gate against — while the hook held the socket for
+    /// up to 24 hours. Measured live 2026-08-09: an MCP `generate_image` call
+    /// spun for 8+ minutes with no prompt in the notch OR the terminal.
+    func testGeminiPermissionRequestCreatesARenderableToolRow() async {
+        let sid = newId("gemini-gate")
+        await send(event(sessionId: sid, event: "SessionStart",
+                         status: "waiting_for_input", source: "gemini"))
+        await send(event(sessionId: sid, event: "UserPromptSubmit",
+                         message: "make me a logo", source: "gemini"))
+        await send(event(sessionId: sid, event: "PermissionRequest",
+                         status: "waiting_for_approval", tool: "generate_image",
+                         toolInput: ["prompt": AnyCodable("a logo")],
+                         toolUseId: "ghostwire-abc123", source: "gemini"))
+
+        let items = await chat(sid)
+        XCTAssertTrue(
+            items.contains { $0.id == "ghostwire-abc123" },
+            "the gate needs a tool row to render against — got \(items.count) chat item(s)"
+        )
+        guard let row = items.first(where: { $0.id == "ghostwire-abc123" }),
+              case .toolCall(let tool) = row.type else {
+            return XCTFail("expected a toolCall row for the gate")
+        }
+        XCTAssertEqual(tool.name, "generate_image")
+        XCTAssertEqual(tool.status, .waitingForApproval)
+    }
+
+    func testGeminiProseAndToolOutputRideTheHookStream() async {
+        let sid = newId("gemini-chat")
+        await send(event(sessionId: sid, event: "SessionStart",
+                         status: "waiting_for_input", source: "gemini"))
+        await send(event(sessionId: sid, event: "UserPromptSubmit",
+                         message: "write the file", source: "gemini"))
+        await send(event(sessionId: sid, event: "PermissionRequest",
+                         status: "waiting_for_approval", tool: "write_file",
+                         toolUseId: "ghostwire-w1", source: "gemini"))
+        await send(event(sessionId: sid, event: "PostToolUse", tool: "write_file",
+                         toolUseId: "ghostwire-w1", message: "wrote 3 lines", source: "gemini"))
+        await send(event(sessionId: sid, event: "AgentMessage",
+                         message: "Done.", source: "gemini"))
+
+        let items = await chat(sid)
+        guard case .user(let prompt) = items.first?.type else {
+            return XCTFail("expected the prompt first")
+        }
+        XCTAssertEqual(prompt, "write the file")
+        guard let row = items.first(where: { $0.id == "ghostwire-w1" }),
+              case .toolCall(let tool) = row.type else {
+            return XCTFail("expected the tool row")
+        }
+        XCTAssertEqual(tool.status, .success)
+        XCTAssertEqual(tool.result, "wrote 3 lines")
+        guard case .assistant(let reply) = items.last?.type else {
+            return XCTFail("expected the assistant reply last")
+        }
+        XCTAssertEqual(reply, "Done.")
+    }
+
+    /// Claude and Codex mirror a real transcript — the hook stream must NOT
+    /// also inject rows for them or every tool call would appear twice.
+    func testClaudeStillDoesNotGetHookStreamChatRows() async {
+        let sid = newId("claude-untouched")
+        await send(event(sessionId: sid, event: "UserPromptSubmit",
+                         message: "hello", source: "claude"))
+        let items = await chat(sid)
+        XCTAssertTrue(items.isEmpty, "claude chat comes from the transcript, not the hook stream")
+    }
 }

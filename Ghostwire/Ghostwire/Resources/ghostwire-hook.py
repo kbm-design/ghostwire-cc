@@ -284,6 +284,9 @@ _GATE_EVENTS = {
 # Anything not on this list defaults to ask_user in an interactive session, so
 # gating it mirrors a prompt the user was going to get anyway.
 _GEMINI_POLICY_ALLOWED_TOOLS = {
+    # agents.toml — allowed in default/autoEdit/yolo.
+    "invoke_agent",
+    # read-only.toml
     "glob",
     "grep_search",
     "list_directory",
@@ -303,6 +306,115 @@ _GEMINI_POLICY_ALLOWED_TOOLS = {
     "read_mcp_resource",
     "list_mcp_resources",
 }
+
+# write.toml grants these outright in autoEdit ("accepting edits") mode.
+_GEMINI_AUTO_EDIT_ALLOWED_TOOLS = {"replace", "write_file", "web_fetch"}
+
+
+def _gemini_ancestor_command():
+    """The gemini process's own command line, or "" if it can't be found.
+
+    The hook's parent is either gemini itself or the `sh -c` it spawned, so walk
+    a few levels. Used only to read launch flags — see _gemini_effective_mode.
+    """
+    import subprocess
+
+    pid = os.getppid()
+    for _ in range(4):
+        try:
+            result = subprocess.run(
+                ["ps", "-p", str(pid), "-o", "ppid=,args="],
+                capture_output=True, text=True, timeout=2,
+            )
+        except Exception:
+            return ""
+        line = result.stdout.strip()
+        if not line:
+            return ""
+        parent, _, args = line.partition(" ")
+        if "gemini" in args:
+            return args
+        try:
+            pid = int(parent)
+        except ValueError:
+            return ""
+        if pid <= 1:
+            return ""
+    return ""
+
+
+def _gemini_settings(cwd):
+    """Merged-ish view of gemini's settings: workspace over user. Best effort —
+    a missing or unreadable file simply contributes nothing."""
+    merged = {}
+    for base in (os.path.expanduser("~"), cwd or ""):
+        if not base:
+            continue
+        path = os.path.join(base, ".gemini", "settings.json")
+        try:
+            with open(path, encoding="utf-8") as f:
+                loaded = json.load(f)
+        except Exception:
+            continue
+        if isinstance(loaded, dict):
+            merged.update(loaded)
+    return merged
+
+
+def _gemini_effective_mode(settings):
+    """gemini's approval mode, best effort.
+
+    Launch flags win (`--yolo`, `--approval-mode X`), then
+    `general.defaultApprovalMode` — which gemini deliberately ignores when it
+    says "yolo", so we ignore it there too (verified in @google/gemini-cli
+    0.54.0 config loading).
+
+    KNOWN GAP: the mode can also be cycled at runtime with Shift+Tab, which
+    leaves no trace a hook can read. A user who switches into yolo mid-session
+    keeps getting notch gates until the session ends.
+    """
+    command = _gemini_ancestor_command()
+    if command:
+        tokens = command.split()
+        if "--yolo" in tokens or "-y" in tokens:
+            return "yolo"
+        for index, token in enumerate(tokens):
+            if token.startswith("--approval-mode="):
+                return token.split("=", 1)[1]
+            if token == "--approval-mode" and index + 1 < len(tokens):
+                return tokens[index + 1]
+    configured = (settings.get("general") or {}).get("defaultApprovalMode")
+    if isinstance(configured, str) and configured != "yolo":
+        return configured
+    return "default"
+
+
+def _gemini_should_step_aside(tool_name, cwd):
+    """Whether gemini would run this tool without ever asking.
+
+    Ghostwire is complimentary, never a driver: holding a gate on a call the
+    agent was going to make automatically INVENTS an approval the user did not
+    previously have. So mirror gemini's own effective policy as closely as a
+    hook can see it, and when in doubt gate — an extra prompt in the notch is
+    recoverable, a missed one is not.
+    """
+    settings = _gemini_settings(cwd)
+    mode = _gemini_effective_mode(settings)
+    if mode == "yolo":
+        # yolo.toml allows `*`. Ghostwire must not reintroduce approvals the
+        # user explicitly turned off.
+        return True
+    if tool_name in _GEMINI_POLICY_ALLOWED_TOOLS:
+        return True
+    if mode == "autoEdit" and tool_name in _GEMINI_AUTO_EDIT_ALLOWED_TOOLS:
+        return True
+    allowed = ((settings.get("tools") or {}).get("allowed")) or []
+    if isinstance(allowed, list):
+        # A narrowed entry ("run_shell_command(git status)") allows only SOME
+        # invocations, and a hook cannot evaluate the pattern — keep gating.
+        if any(entry == tool_name for entry in allowed if isinstance(entry, str)):
+            return True
+    return False
 
 # Native telemetry events (lowercased) -> internal (event name, status).
 _TELEMETRY_EVENTS = {
@@ -480,11 +592,11 @@ def _handle_third_party(data, source, state):
     if raw in _GATE_EVENTS.get(source, set()):
         name, tool_input = _extract_tool(data)
 
-        if source == "gemini" and name in _GEMINI_POLICY_ALLOWED_TOOLS:
-            # Gemini's BeforeTool fires for EVERY tool, including the read-only
-            # ones its own policy allows without ever asking. Holding those
-            # would invent an approval the user did not previously have, so they
-            # report as running-tool telemetry and the hook gets out of the way.
+        if source == "gemini" and _gemini_should_step_aside(name, state.get("cwd")):
+            # Gemini's BeforeTool fires for EVERY tool, including the ones its
+            # own policy allows without ever asking. Holding those would invent
+            # an approval the user did not previously have, so they report as
+            # running-tool telemetry and the hook gets out of the way.
             state["event"] = "PreToolUse"
             state["status"] = "running_tool"
             state["tool"] = name
@@ -529,7 +641,10 @@ def _handle_third_party(data, source, state):
             # is both. Send the assistant's prose as its own AgentMessage first,
             # then fall through to the mapped Stop so the session lands in
             # waitingForInput exactly as it does for every other agent.
-            reply = data.get("prompt_response")
+            # stop_hook_active marks a re-entrant AfterAgent — gemini fires it
+            # again on a continuation when a co-located AfterAgent hook blocks.
+            # Replaying the reply would double the chat row and re-drive Stop.
+            reply = None if data.get("stop_hook_active") else data.get("prompt_response")
             if reply:
                 message_state = dict(state)
                 message_state["event"] = "AgentMessage"

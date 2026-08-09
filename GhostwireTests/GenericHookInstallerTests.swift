@@ -155,6 +155,44 @@ final class GenericHookInstallerTests: XCTestCase {
         XCTAssertFalse(GenericHookInstaller.isInstalled(spec, home: home))
     }
 
+    func testInstallLeavesAConfigWithAnUnmergeableHooksShapeAlone() throws {
+        // `hooks` present but not an object is a shape we cannot merge into.
+        // Overwriting it would silently drop whatever the user meant by it.
+        let spec = GenericHookInstaller.gemini
+        try makeConfigDir(".gemini")
+        let existing: [String: Any] = ["hooks": ["not", "an", "object"], "model": ["name": "x"]]
+        try JSONSerialization.data(withJSONObject: existing)
+            .write(to: spec.configFileURL(home))
+        let before = try Data(contentsOf: spec.configFileURL(home))
+
+        GenericHookInstaller.installIfNeeded(spec, home: home, binaryAvailable: true)
+
+        XCTAssertEqual(try Data(contentsOf: spec.configFileURL(home)), before)
+        XCTAssertFalse(GenericHookInstaller.isInstalled(spec, home: home))
+    }
+
+    func testInstallLeavesAnUnreadableConfigAlone() throws {
+        // A read failure on an existing file is not permission to replace it.
+        let spec = GenericHookInstaller.gemini
+        try makeConfigDir(".gemini")
+        try Data("{}".utf8).write(to: spec.configFileURL(home))
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o000], ofItemAtPath: spec.configFileURL(home).path
+        )
+        defer {
+            try? FileManager.default.setAttributes(
+                [.posixPermissions: 0o644], ofItemAtPath: spec.configFileURL(home).path
+            )
+        }
+
+        GenericHookInstaller.installIfNeeded(spec, home: home, binaryAvailable: true)
+
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o644], ofItemAtPath: spec.configFileURL(home).path
+        )
+        XCTAssertEqual(try String(contentsOf: spec.configFileURL(home), encoding: .utf8), "{}")
+    }
+
     func testInstallPreservesUnrelatedTopLevelSettings() throws {
         let spec = GenericHookInstaller.gemini
         try makeConfigDir(".gemini")

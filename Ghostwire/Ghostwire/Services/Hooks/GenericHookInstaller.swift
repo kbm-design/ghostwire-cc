@@ -247,18 +247,24 @@ enum GenericHookInstaller {
     }
 
     private static func updateHooks(_ spec: HookInstallSpec, home: URL) {
+        // An existing config we cannot fully understand must be left alone.
+        // These files hold the user's whole agent configuration (MCP servers,
+        // auth, model, other vendors' hooks); starting from `[:]` and writing
+        // back would replace all of it with nothing but our hooks. Better to
+        // install no hook than to eat someone's settings.json. Only a genuinely
+        // absent file may be created from scratch — a read failure, a parse
+        // failure, and a `hooks` value in a shape we cannot merge into all abort.
+        let configURL = spec.configFileURL(home)
         var json: [String: Any] = [:]
-        if let data = try? Data(contentsOf: spec.configFileURL(home)),
-           !data.isEmpty {
-            // A config we cannot parse must be left alone. These files hold the
-            // user's whole agent configuration (MCP servers, auth, model, other
-            // vendors' hooks) — starting from `[:]` and writing back would
-            // replace all of it with nothing but our hooks. Better to install no
-            // hook than to eat someone's settings.json.
-            guard let existing = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                return
+        if FileManager.default.fileExists(atPath: configURL.path) {
+            guard let data = try? Data(contentsOf: configURL) else { return }
+            if !data.isEmpty {
+                guard let existing = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                    return
+                }
+                if existing["hooks"] != nil, !(existing["hooks"] is [String: Any]) { return }
+                json = existing
             }
-            json = existing
         }
 
         if let version = spec.topLevelVersion {
@@ -303,7 +309,7 @@ enum GenericHookInstaller {
         if let data = try? JSONSerialization.data(
             withJSONObject: json, options: [.prettyPrinted, .sortedKeys]
         ) {
-            try? data.write(to: spec.configFileURL(home))
+            try? data.write(to: configURL)
         }
     }
 

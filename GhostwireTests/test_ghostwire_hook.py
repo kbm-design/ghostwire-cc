@@ -155,6 +155,46 @@ def main():
         assert exit_code(lambda: m._emit_third_party_decision("gemini", "ask", "")) == 0
     assert buf.getvalue() == "", buf.getvalue()
 
+    # --- effective-policy step-aside (GW-174, Codex review) ---
+    # The hook must mirror gemini's own effective policy, not just the shipped
+    # read-only list: gating a call gemini was going to make automatically
+    # invents an approval the user did not previously have.
+    m._gemini_ancestor_command = lambda: ""
+    m._gemini_settings = lambda cwd: {}
+    assert m._gemini_should_step_aside("read_file", "/x") is True
+    assert m._gemini_should_step_aside("invoke_agent", "/x") is True   # agents.toml
+    assert m._gemini_should_step_aside("run_shell_command", "/x") is False
+    assert m._gemini_should_step_aside("write_file", "/x") is False
+    # Unknown / MCP tools default to ask_user in gemini, so they stay gated.
+    assert m._gemini_should_step_aside("some_mcp_tool", "/x") is False
+
+    # yolo allows `*` — Ghostwire must not reintroduce approvals the user
+    # explicitly turned off.
+    m._gemini_ancestor_command = lambda: "node /opt/gemini.js --yolo -p hi"
+    assert m._gemini_should_step_aside("run_shell_command", "/x") is True
+    m._gemini_ancestor_command = lambda: "node /opt/gemini.js --approval-mode=yolo"
+    assert m._gemini_should_step_aside("write_file", "/x") is True
+    m._gemini_ancestor_command = lambda: "node /opt/gemini.js --approval-mode autoEdit"
+    assert m._gemini_should_step_aside("write_file", "/x") is True     # write.toml autoEdit
+    assert m._gemini_should_step_aside("run_shell_command", "/x") is False
+
+    # settings.general.defaultApprovalMode is honoured — except "yolo", which
+    # gemini itself ignores from settings, so we ignore it too.
+    m._gemini_ancestor_command = lambda: ""
+    m._gemini_settings = lambda cwd: {"general": {"defaultApprovalMode": "autoEdit"}}
+    assert m._gemini_should_step_aside("replace", "/x") is True
+    m._gemini_settings = lambda cwd: {"general": {"defaultApprovalMode": "yolo"}}
+    assert m._gemini_should_step_aside("run_shell_command", "/x") is False
+
+    # tools.allowed steps aside on a bare name; a narrowed entry does not,
+    # because a hook cannot evaluate the argument pattern.
+    m._gemini_settings = lambda cwd: {"tools": {"allowed": ["run_shell_command"]}}
+    assert m._gemini_should_step_aside("run_shell_command", "/x") is True
+    m._gemini_settings = lambda cwd: {"tools": {"allowed": ["run_shell_command(git status)"]}}
+    assert m._gemini_should_step_aside("run_shell_command", "/x") is False
+
+    m._gemini_settings = lambda cwd: {}
+
     # BeforeTool on a tool gemini's own policy allows outright must NOT hold a
     # gate — that would invent an approval the user never had. It reports as
     # running-tool telemetry instead.
@@ -190,6 +230,16 @@ def main():
     assert [e["event"] for e in sent] == ["AgentMessage", "Stop"], sent
     assert sent[0]["message"] == "done", sent
     assert sent[1]["status"] == "waiting_for_input", sent
+
+    # A re-entrant AfterAgent (stop_hook_active) must not replay the reply —
+    # gemini fires it again on a continuation when a co-located AfterAgent hook
+    # blocks, and a replayed AgentMessage doubles the chat row.
+    sent = []
+    st = {"source": "gemini"}
+    exit_code(lambda: m._handle_third_party(
+        {"hook_event_name": "AfterAgent", "prompt_response": "done",
+         "stop_hook_active": True}, "gemini", st))
+    assert [e["event"] for e in sent] == ["Stop"], sent
 
     # AfterTool forwards gemini's `tool_response` spelling of the output.
     sent = []

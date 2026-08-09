@@ -47,7 +47,7 @@ Ghostwire lives in your MacBook's notch and gives you one consistent surface to 
 
 ## Install
 
-Download the latest `.dmg` from the [Releases page](https://github.com/kbm-design/ghostwire-cc/releases/latest) and drag Ghostwire.app to Applications.
+Download the latest `.dmg` from the [Releases page](https://github.com/Ghostwire-Design/ghostwire-releases/releases/latest) and drag Ghostwire.app to Applications.
 
 Since Ghostwire isn't notarized through the Mac App Store's sandboxed distribution path, Gatekeeper will flag the first launch. Clear the quarantine flag before opening:
 

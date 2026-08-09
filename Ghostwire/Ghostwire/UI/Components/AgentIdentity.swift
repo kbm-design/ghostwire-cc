@@ -26,6 +26,10 @@ enum AgentIdentity {
     static let qoder = Color(red: 0x10 / 255.0, green: 0xB9 / 255.0, blue: 0x81 / 255.0)
     /// CodeBuddy magenta (#E0457B)
     static let codebuddy = Color(red: 0xE0 / 255.0, green: 0x45 / 255.0, blue: 0x7B / 255.0)
+    /// Gemini blue (#4285F4) — Google's own brand blue, the one hue still free.
+    /// Closest neighbour is Copilot indigo (#6366F1); they read apart at the
+    /// notch's dot size but reconfirm both when Copilot gets its live drive.
+    static let gemini = Color(red: 0x42 / 255.0, green: 0x85 / 255.0, blue: 0xF4 / 255.0)
     /// Neutral mark for unknown agent / presence-only indicators (e.g. the closed-notch terminal mark)
     static let neutral = Color.white.opacity(0.62)
 
@@ -39,6 +43,7 @@ enum AgentIdentity {
         case "factory": return factory
         case "qoder": return qoder
         case "codebuddy": return codebuddy
+        case "gemini": return gemini
         default: return neutral
         }
     }

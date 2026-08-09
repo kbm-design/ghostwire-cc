@@ -29,7 +29,7 @@ struct AgentHookConfig: Identifiable {
     /// surfaces never fork on agent, they just skip the trust line when nil.
     let trustStatus: () -> CodexHookTrust.TrustStatus?
 
-    static let all: [AgentHookConfig] = [claude, codex, cursor, copilot, factory, qoder, codebuddy]
+    static let all: [AgentHookConfig] = [claude, codex, cursor, copilot, factory, qoder, codebuddy, gemini]
 
     static let claude = AgentHookConfig(
         id: "claude",
@@ -66,6 +66,9 @@ struct AgentHookConfig: Identifiable {
     static let factory = thirdParty("Factory droid", .factoryHooksEnabled, GenericHookInstaller.factory)
     static let qoder = thirdParty("Qoder", .qoderHooksEnabled, GenericHookInstaller.qoder)
     static let codebuddy = thirdParty("CodeBuddy", .codebuddyHooksEnabled, GenericHookInstaller.codebuddy)
+    // GW-174. gemini-cli warns about *workspace* hooks only, so a user-scope
+    // install in ~/.gemini/settings.json needs no trust step.
+    static let gemini = thirdParty("Gemini CLI", .geminiHooksEnabled, GenericHookInstaller.gemini)
 
     /// Build a cluster agent descriptor backed by GenericHookInstaller + a spec.
     private static func thirdParty(

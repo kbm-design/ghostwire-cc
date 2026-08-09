@@ -248,11 +248,24 @@ def user_denial_message(session_id, tool_name, detail):
 # reason; allow -> the agent's native allow decision; ask/no-response -> exit 0,
 # deferring to the agent's own permission UI). No Swift socket/approval changes.
 #
-# Field spelling per agent should be re-confirmed against current vendor docs;
-# see the plan / GW-175.
+# gemini-cli (GW-174) joins the same path with two differences, both verified
+# against @google/gemini-cli 0.54.0 source rather than docs:
+#
+#  1. Its BeforeTool hook runs to completion BEFORE the policy engine is
+#     consulted (`scheduler`: evaluateBeforeToolHook -> checkPolicy ->
+#     resolveConfirmation), and a hook that says nothing leaves the policy
+#     decision exactly as it was. **Silence is a true step-aside on Gemini** —
+#     the native ask_user prompt still renders. Every GW-413 escape hatch
+#     (`ask`, no reply, unparseable payload) therefore behaves as designed.
+#  2. There is no hook `allow`. BeforeTool output can only BLOCK
+#     (decision block/deny) or ESCALATE (decision ask); `decision = policy`
+#     unless the hook asks for more. So an Allow click in the notch releases the
+#     hold and nothing more — if Gemini's own policy would have prompted, it
+#     still prompts. The notch gate is authoritative for DENY, and is the only
+#     gate when Gemini would have auto-allowed.
 # ---------------------------------------------------------------------------
 
-_THIRD_PARTY_AGENTS = {"cursor", "copilot", "factory", "qoder", "codebuddy"}
+_THIRD_PARTY_AGENTS = {"cursor", "copilot", "factory", "qoder", "codebuddy", "gemini"}
 
 # Native pre-tool events (lowercased) that should block and wait for the notch.
 _GATE_EVENTS = {
@@ -261,6 +274,34 @@ _GATE_EVENTS = {
     "factory": {"pretooluse"},
     "qoder": {"pretooluse"},
     "codebuddy": {"pretooluse"},
+    "gemini": {"beforetool"},
+}
+
+# Tools gemini-cli's own shipped policy ALLOWS outright (bundle
+# policies/read-only.toml, @google/gemini-cli 0.54.0). Gemini never prompts for
+# these, so holding a gate on one would ADD an approval the user did not have —
+# Ghostwire is complimentary, never a driver. They report as telemetry instead.
+# Anything not on this list defaults to ask_user in an interactive session, so
+# gating it mirrors a prompt the user was going to get anyway.
+_GEMINI_POLICY_ALLOWED_TOOLS = {
+    "glob",
+    "grep_search",
+    "list_directory",
+    "read_file",
+    "google_web_search",
+    "codebase_investigator",
+    "cli_help",
+    "get_internal_docs",
+    "tracker_create_task",
+    "tracker_update_task",
+    "tracker_get_task",
+    "tracker_list_tasks",
+    "tracker_add_dependency",
+    "tracker_visualize",
+    "update_topic",
+    "complete_task",
+    "read_mcp_resource",
+    "list_mcp_resources",
 }
 
 # Native telemetry events (lowercased) -> internal (event name, status).
@@ -277,6 +318,14 @@ _TELEMETRY_EVENTS = {
     # chat is sourced from the hook stream instead. afterAgentResponse carries
     # the assistant's natural-language reply for that turn.
     "afteragentresponse": ("AgentMessage", "processing"),
+    # gemini-cli's names (GW-174). It has no Stop event: AfterAgent both ends
+    # the turn and carries the reply, so it is fanned out into an AgentMessage
+    # followed by the Stop below.
+    "aftertool": ("PostToolUse", "processing"),
+    "beforeagent": ("UserPromptSubmit", "processing"),
+    "afteragent": ("Stop", "waiting_for_input"),
+    "precompress": ("PreCompact", "compacting"),
+    "notification": ("Notification", "notification"),
 }
 
 
@@ -332,6 +381,7 @@ _AGENT_FINGERPRINTS = (
 # this" from "we're the only hook that will".
 _AGENT_CONFIG_DIRS = {
     "cursor": ".cursor",
+    "gemini": ".gemini",
     "copilot": ".copilot",
     "factory": ".factory",
     "qoder": ".qoder",
@@ -339,11 +389,27 @@ _AGENT_CONFIG_DIRS = {
 }
 
 
+def _looks_like_gemini(data):
+    """gemini-cli's payload carries no vendor-unique key, so the fingerprint is
+    the environment it hands its hook children: `GEMINI_SESSION_ID`, set to the
+    same session id it puts in the payload (verified in @google/gemini-cli
+    0.54.0 `hookRunner.ts`). Matching the two rules out a stale exported value
+    from the user's shell.
+
+    Note it also exports `CLAUDE_PROJECT_DIR` "for compatibility" — which is why
+    that variable can never be used to infer Claude.
+    """
+    gemini_session = os.environ.get("GEMINI_SESSION_ID")
+    return bool(gemini_session) and gemini_session == data.get("session_id")
+
+
 def _detect_agent(data, declared):
     """The agent that actually produced this payload, or `declared` if unsure."""
     for agent, marker in _AGENT_FINGERPRINTS:
         if marker in data:
             return agent
+    if _looks_like_gemini(data):
+        return "gemini"
     return declared
 
 
@@ -367,12 +433,25 @@ def _allow_output(source):
         return {"permissionDecision": "allow"}
     if source == "cursor":
         return {"permission": "allow"}
+    # gemini-cli has NO hook allow: BeforeTool output can only block or escalate
+    # to ask, so an allow is expressed by saying nothing and letting its policy
+    # engine's own decision stand (GW-174). Falls through to None.
     return None
 
 
 def _emit_third_party_decision(source, decision, reason):
     """Denormalise the notch decision into the agent's native contract."""
     if decision == "deny":
+        if source == "gemini":
+            # gemini-cli's documented BeforeTool block: a `deny` (or `block`)
+            # decision on stdout, exit 0. Its runner also reads a nonzero exit
+            # with text as a deny, but stdout JSON is the sanctioned contract
+            # and keeps us inside the "no hook path exits nonzero" rule.
+            print(json.dumps({
+                "decision": "deny",
+                "reason": reason or "Denied by user via Ghostwire",
+            }))
+            sys.exit(0)
         if source == "cursor":
             # Cursor's documented contract is a JSON permission response
             # ({"permission": "deny"}); exit-2 semantics are undocumented
@@ -400,6 +479,19 @@ def _handle_third_party(data, source, state):
 
     if raw in _GATE_EVENTS.get(source, set()):
         name, tool_input = _extract_tool(data)
+
+        if source == "gemini" and name in _GEMINI_POLICY_ALLOWED_TOOLS:
+            # Gemini's BeforeTool fires for EVERY tool, including the read-only
+            # ones its own policy allows without ever asking. Holding those
+            # would invent an approval the user did not previously have, so they
+            # report as running-tool telemetry and the hook gets out of the way.
+            state["event"] = "PreToolUse"
+            state["status"] = "running_tool"
+            state["tool"] = name
+            state["tool_input"] = tool_input
+            send_event(state)
+            sys.exit(0)
+
         state["event"] = "PermissionRequest"  # normalise to the internal gate
         state["status"] = "waiting_for_approval"
         state["tool"] = name
@@ -422,12 +514,29 @@ def _handle_third_party(data, source, state):
     mapped = _TELEMETRY_EVENTS.get(raw)
     if mapped:
         state["event"], state["status"] = mapped
-        if raw == "beforesubmitprompt":
+        if raw in ("beforesubmitprompt", "beforeagent"):
             # GW-311: carry the prompt text so the notch mirrors the user's turn.
             prompt = data.get("prompt")
             if prompt:
                 state["message"] = _stringify(prompt)
-        elif raw in ("posttooluse", "aftershellexecution"):
+        elif raw == "notification":
+            state["notification_type"] = data.get("notification_type")
+            message = data.get("message")
+            if message:
+                state["message"] = _stringify(message)
+        elif raw == "afteragent":
+            # gemini-cli has no Stop event and no separate reply event: AfterAgent
+            # is both. Send the assistant's prose as its own AgentMessage first,
+            # then fall through to the mapped Stop so the session lands in
+            # waitingForInput exactly as it does for every other agent.
+            reply = data.get("prompt_response")
+            if reply:
+                message_state = dict(state)
+                message_state["event"] = "AgentMessage"
+                message_state["status"] = "processing"
+                message_state["message"] = _stringify(reply)
+                send_event(message_state)
+        elif raw in ("posttooluse", "aftershellexecution", "aftertool"):
             name, tool_input = _extract_tool(data)
             state["tool"] = name
             state["tool_input"] = tool_input
@@ -437,7 +546,10 @@ def _handle_third_party(data, source, state):
                 state["tool_use_id"] = tool_use_id
             # Cursor's transcript rarely carries results in real time, so the
             # tool output only reliably arrives here — forward it for the chat.
+            # gemini-cli spells the same field `tool_response`.
             output = data.get("tool_output")
+            if output is None:
+                output = data.get("tool_response")
             if output is not None:
                 state["message"] = _stringify(output)
         elif raw == "afteragentresponse":

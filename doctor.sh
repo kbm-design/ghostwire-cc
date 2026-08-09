@@ -99,7 +99,7 @@ DD_COUNT=$(find ~/Library/Developer/Xcode/DerivedData -maxdepth 1 -name 'Ghostwi
 # ── installed hooks vs repo ─────────────────────────────────────────────────
 printf "\n${bold}installed hooks${off}\n"
 FOUND=0
-for d in .claude .codex .cursor .copilot .factory .qoder .codebuddy; do
+for d in .claude .codex .cursor .copilot .factory .qoder .codebuddy .gemini; do
   f="$HOME/$d/hooks/ghostwire-hook.py"
   [ -f "$f" ] || continue
   FOUND=$((FOUND+1))

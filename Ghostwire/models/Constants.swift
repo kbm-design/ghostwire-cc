@@ -313,6 +313,8 @@ extension Defaults.Keys {
     static let factoryHooksEnabled = Key<Bool>("factoryHooksEnabled", default: true)
     static let qoderHooksEnabled = Key<Bool>("qoderHooksEnabled", default: true)
     static let codebuddyHooksEnabled = Key<Bool>("codebuddyHooksEnabled", default: true)
+    // GW-174: gemini-cli. Same cluster, own hook dialect (BeforeTool/AfterAgent).
+    static let geminiHooksEnabled = Key<Bool>("geminiHooksEnabled", default: true)
     // GW-173: consent gate for the MCP context-hub server (pull side). When
     // off, the `mcp-serve` subcommand serves an empty Shelf even if an agent
     // is registered. Default off — exposing held context to agents is opt-in.

@@ -159,7 +159,6 @@ def main():
     # The hook must mirror gemini's own effective policy, not just the shipped
     # read-only list: gating a call gemini was going to make automatically
     # invents an approval the user did not previously have.
-    m._gemini_ancestor_command = lambda: ""
     m._gemini_settings = lambda cwd: {}
     assert m._gemini_should_step_aside("read_file", "/x") is True
     assert m._gemini_should_step_aside("invoke_agent", "/x") is True   # agents.toml
@@ -168,20 +167,11 @@ def main():
     # Unknown / MCP tools default to ask_user in gemini, so they stay gated.
     assert m._gemini_should_step_aside("some_mcp_tool", "/x") is False
 
-    # yolo allows `*` — Ghostwire must not reintroduce approvals the user
-    # explicitly turned off.
-    m._gemini_ancestor_command = lambda: "node /opt/gemini.js --yolo -p hi"
-    assert m._gemini_should_step_aside("run_shell_command", "/x") is True
-    m._gemini_ancestor_command = lambda: "node /opt/gemini.js --approval-mode=yolo"
-    assert m._gemini_should_step_aside("write_file", "/x") is True
-    m._gemini_ancestor_command = lambda: "node /opt/gemini.js --approval-mode autoEdit"
-    assert m._gemini_should_step_aside("write_file", "/x") is True     # write.toml autoEdit
-    assert m._gemini_should_step_aside("run_shell_command", "/x") is False
-
     # settings.general.defaultApprovalMode is honoured — except "yolo", which
     # gemini itself ignores from settings, so we ignore it too.
-    m._gemini_ancestor_command = lambda: ""
     m._gemini_settings = lambda cwd: {"general": {"defaultApprovalMode": "autoEdit"}}
+    assert m._gemini_should_step_aside("write_file", "/x") is True     # write.toml autoEdit
+    assert m._gemini_should_step_aside("run_shell_command", "/x") is False
     assert m._gemini_should_step_aside("replace", "/x") is True
     m._gemini_settings = lambda cwd: {"general": {"defaultApprovalMode": "yolo"}}
     assert m._gemini_should_step_aside("run_shell_command", "/x") is False

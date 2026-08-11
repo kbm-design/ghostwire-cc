@@ -311,38 +311,6 @@ _GEMINI_POLICY_ALLOWED_TOOLS = {
 _GEMINI_AUTO_EDIT_ALLOWED_TOOLS = {"replace", "write_file", "web_fetch"}
 
 
-def _gemini_ancestor_command():
-    """The gemini process's own command line, or "" if it can't be found.
-
-    The hook's parent is either gemini itself or the `sh -c` it spawned, so walk
-    a few levels. Used only to read launch flags — see _gemini_effective_mode.
-    """
-    import subprocess
-
-    pid = os.getppid()
-    for _ in range(4):
-        try:
-            result = subprocess.run(
-                ["ps", "-p", str(pid), "-o", "ppid=,args="],
-                capture_output=True, text=True, timeout=2,
-            )
-        except Exception:
-            return ""
-        line = result.stdout.strip()
-        if not line:
-            return ""
-        parent, _, args = line.partition(" ")
-        if "gemini" in args:
-            return args
-        try:
-            pid = int(parent)
-        except ValueError:
-            return ""
-        if pid <= 1:
-            return ""
-    return ""
-
-
 def _gemini_settings(cwd):
     """Merged-ish view of gemini's settings: workspace over user. Best effort —
     a missing or unreadable file simply contributes nothing."""
@@ -362,27 +330,21 @@ def _gemini_settings(cwd):
 
 
 def _gemini_effective_mode(settings):
-    """gemini's approval mode, best effort.
+    """gemini's approval mode, as far as a hook can see it.
 
-    Launch flags win (`--yolo`, `--approval-mode X`), then
-    `general.defaultApprovalMode` — which gemini deliberately ignores when it
-    says "yolo", so we ignore it there too (verified in @google/gemini-cli
-    0.54.0 config loading).
+    Only `general.defaultApprovalMode` is readable — and gemini deliberately
+    ignores that key when it says "yolo", so we ignore it there too (verified in
+    @google/gemini-cli 0.54.0 config loading).
 
-    KNOWN GAP: the mode can also be cycled at runtime with Shift+Tab, which
-    leaves no trace a hook can read. A user who switches into yolo mid-session
-    keeps getting notch gates until the session ends.
+    KNOWN GAPS, both of which cause Ghostwire to gate a tool gemini would have
+    run silently: a `--yolo` / `--approval-mode` flag passed on the command
+    line, and Shift+Tab cycling the mode mid-session. Neither leaves anything a
+    hook can read. We used to walk the process tree for the flag; that was four
+    `ps` spawns per gate to guess at another tool's argv, and it bought only the
+    launch-flag case. Erring toward gating is the safe direction — an extra
+    prompt is recoverable, a missed one is not — and the per-agent toggle in
+    Settings is the real escape hatch for someone who wants none of this.
     """
-    command = _gemini_ancestor_command()
-    if command:
-        tokens = command.split()
-        if "--yolo" in tokens or "-y" in tokens:
-            return "yolo"
-        for index, token in enumerate(tokens):
-            if token.startswith("--approval-mode="):
-                return token.split("=", 1)[1]
-            if token == "--approval-mode" and index + 1 < len(tokens):
-                return tokens[index + 1]
     configured = (settings.get("general") or {}).get("defaultApprovalMode")
     if isinstance(configured, str) and configured != "yolo":
         return configured

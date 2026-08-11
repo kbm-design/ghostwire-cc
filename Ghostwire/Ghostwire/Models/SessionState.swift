@@ -76,7 +76,7 @@ struct SessionState: Equatable, Identifiable, Sendable {
     /// GW-311: monotonic id source for Cursor chat items built from hook events
     /// (user prompts + assistant replies, which carry no id of their own). Tool
     /// rows key off tool_use_id instead, so this only covers prose.
-    var cursorHookSeq: Int
+    var hookChatSeq: Int
 
     // MARK: - Timestamps
 
@@ -110,7 +110,7 @@ struct SessionState: Equatable, Identifiable, Sendable {
             lastToolName: nil, firstUserMessage: nil, lastUserMessageDate: nil
         ),
         needsClearReconciliation: Bool = false,
-        cursorHookSeq: Int = 0,
+        hookChatSeq: Int = 0,
         lastActivity: Date = Date(),
         createdAt: Date = Date()
     ) {
@@ -136,7 +136,7 @@ struct SessionState: Equatable, Identifiable, Sendable {
         self.subagentState = subagentState
         self.conversationInfo = conversationInfo
         self.needsClearReconciliation = needsClearReconciliation
-        self.cursorHookSeq = cursorHookSeq
+        self.hookChatSeq = hookChatSeq
         self.lastActivity = lastActivity
         self.createdAt = createdAt
     }

@@ -89,6 +89,128 @@ final class GenericHookInstallerTests: XCTestCase {
         XCTAssertTrue((hook["command"] as? String)?.contains("GHOSTWIRE_AGENT=qoder") ?? false)
     }
 
+    func testGeminiInstallStampsTimeoutInMilliseconds() throws {
+        // gemini-cli feeds the hook `timeout` field straight to setTimeout, so
+        // it is MILLISECONDS there while every other agent reads seconds
+        // (@google/gemini-cli 0.54.0, DEFAULT_HOOK_TIMEOUT = 6e4 = the
+        // documented 60s default). 86400 here would cap a human approval at
+        // 86 seconds — GW-174.
+        let spec = GenericHookInstaller.gemini
+        GenericHookInstaller.installIfNeeded(spec, home: home, binaryAvailable: true)
+
+        XCTAssertTrue(GenericHookInstaller.isInstalled(spec, home: home))
+        let json = try readJSON(spec)
+        let hooks = try XCTUnwrap(json["hooks"] as? [String: Any])
+
+        let before = try XCTUnwrap(hooks["BeforeTool"] as? [[String: Any]])
+        let group = try XCTUnwrap(before.first)
+        XCTAssertEqual(group["matcher"] as? String, "*")
+        let hook = try XCTUnwrap((group["hooks"] as? [[String: Any]])?.first { isOurs($0["command"]) })
+        XCTAssertEqual(hook["timeout"] as? Int, 86_400_000)
+        XCTAssertTrue((hook["command"] as? String)?.contains("GHOSTWIRE_AGENT=gemini") ?? false)
+
+        // Telemetry events stay untimed, and AfterAgent must be registered —
+        // gemini-cli has no Stop, so it is the only end-of-turn signal.
+        let afterAgent = try XCTUnwrap(hooks["AfterAgent"] as? [[String: Any]])
+        let telemetry = try XCTUnwrap(
+            (afterAgent.first?["hooks"] as? [[String: Any]])?.first { isOurs($0["command"]) }
+        )
+        XCTAssertNil(telemetry["timeout"])
+    }
+
+    func testSecondsAgentsKeepSecondsTimeout() throws {
+        // Guard the unit split from regressing in the other direction.
+        for spec in GenericHookInstaller.all where spec.gateTimeoutUnit == .seconds {
+            let scratch = home.appendingPathComponent(spec.agentId)
+            try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+            GenericHookInstaller.installIfNeeded(spec, home: scratch, binaryAvailable: true)
+            let data = try Data(contentsOf: spec.configFileURL(scratch))
+            let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+            let hooks = try XCTUnwrap(json["hooks"] as? [String: Any])
+            let gateEvent = try XCTUnwrap(spec.events.first { $0.isGate }?.name)
+            let entries = try XCTUnwrap(hooks[gateEvent] as? [[String: Any]])
+            let timeouts = entries.compactMap { entry -> Int? in
+                if let inner = entry["hooks"] as? [[String: Any]] {
+                    return inner.first { isOurs($0["command"]) }?["timeout"] as? Int
+                }
+                return isOurs(entry["command"]) ? entry["timeout"] as? Int : nil
+            }
+            XCTAssertEqual(timeouts.first, 86400, "\(spec.agentId) gate timeout")
+        }
+    }
+
+    // MARK: config safety
+
+    func testInstallLeavesAnUnparseableConfigAlone() throws {
+        // These files hold the user's whole agent config. Overwriting one we
+        // could not read would replace it with hooks and nothing else.
+        let spec = GenericHookInstaller.gemini
+        try makeConfigDir(".gemini")
+        let broken = "{ not json at all"
+        try broken.write(to: spec.configFileURL(home), atomically: true, encoding: .utf8)
+
+        GenericHookInstaller.installIfNeeded(spec, home: home, binaryAvailable: true)
+
+        XCTAssertEqual(try String(contentsOf: spec.configFileURL(home), encoding: .utf8), broken)
+        XCTAssertFalse(GenericHookInstaller.isInstalled(spec, home: home))
+    }
+
+    func testInstallLeavesAConfigWithAnUnmergeableHooksShapeAlone() throws {
+        // `hooks` present but not an object is a shape we cannot merge into.
+        // Overwriting it would silently drop whatever the user meant by it.
+        let spec = GenericHookInstaller.gemini
+        try makeConfigDir(".gemini")
+        let existing: [String: Any] = ["hooks": ["not", "an", "object"], "model": ["name": "x"]]
+        try JSONSerialization.data(withJSONObject: existing)
+            .write(to: spec.configFileURL(home))
+        let before = try Data(contentsOf: spec.configFileURL(home))
+
+        GenericHookInstaller.installIfNeeded(spec, home: home, binaryAvailable: true)
+
+        XCTAssertEqual(try Data(contentsOf: spec.configFileURL(home)), before)
+        XCTAssertFalse(GenericHookInstaller.isInstalled(spec, home: home))
+    }
+
+    func testInstallLeavesAnUnreadableConfigAlone() throws {
+        // A read failure on an existing file is not permission to replace it.
+        let spec = GenericHookInstaller.gemini
+        try makeConfigDir(".gemini")
+        try Data("{}".utf8).write(to: spec.configFileURL(home))
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o000], ofItemAtPath: spec.configFileURL(home).path
+        )
+        defer {
+            try? FileManager.default.setAttributes(
+                [.posixPermissions: 0o644], ofItemAtPath: spec.configFileURL(home).path
+            )
+        }
+
+        GenericHookInstaller.installIfNeeded(spec, home: home, binaryAvailable: true)
+
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o644], ofItemAtPath: spec.configFileURL(home).path
+        )
+        XCTAssertEqual(try String(contentsOf: spec.configFileURL(home), encoding: .utf8), "{}")
+    }
+
+    func testInstallPreservesUnrelatedTopLevelSettings() throws {
+        let spec = GenericHookInstaller.gemini
+        try makeConfigDir(".gemini")
+        let existing: [String: Any] = [
+            "mcpServers": ["linear": ["command": "npx"]],
+            "model": ["name": "gemini-3-pro"],
+        ]
+        try JSONSerialization.data(withJSONObject: existing)
+            .write(to: spec.configFileURL(home))
+
+        GenericHookInstaller.installIfNeeded(spec, home: home, binaryAvailable: true)
+
+        let json = try readJSON(spec)
+        XCTAssertNotNil(json["mcpServers"])
+        XCTAssertEqual((json["model"] as? [String: Any])?["name"] as? String, "gemini-3-pro")
+        XCTAssertTrue(GenericHookInstaller.isInstalled(spec, home: home))
+    }
+
     // MARK: detection guard
 
     func testInstallSkipsWhenBinaryAbsent() throws {
@@ -209,6 +331,7 @@ final class GenericHookInstallerTests: XCTestCase {
         XCTAssertEqual(AgentIdentity.tint(for: "factory"), AgentIdentity.factory)
         XCTAssertEqual(AgentIdentity.tint(for: "qoder"), AgentIdentity.qoder)
         XCTAssertEqual(AgentIdentity.tint(for: "codebuddy"), AgentIdentity.codebuddy)
+        XCTAssertEqual(AgentIdentity.tint(for: "gemini"), AgentIdentity.gemini)
         XCTAssertEqual(AgentIdentity.tint(for: "CURSOR"), AgentIdentity.cursor) // case-insensitive
         XCTAssertEqual(AgentIdentity.tint(for: "nope"), AgentIdentity.neutral)
         XCTAssertEqual(AgentIdentity.tint(for: nil), AgentIdentity.neutral)

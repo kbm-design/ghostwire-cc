@@ -3,9 +3,9 @@
 //  Ghostwire
 //
 //  Spec-driven hook installer for the third-party agent cluster (GW-175):
-//  Cursor, Copilot, Factory droid, Qoder, CodeBuddy. Each is described by a
-//  `HookInstallSpec` and installed/uninstalled through this one code path,
-//  instead of a bespoke installer file per agent.
+//  Cursor, Copilot, Factory droid, Qoder, CodeBuddy, gemini-cli (GW-174). Each
+//  is described by a `HookInstallSpec` and installed/uninstalled through this
+//  one code path, instead of a bespoke installer file per agent.
 //
 //  These agents converged on the Claude-Code hook model — a pre-tool event
 //  that blocks, plus exit-code-2 as a universal deny lever — so the shared
@@ -47,6 +47,18 @@ struct HookInstallSpec {
     /// Native event names to register, and whether each is a blocking gate
     /// (gate events get the long approval timeout).
     let events: [(name: String, isGate: Bool)]
+    /// Unit the agent reads the hook `timeout` field in. Claude/Codex and the
+    /// Claude-schema clones take SECONDS; gemini-cli feeds the same field
+    /// straight to `setTimeout`, so it is MILLISECONDS there (verified in
+    /// @google/gemini-cli 0.54.0 `hookRunner.ts`: `DEFAULT_HOOK_TIMEOUT = 6e4`
+    /// documented as the 60-second default). Writing 86400 to Gemini would cap
+    /// a human approval at 86 seconds instead of a day — GW-174.
+    var gateTimeoutUnit: GateTimeoutUnit = .seconds
+
+    enum GateTimeoutUnit {
+        case seconds
+        case milliseconds
+    }
 
     // Paths are computed against an injectable home dir so tests can install
     // into a temp directory instead of the user's real ~/.
@@ -58,7 +70,17 @@ struct HookInstallSpec {
 
 enum GenericHookInstaller {
 
-    private static let approvalTimeout = 86400
+    /// How long a gate hook may hold while a human decides. Matches
+    /// `DECISION_TIMEOUT_SECONDS` in ghostwire-hook.py — the agent owns the
+    /// deadline, Ghostwire never expires a gate on a timer (GW-408).
+    private static let approvalTimeoutSeconds = 86400
+
+    private static func gateTimeout(_ spec: HookInstallSpec) -> Int {
+        switch spec.gateTimeoutUnit {
+        case .seconds: return approvalTimeoutSeconds
+        case .milliseconds: return approvalTimeoutSeconds * 1000
+        }
+    }
 
     // MARK: Specs
 
@@ -149,7 +171,44 @@ enum GenericHookInstaller {
         ]
     )
 
-    static let all: [HookInstallSpec] = [cursor, copilot, factory, qoder, codebuddy]
+    // gemini-cli (GW-174). Verified against @google/gemini-cli 0.54.0 source,
+    // not docs — the bundle is on disk at
+    // /opt/homebrew/lib/node_modules/@google/gemini-cli/bundle.
+    //
+    //  - Config lives in ~/.gemini/settings.json under `hooks`, Claude-style
+    //    matcher groups. The merged (user + workspace) tree is what runs; only
+    //    WORKSPACE hooks go through the trust warning, so a user-scope install
+    //    needs no re-trust step (unlike Codex).
+    //  - `BeforeTool` is the only gate: it runs to completion BEFORE the policy
+    //    engine is consulted, and a silent hook leaves the policy decision
+    //    untouched. Silence is therefore a true step-aside on Gemini — the
+    //    native `ask_user` prompt still renders (GW-413 satisfied).
+    //  - There is no `Stop`; `AfterAgent` is the end-of-turn event and it also
+    //    carries the assistant's reply, so the adapter fans it out into an
+    //    AgentMessage + a Stop.
+    //  - `timeout` is MILLISECONDS here — see HookInstallSpec.gateTimeoutUnit.
+    static let gemini = HookInstallSpec(
+        agentId: "gemini",
+        binaryName: "gemini",
+        configDirName: ".gemini",
+        configFile: "settings.json",
+        nesting: .matcherGroup,
+        topLevelVersion: nil,
+        events: [
+            ("BeforeTool", true),
+            ("AfterTool", false),
+            // Claude's UserPromptSubmit / Stop equivalents.
+            ("BeforeAgent", false),
+            ("AfterAgent", false),
+            ("SessionStart", false),
+            ("SessionEnd", false),
+            ("Notification", false),
+            ("PreCompress", false),
+        ],
+        gateTimeoutUnit: .milliseconds
+    )
+
+    static let all: [HookInstallSpec] = [cursor, copilot, factory, qoder, codebuddy, gemini]
 
     // MARK: Install
 
@@ -188,10 +247,24 @@ enum GenericHookInstaller {
     }
 
     private static func updateHooks(_ spec: HookInstallSpec, home: URL) {
+        // An existing config we cannot fully understand must be left alone.
+        // These files hold the user's whole agent configuration (MCP servers,
+        // auth, model, other vendors' hooks); starting from `[:]` and writing
+        // back would replace all of it with nothing but our hooks. Better to
+        // install no hook than to eat someone's settings.json. Only a genuinely
+        // absent file may be created from scratch — a read failure, a parse
+        // failure, and a `hooks` value in a shape we cannot merge into all abort.
+        let configURL = spec.configFileURL(home)
         var json: [String: Any] = [:]
-        if let data = try? Data(contentsOf: spec.configFileURL(home)),
-           let existing = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-            json = existing
+        if FileManager.default.fileExists(atPath: configURL.path) {
+            guard let data = try? Data(contentsOf: configURL) else { return }
+            if !data.isEmpty {
+                guard let existing = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                    return
+                }
+                if existing["hooks"] != nil, !(existing["hooks"] is [String: Any]) { return }
+                json = existing
+            }
         }
 
         if let version = spec.topLevelVersion {
@@ -217,7 +290,7 @@ enum GenericHookInstaller {
                     return newEntry
                 }
                 var hookObj: [String: Any] = ["type": "command", "command": command]
-                if isGate { hookObj["timeout"] = approvalTimeout }
+                if isGate { hookObj["timeout"] = gateTimeout(spec) }
                 entries.append(["matcher": "*", "hooks": [hookObj]])
                 hooks[event] = entries
 
@@ -225,7 +298,7 @@ enum GenericHookInstaller {
                 var entries = hooks[event] as? [[String: Any]] ?? []
                 entries.removeAll { isOurHookCommand($0["command"] as? String ?? "") }
                 var hookObj: [String: Any] = ["type": "command", "command": command]
-                if isGate { hookObj["timeout"] = approvalTimeout }
+                if isGate { hookObj["timeout"] = gateTimeout(spec) }
                 entries.append(hookObj)
                 hooks[event] = entries
             }
@@ -236,7 +309,7 @@ enum GenericHookInstaller {
         if let data = try? JSONSerialization.data(
             withJSONObject: json, options: [.prettyPrinted, .sortedKeys]
         ) {
-            try? data.write(to: spec.configFileURL(home))
+            try? data.write(to: configURL)
         }
     }
 

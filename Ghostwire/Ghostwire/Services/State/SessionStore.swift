@@ -205,10 +205,12 @@ actor SessionStore {
             Self.logger.debug("Invalid transition: \(String(describing: session.phase), privacy: .public) -> \(String(describing: newPhase), privacy: .public), ignoring")
         }
 
-        // GW-311: Cursor's chat is built from the hook stream (its transcript is
-        // written lazily/incompletely). This runs before the gate status update
-        // below so the tool row already exists when a PermissionRequest lands.
-        applyCursorHookChat(event: event, session: &session)
+        // GW-311/GW-174: some agents' chat can only be built from the hook
+        // stream — Cursor writes its transcript lazily and incompletely, and
+        // gemini-cli has no Claude-style JSONL to mirror at all. This runs
+        // before the gate status update below so the tool row already exists
+        // when a PermissionRequest lands.
+        applyHookStreamChat(event: event, session: &session)
 
         if event.event == "PermissionRequest", let toolUseId = event.toolUseId {
             Self.logger.debug("Setting tool \(toolUseId.prefix(12), privacy: .public) status to waitingForApproval")
@@ -1126,38 +1128,50 @@ actor SessionStore {
     /// already exists when its PermissionRequest lands. Ids are stable
     /// (tool_use_id for tools, a per-session sequence for prose), keeping the
     /// append idempotent if an event is delivered twice.
-    private func applyCursorHookChat(event: HookEvent, session: inout SessionState) {
-        guard session.agent == "cursor" else { return }
+    /// Agents whose notch chat is reconstructed from the hook event stream
+    /// rather than mirrored from a transcript file.
+    ///
+    /// **This is not a nicety — it is what makes a gate renderable.** A
+    /// `PermissionRequest` is shown against its tool row, so an agent that is
+    /// missing from this set has no row, no approval UI, and a hook left
+    /// holding the socket for its full timeout. GW-174 shipped gemini-cli
+    /// without adding it here and an MCP tool call spun for 8+ minutes with no
+    /// prompt in the notch *or* the terminal. **Add every new agent that has no
+    /// parseable transcript, at the same time you add its HookInstallSpec.**
+    private static let hookStreamChatAgents: Set<String> = ["cursor", "gemini"]
+
+    private func applyHookStreamChat(event: HookEvent, session: inout SessionState) {
+        guard let agent = session.agent, Self.hookStreamChatAgents.contains(agent) else { return }
 
         switch event.event {
         case "UserPromptSubmit":
-            appendCursorProse(role: .user, text: event.message, session: &session)
+            appendHookStreamProse(role: .user, text: event.message, session: &session)
 
         case "AgentMessage":
-            appendCursorProse(role: .assistant, text: event.message, session: &session)
+            appendHookStreamProse(role: .assistant, text: event.message, session: &session)
 
         case "PermissionRequest":
             guard let toolId = event.toolUseId, let name = event.tool else { return }
-            upsertCursorTool(in: &session, id: toolId, name: name,
-                             input: event.toolInput, status: .waitingForApproval, result: nil)
+            upsertHookStreamTool(in: &session, id: toolId, name: name,
+                                 input: event.toolInput, status: .waitingForApproval, result: nil)
 
         case "PostToolUse":
             guard let toolId = event.toolUseId else { return }
             // tool_output rides in on `message` (forwarded by the hook script).
-            upsertCursorTool(in: &session, id: toolId, name: event.tool ?? "Tool",
-                             input: event.toolInput, status: .success, result: event.message)
+            upsertHookStreamTool(in: &session, id: toolId, name: event.tool ?? "Tool",
+                                 input: event.toolInput, status: .success, result: event.message)
 
         default:
             break
         }
     }
 
-    private enum CursorProseRole { case user, assistant }
+    private enum HookStreamProseRole { case user, assistant }
 
-    private func appendCursorProse(role: CursorProseRole, text: String?, session: inout SessionState) {
+    private func appendHookStreamProse(role: HookStreamProseRole, text: String?, session: inout SessionState) {
         guard let text = text?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else { return }
-        session.cursorHookSeq += 1
-        let id = "cursor-msg-\(session.sessionId)-\(session.cursorHookSeq)"
+        session.hookChatSeq += 1
+        let id = "hookchat-msg-\(session.sessionId)-\(session.hookChatSeq)"
         let type: ChatHistoryItemType = role == .user ? .user(text) : .assistant(text)
         session.chatItems.append(ChatHistoryItem(id: id, type: type, timestamp: Date()))
     }
@@ -1165,8 +1179,8 @@ actor SessionStore {
     /// Creates a tool row keyed by tool_use_id, or advances an existing one.
     /// Never regresses a settled tool back to pending, and only fills a result
     /// once — so a duplicate PostToolUse can't clobber the first output.
-    private func upsertCursorTool(in session: inout SessionState, id: String, name: String,
-                                  input rawInput: [String: AnyCodable]?, status: ToolStatus, result: String?) {
+    private func upsertHookStreamTool(in session: inout SessionState, id: String, name: String,
+                                      input rawInput: [String: AnyCodable]?, status: ToolStatus, result: String?) {
         if let idx = session.chatItems.firstIndex(where: { $0.id == id }),
            case .toolCall(var tool) = session.chatItems[idx].type {
             if tool.status == .success || tool.status == .error || tool.status == .interrupted { return }
@@ -1322,6 +1336,13 @@ actor SessionStore {
             // summary/ai-title line, so the title comes from its first prompt.
             guard let path = sessions[sessionId]?.transcriptPath, !path.isEmpty else { return }
             info = await CursorTranscriptParser.shared.parse(sessionId: sessionId, transcriptPath: path)
+        } else if agent == "gemini" {
+            // GW-174: gemini-cli's transcript is its own chat-recording JSON, not
+            // a Claude JSONL, and no parser reads it. Falling through to
+            // ConversationParser made the app hunt for
+            // ~/.claude/projects/<cwd-slug>/<session_id>.jsonl and log a failure
+            // on every gemini turn. Title/preview come from the hook stream.
+            return
         } else {
             info = await ConversationParser.shared.parse(sessionId: sessionId, cwd: cwd)
         }
@@ -1453,11 +1474,12 @@ actor SessionStore {
 
         let agent = sessions[sessionId]?.agent
 
-        // GW-311: Cursor writes its transcript lazily and often incompletely, so
-        // its chat is built from the hook event stream (see applyCursorHookChat),
-        // not a file mirror. Nothing to sync from disk. CursorTranscriptParser is
-        // kept as a candidate for later history backfill.
-        if agent == "cursor" { return }
+        // GW-311/GW-174: Cursor writes its transcript lazily and incompletely
+        // and gemini-cli has no Claude-style JSONL at all, so their chat is
+        // built from the hook event stream (see applyHookStreamChat), not a file
+        // mirror. Nothing to sync from disk. CursorTranscriptParser is kept as a
+        // candidate for later history backfill.
+        if let agent, Self.hookStreamChatAgents.contains(agent) { return }
 
         // Schedule new debounced sync
         pendingSyncs[sessionId] = Task { [weak self, syncDebounceNs] in

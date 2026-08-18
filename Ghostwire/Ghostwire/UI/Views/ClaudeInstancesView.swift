@@ -347,6 +347,19 @@ struct InlineApprovalButtons: View {
     @State private var showDenyButton = false
     @State private var showAllowButton = false
 
+    /// One click per breath (matches ChatApprovalBar): a keystroke-path
+    /// verdict resolves only when the agent reacts, so rapid re-clicks would
+    /// type stray letters into the pane. Brief lock, then retry allowed.
+    @State private var answerLocked = false
+
+    private func lockAfterAnswer() {
+        answerLocked = true
+        Task {
+            try? await Task.sleep(for: .seconds(6))
+            answerLocked = false
+        }
+    }
+
     var body: some View {
         HStack(spacing: 6) {
             // Chat button
@@ -357,6 +370,7 @@ struct InlineApprovalButtons: View {
             .scaleEffect(showChatButton ? 1 : 0.8)
 
             Button {
+                lockAfterAnswer()
                 onReject()
             } label: {
                 Text("Deny")
@@ -368,10 +382,12 @@ struct InlineApprovalButtons: View {
                     .clipShape(Capsule())
             }
             .buttonStyle(.plain)
-            .opacity(showDenyButton ? 1 : 0)
+            .disabled(answerLocked)
+            .opacity(showDenyButton ? (answerLocked ? 0.4 : 1) : 0)
             .scaleEffect(showDenyButton ? 1 : 0.8)
 
             Button {
+                lockAfterAnswer()
                 onApprove()
             } label: {
                 Text("Allow")
@@ -383,7 +399,8 @@ struct InlineApprovalButtons: View {
                     .clipShape(Capsule())
             }
             .buttonStyle(.plain)
-            .opacity(showAllowButton ? 1 : 0)
+            .disabled(answerLocked)
+            .opacity(showAllowButton ? (answerLocked ? 0.4 : 1) : 0)
             .scaleEffect(showAllowButton ? 1 : 0.8)
         }
         .onAppear {

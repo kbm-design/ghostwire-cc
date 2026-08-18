@@ -274,6 +274,13 @@ actor SessionStore {
             session.pendingPermissions.removeAll()
         }
 
+        if event.event == "UserPromptSubmit" {
+            // See mayExitWaitingForApproval: a new prompt means no native menu
+            // is up, so queued keystroke-path gates are stale. Held gates keep
+            // their socket — only the agent's own lifecycle releases those.
+            session.pendingPermissions.removeAll { $0.gateMode != .held }
+        }
+
         sessions[sessionId] = session
         publishState()
 
@@ -313,6 +320,12 @@ actor SessionStore {
         // approval bar sticks until Stop over a tool that already ran.
         if event.event == "PostToolUse", ctx.correlationIsProvisional, event.tool == ctx.toolName { return true }
         if event.event == "Stop" { return true }
+        // A keystroke-path (non-held) gate can't outlive a submitted prompt:
+        // the native menu captures input while it's up, so a UserPromptSubmit
+        // proves the menu is gone — the agent abandoned the request and no
+        // PostToolUse will ever release it (observed live 2026-08-18: a stale
+        // card whose Allow clicks typed 'y' into the composer).
+        if event.event == "UserPromptSubmit", ctx.gateMode != .held { return true }
         return false
     }
 

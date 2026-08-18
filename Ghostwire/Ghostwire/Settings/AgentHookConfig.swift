@@ -29,7 +29,10 @@ struct AgentHookConfig: Identifiable {
     /// surfaces never fork on agent, they just skip the trust line when nil.
     let trustStatus: () -> CodexHookTrust.TrustStatus?
 
-    static let all: [AgentHookConfig] = [claude, codex, cursor, copilot, factory, qoder, codebuddy, gemini]
+    // Scoped to Claude + Codex for now (2026-08-17) — the third-party cluster
+    // below stays defined (GenericHookInstaller specs untouched) so re-adding
+    // an agent later is a one-line append, not new work.
+    static let all: [AgentHookConfig] = [claude, codex]
 
     static let claude = AgentHookConfig(
         id: "claude",

@@ -8,12 +8,40 @@
 
 import Foundation
 
+/// How a pending gate is answerable (GW: Codex adaptive approval flow).
+///
+/// Codex's approval pipeline is strictly sequential — while a PermissionRequest
+/// hook holds, its terminal renders NO prompt of its own (verified from
+/// codex-rs source: request_approval awaits hooks before the reviewer path).
+/// So for Codex the notch chooses per session:
+///  - multiplexer sessions (cmux/tmux): release the socket immediately so the
+///    native prompt renders alongside the card; notch buttons answer by
+///    keystroke into the addressed pane (`terminalFirst`).
+///  - plain terminals: hold as usual, but hand back after a window so an
+///    unanswered notch never strands the terminal (`handedOff` — card flips
+///    to a focus-jump, since without a pane address injection is unsafe).
+/// Claude is untouched: its own menu races the held hook natively (`held`).
+enum PermissionGateMode: Sendable, Equatable {
+    /// Socket held; Allow/Deny answer over the hook socket (default; all agents).
+    case held
+    /// Socket already released; the agent's native prompt is live. Allow/Deny
+    /// inject the native menu's keystroke into the session's pane.
+    case terminalFirst
+    /// Hold window elapsed; socket released; native prompt is live but the
+    /// session has no addressable pane — the card offers a terminal jump only.
+    case handedOff
+}
+
 /// Permission context for tools waiting for approval
 struct PermissionContext: Sendable {
     let toolUseId: String
     let toolName: String
     let toolInput: [String: AnyCodable]?
     let receivedAt: Date
+
+    /// How this gate is answerable right now. Mutates in place when the
+    /// hold window elapses (held -> handedOff); the UI re-renders off it.
+    var gateMode: PermissionGateMode = .held
 
     /// GW-413: `toolUseId` was minted by Ghostwire because the request could not
     /// be correlated to its `PreToolUse`. The gate is fully answerable — the id is
@@ -106,10 +134,12 @@ struct PermissionContext: Sendable {
 
 extension PermissionContext: Equatable {
     nonisolated static func == (lhs: PermissionContext, rhs: PermissionContext) -> Bool {
-        // Compare by identity fields only (AnyCodable doesn't conform to Equatable)
+        // Compare by identity fields only (AnyCodable doesn't conform to Equatable).
+        // gateMode is included so a held -> handedOff flip publishes to SwiftUI.
         lhs.toolUseId == rhs.toolUseId &&
         lhs.toolName == rhs.toolName &&
-        lhs.receivedAt == rhs.receivedAt
+        lhs.receivedAt == rhs.receivedAt &&
+        lhs.gateMode == rhs.gateMode
     }
 }
 

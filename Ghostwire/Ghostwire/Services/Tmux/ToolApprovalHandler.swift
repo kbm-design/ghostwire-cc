@@ -27,6 +27,54 @@ actor ToolApprovalHandler {
         await sendKeys(to: target, keys: "2", pressEnter: true)
     }
 
+    /// Codex native approval menu, approve once. Default keymap: 'y' ("Yes,
+    /// proceed"), acts immediately — no Enter (codex-rs tui/keymap.rs
+    /// defaults; user-remappable, in which case this misses and the human
+    /// answers at the prompt themselves). Terminal-first tier only: callers
+    /// must have verified the gate is `.terminalFirst` (native menu live).
+    func codexApproveNative(target: TmuxTarget) async -> Bool {
+        await sendKeys(to: target, keys: "y", pressEnter: false)
+    }
+
+    /// Codex native approval menu, deny. The live menu binds "No, and tell
+    /// Codex what to do differently" to **Esc** (observed on codex-cli
+    /// 0.146.1; 'n' is not offered), so this sends the named Escape key,
+    /// not a literal character. Same terminal-first caveats as
+    /// `codexApproveNative`.
+    func codexDenyNative(target: TmuxTarget) async -> Bool {
+        await sendEscapeKey(to: target)
+    }
+
+    /// Send the named Escape key (not literal text) to a pane.
+    private func sendEscapeKey(to target: TmuxTarget) async -> Bool {
+        switch target.multiplexer {
+        case .tmux:
+            guard let tmuxPath = await TmuxPathFinder.shared.getTmuxPath() else { return false }
+            do {
+                _ = try await ProcessExecutor.shared.run(
+                    tmuxPath, arguments: ["send-keys", "-t", target.targetString, "Escape"])
+                return true
+            } catch {
+                Self.logger.error("tmux escape error: \(error.localizedDescription, privacy: .public)")
+                return false
+            }
+        case .cmux:
+            guard let cmuxPath = await TmuxPathFinder.shared.getCmuxPath(),
+                  let workspace = target.cmuxWorkspaceRef,
+                  let surface = target.cmuxSurfaceRef else { return false }
+            let password = Self.readCmuxSocketPassword()
+            let base = ["send-key", "--workspace", workspace, "--surface", surface, "escape"]
+            do {
+                _ = try await ProcessExecutor.shared.run(
+                    cmuxPath, arguments: password != nil ? ["--password", password!] + base : base)
+                return true
+            } catch {
+                Self.logger.error("cmux escape error: \(error.localizedDescription, privacy: .public)")
+                return false
+            }
+        }
+    }
+
     /// Reject a tool with optional message
     func reject(target: TmuxTarget, message: String? = nil) async -> Bool {
         // First send 'n' + Enter to reject

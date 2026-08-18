@@ -93,6 +93,41 @@ class ClaudeSessionMonitor: ObservableObject {
 
     // MARK: - Permission Handling
 
+    /// The gate mode of a specific pending permission (active or queued).
+    private static func gateMode(_ session: SessionState, toolUseId: String) -> PermissionGateMode? {
+        if let active = session.activePermission, active.toolUseId == toolUseId {
+            return active.gateMode
+        }
+        return session.pendingPermissions.first { $0.toolUseId == toolUseId }?.gateMode
+    }
+
+    private enum NativeAnswer { case approve, deny }
+
+    /// Answer Codex's native terminal prompt on the user's behalf.
+    /// `.terminalFirst` gates have an addressable pane by construction (the
+    /// mode is only assigned to cmux/tmux sessions); `.handedOff` gates never
+    /// do — the UI offers a terminal jump instead, so reaching here with one
+    /// is a guard failure, not an injection attempt.
+    private static func answerNativeCodexPrompt(
+        _ answer: NativeAnswer, session: SessionState, mode: PermissionGateMode
+    ) async -> Bool {
+        guard mode == .terminalFirst else { return false }
+        let target: TmuxTarget?
+        switch MultiplexerTargetResolver.resolve(session: session) {
+        case .cmux(let workspace, let surface):
+            target = .cmux(workspace: workspace, surface: surface)
+        case .tmuxTty(let tty):
+            target = await TmuxTargetFinder.shared.findTarget(forTty: tty)
+        case .unresolvable:
+            target = nil
+        }
+        guard let target else { return false }
+        switch answer {
+        case .approve: return await ToolApprovalHandler.shared.codexApproveNative(target: target)
+        case .deny: return await ToolApprovalHandler.shared.codexDenyNative(target: target)
+        }
+    }
+
     func approvePermission(sessionId: String,
                            toolUseId: String,
                            delivered: (@Sendable (Bool) -> Void)? = nil) {
@@ -101,6 +136,23 @@ class ClaudeSessionMonitor: ObservableObject {
                   session.pendingPermissions.contains(where: { $0.toolUseId == toolUseId })
                     || session.activePermission?.toolUseId == toolUseId else {
                 delivered?(false)
+                return
+            }
+
+            // Codex adaptive flow: the socket for this gate was already
+            // released so the native prompt could render — the verdict rides
+            // a keystroke into the session's pane instead.
+            //
+            // Transport success is NOT proof Codex consumed the key
+            // (adversarial review 2026-08-18; the 'p' incident proved it
+            // live): a green send only means the multiplexer accepted bytes.
+            // So NOTHING is resolved here — the gate stays visible and is
+            // released by the agent's own PostToolUse (allow) or Stop (deny),
+            // exactly the path a terminal-answered gate already takes. If the
+            // key missed (remapped, non-exec menu), the card truthfully stays.
+            if let mode = Self.gateMode(session, toolUseId: toolUseId), mode != .held {
+                let ok = await Self.answerNativeCodexPrompt(.approve, session: session, mode: mode)
+                delivered?(ok)
                 return
             }
 
@@ -153,6 +205,15 @@ class ClaudeSessionMonitor: ObservableObject {
                   session.pendingPermissions.contains(where: { $0.toolUseId == toolUseId })
                     || session.activePermission?.toolUseId == toolUseId else {
                 delivered?(false)
+                return
+            }
+
+            // Codex adaptive flow — see approvePermission: send the native
+            // menu's deny key and resolve nothing; the agent's own Stop
+            // releases the gate once Codex actually processes the Esc.
+            if let mode = Self.gateMode(session, toolUseId: toolUseId), mode != .held {
+                let ok = await Self.answerNativeCodexPrompt(.deny, session: session, mode: mode)
+                delivered?(ok)
                 return
             }
 

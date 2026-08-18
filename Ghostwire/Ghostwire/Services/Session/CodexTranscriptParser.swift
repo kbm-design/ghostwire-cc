@@ -198,6 +198,15 @@ actor CodexTranscriptParser {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
 
+        // Modern (item_completed) fields collect separately; whichever format
+        // actually decoded wins at the end (see parseConversation).
+        var sawModernItem = false
+        var modernFirstUser: String?
+        var modernLast: String?
+        var modernLastRole: String?
+        var modernLastTool: String?
+        var modernLastUserDate: Date?
+
         for line in content.components(separatedBy: "\n") where !line.isEmpty {
             guard let lineData = line.data(using: .utf8),
                   let json = try? JSONSerialization.jsonObject(with: lineData) as? [String: Any],
@@ -207,6 +216,46 @@ actor CodexTranscriptParser {
 
             let lineType = json["type"] as? String
             let payloadType = payload["type"] as? String
+
+            if lineType == "event_msg", payloadType == "item_completed" {
+                guard let item = payload["item"] as? [String: Any],
+                      let itemType = item["type"] as? String else { continue }
+                switch itemType {
+                case "UserMessage":
+                    if let text = Self.joinedText(item["content"]), !Self.isInjectedUserText(text) {
+                        sawModernItem = true
+                        if modernFirstUser == nil {
+                            modernFirstUser = Self.truncate(text, maxLength: 50)
+                        }
+                        modernLast = text
+                        modernLastRole = "user"
+                        modernLastTool = nil
+                        if let timestampStr = json["timestamp"] as? String {
+                            modernLastUserDate = formatter.date(from: timestampStr)
+                        }
+                    }
+                case "AgentMessage":
+                    if let text = Self.joinedText(item["content"]) {
+                        sawModernItem = true
+                        modernLast = text
+                        modernLastRole = "assistant"
+                        modernLastTool = nil
+                    }
+                case "CommandExecution":
+                    sawModernItem = true
+                    modernLast = Self.commandString(item)
+                    modernLastRole = "tool"
+                    modernLastTool = "Bash"
+                case "McpToolCall":
+                    sawModernItem = true
+                    modernLast = nil
+                    modernLastRole = "tool"
+                    modernLastTool = item["tool"] as? String
+                default:
+                    break
+                }
+                continue
+            }
 
             if lineType == "event_msg" {
                 if payloadType == "user_message", let message = payload["message"] as? String {
@@ -245,11 +294,11 @@ actor CodexTranscriptParser {
 
         let info = ConversationInfo(
             summary: title,
-            lastMessage: lastMessage,
-            lastMessageRole: lastMessageRole,
-            lastToolName: lastToolName,
-            firstUserMessage: firstUserMessage,
-            lastUserMessageDate: lastUserMessageDate
+            lastMessage: sawModernItem ? modernLast : lastMessage,
+            lastMessageRole: sawModernItem ? modernLastRole : lastMessageRole,
+            lastToolName: sawModernItem ? modernLastTool : lastToolName,
+            firstUserMessage: sawModernItem ? modernFirstUser : firstUserMessage,
+            lastUserMessageDate: sawModernItem ? modernLastUserDate : lastUserMessageDate
         )
         infoCache[path] = (modificationDate: modDate, info: info)
         return info
@@ -285,6 +334,15 @@ actor CodexTranscriptParser {
 
         let idPrefix = "codex-\(sessionId.prefix(8))"
 
+        // Modern (item_completed) content collects separately from legacy —
+        // whichever actually decoded wins at the end. Deciding by decoded
+        // items rather than a raw substring search keeps a legacy transcript
+        // that merely *mentions* "item_completed" in a message on the legacy
+        // path (adversarial review 2026-08-18).
+        var modernMessages: [ChatMessage] = []
+        var modernCompleted: Set<String> = []
+        var modernResults: [String: ConversationParser.ToolResult] = [:]
+
         for (lineIndex, line) in content.components(separatedBy: "\n").enumerated() where !line.isEmpty {
             guard let lineData = line.data(using: .utf8),
                   let json = try? JSONSerialization.jsonObject(with: lineData) as? [String: Any],
@@ -300,6 +358,92 @@ actor CodexTranscriptParser {
                let parsed = formatter.date(from: timestampStr) {
                 timestamp = parsed
                 fallbackDate = parsed
+            }
+
+            if lineType == "event_msg", payloadType == "item_completed" {
+                guard let item = payload["item"] as? [String: Any],
+                      let itemType = item["type"] as? String,
+                      let itemId = item["id"] as? String else { continue }
+                let msgId = "\(idPrefix)-\(itemId)"
+
+                switch itemType {
+                case "UserMessage":
+                    if let text = Self.joinedText(item["content"]), !Self.isInjectedUserText(text) {
+                        modernMessages.append(ChatMessage(
+                            id: msgId, role: .user, timestamp: timestamp, content: [.text(text)]))
+                    }
+                case "AgentMessage":
+                    if let text = Self.joinedText(item["content"]) {
+                        modernMessages.append(ChatMessage(
+                            id: msgId, role: .assistant, timestamp: timestamp, content: [.text(text)]))
+                    }
+                case "Reasoning":
+                    let text = ((item["summary_text"] as? [String]) ?? []).joined(separator: "\n\n")
+                    if !text.isEmpty {
+                        modernMessages.append(ChatMessage(
+                            id: msgId, role: .assistant, timestamp: timestamp, content: [.thinking(text)]))
+                    }
+                case "CommandExecution":
+                    modernMessages.append(ChatMessage(
+                        id: msgId, role: .assistant, timestamp: timestamp,
+                        content: [.toolUse(ToolUseBlock(
+                            id: itemId, name: "Bash",
+                            input: ["command": Self.commandString(item)]))]))
+                    if let status = item["status"] as? String, status != "in_progress" {
+                        modernCompleted.insert(itemId)
+                        modernResults[itemId] = ConversationParser.ToolResult(
+                            content: item["aggregated_output"] as? String,
+                            stdout: nil, stderr: nil,
+                            isError: status == "failed"
+                                || ((item["exit_code"] as? NSNumber)?.intValue ?? 0) != 0
+                        )
+                    }
+                case "McpToolCall":
+                    let server = item["server"] as? String ?? "mcp"
+                    let toolName = item["tool"] as? String ?? "tool"
+                    var input: [String: String] = [:]
+                    if let args = item["arguments"] as? [String: Any] {
+                        for (key, value) in args {
+                            if let str = value as? String { input[key] = str }
+                            else if let num = value as? NSNumber { input[key] = num.stringValue }
+                        }
+                    }
+                    modernMessages.append(ChatMessage(
+                        id: msgId, role: .assistant, timestamp: timestamp,
+                        content: [.toolUse(ToolUseBlock(
+                            id: itemId, name: "mcp__\(server)__\(toolName)", input: input))]))
+                    if let status = item["status"] as? String, status != "in_progress" {
+                        modernCompleted.insert(itemId)
+                        var resultText: String?
+                        if let result = item["result"] as? [String: Any] {
+                            resultText = Self.joinedText(result["content"])
+                        }
+                        modernResults[itemId] = ConversationParser.ToolResult(
+                            content: resultText, stdout: nil, stderr: nil,
+                            isError: status == "failed")
+                    }
+                case "FileChange":
+                    let paths = ((item["changes"] as? [String: Any])?.keys.sorted() ?? [])
+                        .joined(separator: "\n")
+                    modernMessages.append(ChatMessage(
+                        id: msgId, role: .assistant, timestamp: timestamp,
+                        content: [.toolUse(ToolUseBlock(
+                            id: itemId, name: "Edit", input: ["file_path": paths]))]))
+                    modernCompleted.insert(itemId)
+                case "Extension":
+                    var input: [String: String] = [:]
+                    if let query = item["query"] as? String { input["query"] = query }
+                    modernMessages.append(ChatMessage(
+                        id: msgId, role: .assistant, timestamp: timestamp,
+                        content: [.toolUse(ToolUseBlock(
+                            id: itemId,
+                            name: item["kind"] as? String ?? "extension",
+                            input: input))]))
+                    modernCompleted.insert(itemId)
+                default:
+                    break
+                }
+                continue
             }
 
             if lineType == "event_msg" {
@@ -341,15 +485,59 @@ actor CodexTranscriptParser {
             }
         }
 
-        let conversation = CodexConversation(
-            messages: messages,
-            completedToolIds: completedToolIds,
-            toolResults: toolResults
-        )
+        // Modern items win whenever any decoded — the same file's legacy
+        // lines duplicate their content, so mixing double-renders.
+        let conversation = modernMessages.isEmpty
+            ? CodexConversation(
+                messages: messages,
+                completedToolIds: completedToolIds,
+                toolResults: toolResults)
+            : CodexConversation(
+                messages: modernMessages,
+                completedToolIds: modernCompleted,
+                toolResults: modernResults)
         if let modDate {
             conversationCache[path] = (modificationDate: modDate, conversation: conversation)
         }
         return conversation
+    }
+
+    // MARK: - Modern rollout items (codex-cli ≥ ~0.146)
+    //
+    // Newer rollouts wrap the whole conversation in event_msg/item_completed
+    // lines with typed items: UserMessage / AgentMessage / Reasoning /
+    // CommandExecution / McpToolCall / FileChange / Extension. The legacy
+    // event_msg text types and response_item function_calls appear alongside
+    // them carrying the SAME content, so a file with item_completed lines is
+    // parsed from those alone — mixing the two double-renders every message.
+    // Item ids are stable (CommandExecution's "exec-…" is also the hook gate's
+    // toolUseId, which is what lets transcript rows merge with the live hook
+    // placeholder rows instead of duplicating them).
+
+    /// Join the text fields of an item content array ([{type, text}, …]).
+    private static func joinedText(_ content: Any?) -> String? {
+        guard let blocks = content as? [[String: Any]] else { return nil }
+        let joined = blocks.compactMap { $0["text"] as? String }.joined(separator: "\n")
+        return joined.isEmpty ? nil : joined
+    }
+
+    /// Injected context items masquerade as user text; never render them.
+    private static func isInjectedUserText(_ text: String) -> Bool {
+        text.hasPrefix("# AGENTS.md instructions")
+            || text.hasPrefix("<environment_context>")
+            || text.hasPrefix("<user_instructions>")
+    }
+
+    /// The human-readable command of a CommandExecution ("/bin/zsh -lc <cmd>"
+    /// unwraps to just <cmd>).
+    private static func commandString(_ item: [String: Any]) -> String {
+        if let parts = item["command"] as? [String] {
+            if parts.count >= 3, parts[1] == "-lc" || parts[1] == "-c" {
+                return parts[2...].joined(separator: " ")
+            }
+            return parts.joined(separator: " ")
+        }
+        return item["command"] as? String ?? ""
     }
 
     // MARK: - Helpers

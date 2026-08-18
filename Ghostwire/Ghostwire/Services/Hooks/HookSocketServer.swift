@@ -428,6 +428,23 @@ class HookSocketServer {
         }
     }
 
+    /// Codex adaptive flow: release a held gate WITHOUT a verdict so the
+    /// agent's own approval prompt renders (terminal-first, or the timed
+    /// handoff when the hold window elapses). This is a passthrough — the
+    /// GW-413 step-aside, never a deny — and the card stays visible in the
+    /// notch under its new gate mode; nothing here is a silent resolution.
+    func handOffPermission(toolUseId: String, reason: String) {
+        queue.async { [weak self] in
+            guard let self else { return }
+            self.permissionsLock.lock()
+            let pending = self.pendingPermissions.removeValue(forKey: toolUseId)
+            self.permissionsLock.unlock()
+            guard let pending else { return }
+            logger.debug("Handing gate back to the agent's own prompt for \(pending.sessionId.prefix(8), privacy: .public) tool:\(toolUseId.prefix(12), privacy: .public)")
+            self.sendPassthrough(to: pending.clientSocket, reason: reason)
+        }
+    }
+
     private func cleanupSpecificPermission(toolUseId: String, sessionId: String? = nil, toolName: String? = nil) {
         permissionsLock.lock()
         var pending = pendingPermissions.removeValue(forKey: toolUseId)

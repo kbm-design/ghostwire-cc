@@ -646,7 +646,6 @@ struct ChatView: View {
     private func approvalBar(tool: String, toolUseId: String) -> some View {
         ChatApprovalBar(
             tool: tool,
-            toolUseId: toolUseId,
             toolInput: session.pendingToolInput,
             // GW-139: the verbatim string the human is approving. Full-raw
             // mode renders this untruncated; the lossy `toolInput` is only
@@ -1452,9 +1451,6 @@ struct ChatInteractivePromptBar: View {
 /// Approval bar for the chat view with animated buttons
 struct ChatApprovalBar: View {
     let tool: String
-    /// Identity of the gate on screen — the sent-state below is keyed to it,
-    /// so a new request always arrives with fresh, active buttons.
-    var toolUseId: String = ""
     /// Lossy, single-line summary — used only for the compact `.inline` mode.
     let toolInput: String?
     /// Verbatim, untruncated command (GW-139). Rendered in `.fullRaw` mode.
@@ -1472,26 +1468,6 @@ struct ChatApprovalBar: View {
     @State private var showAllowButton = false
     @State private var showDenyButton = false
 
-    /// Acknowledge-per-REQUEST, never per-bar: a keystroke-path verdict
-    /// resolves only when the agent reacts, so re-clicks on the SAME request
-    /// would type stray letters into the pane (observed live 2026-08-18).
-    /// Keying the sent-state to the gate id means a new request unlocks
-    /// instantly — back-to-back approvals never see a dimmed button. The
-    /// same request re-enables after a beat so a genuinely missed key can
-    /// still be retried.
-    @State private var answeredGateId: String?
-
-    private var answerLocked: Bool { answeredGateId == toolUseId && !toolUseId.isEmpty }
-
-    private func lockAfterAnswer() {
-        let id = toolUseId
-        guard !id.isEmpty else { return }
-        answeredGateId = id
-        Task {
-            try? await Task.sleep(for: .seconds(8))
-            if answeredGateId == id { answeredGateId = nil }
-        }
-    }
 
     // GW-144/GW-139: in full-raw mode the command under approval is shown
     // verbatim and untruncated — what you approve is what runs.
@@ -1531,11 +1507,7 @@ struct ChatApprovalBar: View {
                         .foregroundColor(.white.opacity(0.5))
                         .lineLimit(1)
                 }
-                if answerLocked {
-                    Text("Answer sent — clears when the agent responds")
-                        .font(.system(size: 10))
-                        .foregroundColor(.white.opacity(0.35))
-                } else if gateMode == .terminalFirst {
+                if gateMode == .terminalFirst {
                     Text("Also live at the terminal prompt")
                         .font(.system(size: 10))
                         .foregroundColor(.white.opacity(0.35))
@@ -1567,7 +1539,6 @@ struct ChatApprovalBar: View {
             } else {
                 // Deny button
                 Button {
-                    lockAfterAnswer()
                     onDeny()
                 } label: {
                     Text("Deny")
@@ -1579,9 +1550,8 @@ struct ChatApprovalBar: View {
                         .clipShape(Capsule())
                 }
                 .buttonStyle(.plain)
-                .disabled(answerLocked)
                 .help("Deny this request")
-                .opacity(showDenyButton ? (answerLocked ? 0.4 : 1) : 0)
+                .opacity(showDenyButton ? 1 : 0)
                 .scaleEffect(showDenyButton ? 1 : 0.8)
 
                 // Allow button.
@@ -1600,7 +1570,6 @@ struct ChatApprovalBar: View {
                 // session scratchpad (codex-always-allow.patch); a real
                 // version needs the rules-file route (GW-324), not keystrokes.
                 Button {
-                    lockAfterAnswer()
                     onApprove()
                 } label: {
                     Text("Allow")
@@ -1612,10 +1581,9 @@ struct ChatApprovalBar: View {
                         .clipShape(Capsule())
                 }
                 .buttonStyle(.plain)
-                .disabled(answerLocked)
                 .keyboardShortcut(.return, modifiers: [.command, .shift])
                 .help("Allow (⌘⇧↩)")
-                .opacity(showAllowButton ? (answerLocked ? 0.4 : 1) : 0)
+                .opacity(showAllowButton ? 1 : 0)
                 .scaleEffect(showAllowButton ? 1 : 0.8)
             }
         }

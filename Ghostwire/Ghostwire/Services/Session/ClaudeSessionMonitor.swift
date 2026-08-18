@@ -146,15 +146,25 @@ class ClaudeSessionMonitor: ObservableObject {
             // released so the native prompt could render — the verdict rides
             // a keystroke into the session's pane instead.
             //
-            // Transport success is NOT proof Codex consumed the key
-            // (adversarial review 2026-08-18; the 'p' incident proved it
-            // live): a green send only means the multiplexer accepted bytes.
-            // So NOTHING is resolved here — the gate stays visible and is
-            // released by the agent's own PostToolUse (allow) or Stop (deny),
-            // exactly the path a terminal-answered gate already takes. If the
-            // key missed (remapped, non-exec menu), the card truthfully stays.
+            // Resolves on transport success (instant-clear, matching Claude's
+            // feel). OWNER DECISION 2026-08-18, overriding the adversarial
+            // review's finding #1: transport success is not proof Codex
+            // consumed the key, so a missed key (remapped bindings, unknown
+            // menu variant) clears the card while the terminal still waits.
+            // Keelan accepted that occasional silent miss over an
+            // acknowledgment state that made every click read as lag. The
+            // per-menu key map ('y' exec / '1' list widgets, Esc deny) keeps
+            // the known miss sources closed.
             if let gate = Self.gateContext(session, toolUseId: toolUseId), gate.gateMode != .held {
                 let ok = await Self.answerNativeCodexPrompt(.approve, session: session, gate: gate)
+                if ok {
+                    Task { @MainActor in
+                        AlertHistoryStore.shared.markPermissionOutcome(
+                            sessionId: sessionId, toolUseId: toolUseId, outcome: "allowed")
+                    }
+                    await SessionStore.shared.process(
+                        .permissionApproved(sessionId: sessionId, toolUseId: toolUseId))
+                }
                 delivered?(ok)
                 return
             }
@@ -211,11 +221,18 @@ class ClaudeSessionMonitor: ObservableObject {
                 return
             }
 
-            // Codex adaptive flow — see approvePermission: send the native
-            // menu's deny key and resolve nothing; the agent's own Stop
-            // releases the gate once Codex actually processes the Esc.
+            // Codex adaptive flow — see approvePermission (same owner
+            // decision: instant-clear on transport success).
             if let gate = Self.gateContext(session, toolUseId: toolUseId), gate.gateMode != .held {
                 let ok = await Self.answerNativeCodexPrompt(.deny, session: session, gate: gate)
+                if ok {
+                    Task { @MainActor in
+                        AlertHistoryStore.shared.markPermissionOutcome(
+                            sessionId: sessionId, toolUseId: toolUseId, outcome: "denied")
+                    }
+                    await SessionStore.shared.process(
+                        .permissionDenied(sessionId: sessionId, toolUseId: toolUseId, reason: reason))
+                }
                 delivered?(ok)
                 return
             }

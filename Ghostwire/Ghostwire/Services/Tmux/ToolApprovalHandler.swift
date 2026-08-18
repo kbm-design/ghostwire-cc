@@ -27,13 +27,21 @@ actor ToolApprovalHandler {
         await sendKeys(to: target, keys: "2", pressEnter: true)
     }
 
-    /// Codex native approval menu, approve once. Default keymap: 'y' ("Yes,
-    /// proceed"), acts immediately — no Enter (codex-rs tui/keymap.rs
-    /// defaults; user-remappable, in which case this misses and the human
-    /// answers at the prompt themselves). Terminal-first tier only: callers
-    /// must have verified the gate is `.terminalFirst` (native menu live).
-    func codexApproveNative(target: TmuxTarget) async -> Bool {
-        await sendKeys(to: target, keys: "y", pressEnter: false)
+    /// Codex native approval menu, approve once. The key depends on which
+    /// menu Codex drew (verified per-widget, 0.146.1):
+    /// - exec/command menu: 'y' ("Yes, proceed") acts immediately — verified
+    ///   live in cmux.
+    /// - MCP tool / elicitation menu: 'y' is a DEAD KEY (confirmed from
+    ///   codex-rs mcp_server_elicitation.rs) — but a digit selects that
+    ///   option and submits in one press, so '1' = Allow. Digits are also
+    ///   benign if the menu is gone (a stray "1" in the composer).
+    /// Callers pass the gate's tool name; "Bash" is what the hook normalizes
+    /// exec requests to, everything else draws the list widget.
+    /// Terminal-first tier only: callers must have verified the gate is
+    /// `.terminalFirst` (native menu live).
+    func codexApproveNative(target: TmuxTarget, toolName: String) async -> Bool {
+        let key = toolName == "Bash" ? "y" : "1"
+        return await sendKeys(to: target, keys: key, pressEnter: false)
     }
 
     /// Codex native approval menu, deny. The live menu binds "No, and tell

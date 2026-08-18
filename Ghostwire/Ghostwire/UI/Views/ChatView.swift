@@ -646,6 +646,7 @@ struct ChatView: View {
     private func approvalBar(tool: String, toolUseId: String) -> some View {
         ChatApprovalBar(
             tool: tool,
+            toolUseId: toolUseId,
             toolInput: session.pendingToolInput,
             // GW-139: the verbatim string the human is approving. Full-raw
             // mode renders this untruncated; the lossy `toolInput` is only
@@ -1451,6 +1452,9 @@ struct ChatInteractivePromptBar: View {
 /// Approval bar for the chat view with animated buttons
 struct ChatApprovalBar: View {
     let tool: String
+    /// Identity of the gate on screen — the sent-state below is keyed to it,
+    /// so a new request always arrives with fresh, active buttons.
+    var toolUseId: String = ""
     /// Lossy, single-line summary — used only for the compact `.inline` mode.
     let toolInput: String?
     /// Verbatim, untruncated command (GW-139). Rendered in `.fullRaw` mode.
@@ -1468,17 +1472,24 @@ struct ChatApprovalBar: View {
     @State private var showAllowButton = false
     @State private var showDenyButton = false
 
-    /// One click per breath: a keystroke-path verdict resolves only when the
-    /// agent reacts, so rapid re-clicks would type stray letters into the
-    /// pane (observed live 2026-08-18). Lock briefly after a click; re-enable
-    /// so the user can retry if nothing resolved.
-    @State private var answerLocked = false
+    /// Acknowledge-per-REQUEST, never per-bar: a keystroke-path verdict
+    /// resolves only when the agent reacts, so re-clicks on the SAME request
+    /// would type stray letters into the pane (observed live 2026-08-18).
+    /// Keying the sent-state to the gate id means a new request unlocks
+    /// instantly — back-to-back approvals never see a dimmed button. The
+    /// same request re-enables after a beat so a genuinely missed key can
+    /// still be retried.
+    @State private var answeredGateId: String?
+
+    private var answerLocked: Bool { answeredGateId == toolUseId && !toolUseId.isEmpty }
 
     private func lockAfterAnswer() {
-        answerLocked = true
+        let id = toolUseId
+        guard !id.isEmpty else { return }
+        answeredGateId = id
         Task {
-            try? await Task.sleep(for: .seconds(6))
-            answerLocked = false
+            try? await Task.sleep(for: .seconds(8))
+            if answeredGateId == id { answeredGateId = nil }
         }
     }
 

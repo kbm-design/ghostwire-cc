@@ -266,6 +266,7 @@ struct InstanceRow: View {
                 .transition(.opacity.combined(with: .scale(scale: 0.9)))
             } else if isWaitingForApproval {
                 InlineApprovalButtons(
+                    gateId: session.activePermission?.toolUseId ?? "",
                     onChat: onChat,
                     onApprove: onApprove,
                     onReject: onReject
@@ -339,6 +340,9 @@ struct InstanceRow: View {
 
 /// Compact inline approval buttons with staggered animation
 struct InlineApprovalButtons: View {
+    /// Identity of the gate on screen — the sent-state is keyed to it, so a
+    /// new request always arrives with fresh, active buttons.
+    var gateId: String = ""
     let onChat: () -> Void
     let onApprove: () -> Void
     let onReject: () -> Void
@@ -347,16 +351,20 @@ struct InlineApprovalButtons: View {
     @State private var showDenyButton = false
     @State private var showAllowButton = false
 
-    /// One click per breath (matches ChatApprovalBar): a keystroke-path
-    /// verdict resolves only when the agent reacts, so rapid re-clicks would
-    /// type stray letters into the pane. Brief lock, then retry allowed.
-    @State private var answerLocked = false
+    /// Acknowledge-per-request (matches ChatApprovalBar): re-clicks on the
+    /// same request would type stray letters into the pane; a new request
+    /// unlocks instantly, and the same one re-enables after a beat for retry.
+    @State private var answeredGateId: String?
+
+    private var answerLocked: Bool { answeredGateId == gateId && !gateId.isEmpty }
 
     private func lockAfterAnswer() {
-        answerLocked = true
+        let id = gateId
+        guard !id.isEmpty else { return }
+        answeredGateId = id
         Task {
-            try? await Task.sleep(for: .seconds(6))
-            answerLocked = false
+            try? await Task.sleep(for: .seconds(8))
+            if answeredGateId == id { answeredGateId = nil }
         }
     }
 

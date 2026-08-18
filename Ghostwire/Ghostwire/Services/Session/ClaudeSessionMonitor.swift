@@ -93,12 +93,12 @@ class ClaudeSessionMonitor: ObservableObject {
 
     // MARK: - Permission Handling
 
-    /// The gate mode of a specific pending permission (active or queued).
-    private static func gateMode(_ session: SessionState, toolUseId: String) -> PermissionGateMode? {
+    /// The specific pending permission (active or queued).
+    private static func gateContext(_ session: SessionState, toolUseId: String) -> PermissionContext? {
         if let active = session.activePermission, active.toolUseId == toolUseId {
-            return active.gateMode
+            return active
         }
-        return session.pendingPermissions.first { $0.toolUseId == toolUseId }?.gateMode
+        return session.pendingPermissions.first { $0.toolUseId == toolUseId }
     }
 
     private enum NativeAnswer { case approve, deny }
@@ -109,9 +109,9 @@ class ClaudeSessionMonitor: ObservableObject {
     /// do — the UI offers a terminal jump instead, so reaching here with one
     /// is a guard failure, not an injection attempt.
     private static func answerNativeCodexPrompt(
-        _ answer: NativeAnswer, session: SessionState, mode: PermissionGateMode
+        _ answer: NativeAnswer, session: SessionState, gate: PermissionContext
     ) async -> Bool {
-        guard mode == .terminalFirst else { return false }
+        guard gate.gateMode == .terminalFirst else { return false }
         let target: TmuxTarget?
         switch MultiplexerTargetResolver.resolve(session: session) {
         case .cmux(let workspace, let surface):
@@ -123,8 +123,11 @@ class ClaudeSessionMonitor: ObservableObject {
         }
         guard let target else { return false }
         switch answer {
-        case .approve: return await ToolApprovalHandler.shared.codexApproveNative(target: target)
-        case .deny: return await ToolApprovalHandler.shared.codexDenyNative(target: target)
+        case .approve:
+            return await ToolApprovalHandler.shared.codexApproveNative(
+                target: target, toolName: gate.toolName)
+        case .deny:
+            return await ToolApprovalHandler.shared.codexDenyNative(target: target)
         }
     }
 
@@ -150,8 +153,8 @@ class ClaudeSessionMonitor: ObservableObject {
             // released by the agent's own PostToolUse (allow) or Stop (deny),
             // exactly the path a terminal-answered gate already takes. If the
             // key missed (remapped, non-exec menu), the card truthfully stays.
-            if let mode = Self.gateMode(session, toolUseId: toolUseId), mode != .held {
-                let ok = await Self.answerNativeCodexPrompt(.approve, session: session, mode: mode)
+            if let gate = Self.gateContext(session, toolUseId: toolUseId), gate.gateMode != .held {
+                let ok = await Self.answerNativeCodexPrompt(.approve, session: session, gate: gate)
                 delivered?(ok)
                 return
             }
@@ -211,8 +214,8 @@ class ClaudeSessionMonitor: ObservableObject {
             // Codex adaptive flow — see approvePermission: send the native
             // menu's deny key and resolve nothing; the agent's own Stop
             // releases the gate once Codex actually processes the Esc.
-            if let mode = Self.gateMode(session, toolUseId: toolUseId), mode != .held {
-                let ok = await Self.answerNativeCodexPrompt(.deny, session: session, mode: mode)
+            if let gate = Self.gateContext(session, toolUseId: toolUseId), gate.gateMode != .held {
+                let ok = await Self.answerNativeCodexPrompt(.deny, session: session, gate: gate)
                 delivered?(ok)
                 return
             }

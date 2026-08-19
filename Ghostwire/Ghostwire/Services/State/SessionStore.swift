@@ -214,14 +214,41 @@ actor SessionStore {
 
         if event.event == "PermissionRequest", let toolUseId = event.toolUseId {
             Self.logger.debug("Setting tool \(toolUseId.prefix(12), privacy: .public) status to waitingForApproval")
-            let context = PermissionContext(
+            var context = PermissionContext(
                 toolUseId: toolUseId,
                 toolName: event.tool ?? "unknown",
                 toolInput: event.toolInput,
                 receivedAt: Date(),
                 correlationIsProvisional: event.toolUseIdIsProvisional
             )
+            // Codex adaptive flow: its approval pipeline is strictly sequential
+            // (hook first, native prompt only if the hook doesn't decide), so a
+            // held socket blanks the terminal. Multiplexer sessions get the
+            // native prompt immediately — the pane is addressable, so the notch
+            // answers by keystroke. Plain terminals hold, then hand off on a
+            // timer so an unanswered notch never strands the terminal.
+            if session.agent == "codex" {
+                if session.isInCmux || session.isInTmux {
+                    context.gateMode = .terminalFirst
+                    HookSocketServer.shared.handOffPermission(
+                        toolUseId: toolUseId,
+                        reason: "Terminal-first: Codex's own prompt is rendering; answer in either surface."
+                    )
+                } else {
+                    scheduleCodexHandoff(sessionId: sessionId, toolUseId: toolUseId)
+                }
+            }
             setPendingPermission(context, in: &session)
+            // The phase carries its OWN copy of this context — determinePhase()
+            // builds one with the default `.held` before this block runs, and
+            // `activePermission` (the UI and both verdict buttons) reads the
+            // phase, not the queue. Without this sync a terminal-first click
+            // answers over a socket that was already handed off and silently
+            // fails (observed live: Allow did nothing, gate swept at 600s).
+            if case .waitingForApproval(let phaseCtx) = session.phase,
+               phaseCtx.toolUseId == toolUseId {
+                session.phase = .waitingForApproval(context)
+            }
             updateToolStatus(in: &session, toolId: toolUseId, status: .waitingForApproval)
         }
 
@@ -245,6 +272,13 @@ actor SessionStore {
         if event.event == "Stop" {
             session.subagentState = SubagentState()
             session.pendingPermissions.removeAll()
+        }
+
+        if event.event == "UserPromptSubmit" {
+            // See mayExitWaitingForApproval: a new prompt means no native menu
+            // is up, so queued keystroke-path gates are stale. Held gates keep
+            // their socket — only the agent's own lifecycle releases those.
+            session.pendingPermissions.removeAll { $0.gateMode != .held }
         }
 
         sessions[sessionId] = session
@@ -286,6 +320,12 @@ actor SessionStore {
         // approval bar sticks until Stop over a tool that already ran.
         if event.event == "PostToolUse", ctx.correlationIsProvisional, event.tool == ctx.toolName { return true }
         if event.event == "Stop" { return true }
+        // A keystroke-path (non-held) gate can't outlive a submitted prompt:
+        // the native menu captures input while it's up, so a UserPromptSubmit
+        // proves the menu is gone — the agent abandoned the request and no
+        // PostToolUse will ever release it (observed live 2026-08-18: a stale
+        // card whose Allow clicks typed 'y' into the composer).
+        if event.event == "UserPromptSubmit", ctx.gateMode != .held { return true }
         return false
     }
 
@@ -463,6 +503,42 @@ actor SessionStore {
     }
 
     // MARK: - Permission Processing
+
+    /// Codex plain-terminal tier: how long the notch holds a gate exclusively
+    /// before handing it back so Codex's own prompt renders. Not a verdict
+    /// timer (GW-408: Ghostwire never manufactures a verdict from elapsed
+    /// time) — expiry sends the step-aside passthrough and the card flips to
+    /// a terminal jump; the agent still owns the real deadline.
+    private static let codexHandoffSeconds: Double = 60
+
+    private func scheduleCodexHandoff(sessionId: String, toolUseId: String) {
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(Self.codexHandoffSeconds))
+            await self?.expireCodexHold(sessionId: sessionId, toolUseId: toolUseId)
+        }
+    }
+
+    /// Fires once per scheduled gate; no-ops unless that exact gate is still
+    /// the active, still-held approval (answered/superseded gates keep their
+    /// resolution — a stale timer must never touch a newer gate).
+    private func expireCodexHold(sessionId: String, toolUseId: String) {
+        guard var session = sessions[sessionId],
+              case .waitingForApproval(var ctx) = session.phase,
+              ctx.toolUseId == toolUseId,
+              ctx.gateMode == .held else { return }
+        ctx.gateMode = .handedOff
+        session.phase = .waitingForApproval(ctx)
+        if let idx = session.pendingPermissions.firstIndex(where: { $0.toolUseId == toolUseId }) {
+            session.pendingPermissions[idx].gateMode = .handedOff
+        }
+        sessions[sessionId] = session
+        publishState()
+        Self.logger.debug("Codex hold window elapsed for \(toolUseId.prefix(12), privacy: .public) - handing gate to the terminal")
+        HookSocketServer.shared.handOffPermission(
+            toolUseId: toolUseId,
+            reason: "Notch hold window elapsed - answer at the terminal prompt."
+        )
+    }
 
     private func setPendingPermission(_ context: PermissionContext, in session: inout SessionState) {
         removePendingPermission(toolUseId: context.toolUseId, from: &session)

@@ -93,6 +93,44 @@ class ClaudeSessionMonitor: ObservableObject {
 
     // MARK: - Permission Handling
 
+    /// The specific pending permission (active or queued).
+    private static func gateContext(_ session: SessionState, toolUseId: String) -> PermissionContext? {
+        if let active = session.activePermission, active.toolUseId == toolUseId {
+            return active
+        }
+        return session.pendingPermissions.first { $0.toolUseId == toolUseId }
+    }
+
+    private enum NativeAnswer { case approve, deny }
+
+    /// Answer Codex's native terminal prompt on the user's behalf.
+    /// `.terminalFirst` gates have an addressable pane by construction (the
+    /// mode is only assigned to cmux/tmux sessions); `.handedOff` gates never
+    /// do — the UI offers a terminal jump instead, so reaching here with one
+    /// is a guard failure, not an injection attempt.
+    private static func answerNativeCodexPrompt(
+        _ answer: NativeAnswer, session: SessionState, gate: PermissionContext
+    ) async -> Bool {
+        guard gate.gateMode == .terminalFirst else { return false }
+        let target: TmuxTarget?
+        switch MultiplexerTargetResolver.resolve(session: session) {
+        case .cmux(let workspace, let surface):
+            target = .cmux(workspace: workspace, surface: surface)
+        case .tmuxTty(let tty):
+            target = await TmuxTargetFinder.shared.findTarget(forTty: tty)
+        case .unresolvable:
+            target = nil
+        }
+        guard let target else { return false }
+        switch answer {
+        case .approve:
+            return await ToolApprovalHandler.shared.codexApproveNative(
+                target: target, toolName: gate.toolName)
+        case .deny:
+            return await ToolApprovalHandler.shared.codexDenyNative(target: target)
+        }
+    }
+
     func approvePermission(sessionId: String,
                            toolUseId: String,
                            delivered: (@Sendable (Bool) -> Void)? = nil) {
@@ -101,6 +139,33 @@ class ClaudeSessionMonitor: ObservableObject {
                   session.pendingPermissions.contains(where: { $0.toolUseId == toolUseId })
                     || session.activePermission?.toolUseId == toolUseId else {
                 delivered?(false)
+                return
+            }
+
+            // Codex adaptive flow: the socket for this gate was already
+            // released so the native prompt could render — the verdict rides
+            // a keystroke into the session's pane instead.
+            //
+            // Resolves on transport success (instant-clear, matching Claude's
+            // feel). OWNER DECISION 2026-08-18, overriding the adversarial
+            // review's finding #1: transport success is not proof Codex
+            // consumed the key, so a missed key (remapped bindings, unknown
+            // menu variant) clears the card while the terminal still waits.
+            // Keelan accepted that occasional silent miss over an
+            // acknowledgment state that made every click read as lag. The
+            // per-menu key map ('y' exec / '1' list widgets, Esc deny) keeps
+            // the known miss sources closed.
+            if let gate = Self.gateContext(session, toolUseId: toolUseId), gate.gateMode != .held {
+                let ok = await Self.answerNativeCodexPrompt(.approve, session: session, gate: gate)
+                if ok {
+                    Task { @MainActor in
+                        AlertHistoryStore.shared.markPermissionOutcome(
+                            sessionId: sessionId, toolUseId: toolUseId, outcome: "allowed")
+                    }
+                    await SessionStore.shared.process(
+                        .permissionApproved(sessionId: sessionId, toolUseId: toolUseId))
+                }
+                delivered?(ok)
                 return
             }
 
@@ -153,6 +218,22 @@ class ClaudeSessionMonitor: ObservableObject {
                   session.pendingPermissions.contains(where: { $0.toolUseId == toolUseId })
                     || session.activePermission?.toolUseId == toolUseId else {
                 delivered?(false)
+                return
+            }
+
+            // Codex adaptive flow — see approvePermission (same owner
+            // decision: instant-clear on transport success).
+            if let gate = Self.gateContext(session, toolUseId: toolUseId), gate.gateMode != .held {
+                let ok = await Self.answerNativeCodexPrompt(.deny, session: session, gate: gate)
+                if ok {
+                    Task { @MainActor in
+                        AlertHistoryStore.shared.markPermissionOutcome(
+                            sessionId: sessionId, toolUseId: toolUseId, outcome: "denied")
+                    }
+                    await SessionStore.shared.process(
+                        .permissionDenied(sessionId: sessionId, toolUseId: toolUseId, reason: reason))
+                }
+                delivered?(ok)
                 return
             }
 

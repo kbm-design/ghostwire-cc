@@ -487,6 +487,15 @@ def _detect_agent(data, declared):
     return declared
 
 
+# Two-agent scope (2026-08-17): only these agents are reported to the notch.
+# Anything else — declared via GHOSTWIRE_AGENT by a leftover install, or
+# fingerprinted out of a payload that arrived through a supported agent's
+# config (cursor-agent executes ~/.claude hooks, GW-341) — is ignored
+# entirely: no report, no gate, exit 0 with no output, so the agent behaves
+# exactly as if Ghostwire were never installed (GW-413's step-aside).
+_SUPPORTED_AGENTS = ("claude", "codex")
+
+
 def _agent_has_own_hook(agent):
     """Whether `agent`'s own ghostwire hook is installed. Uninstall removes the
     script, so its presence tracks installation."""
@@ -687,6 +696,10 @@ def main():
 
     # GW-341: trust the payload over the config file we happen to live in.
     actual = _detect_agent(data, state["source"])
+    if actual not in _SUPPORTED_AGENTS:
+        # Not an agent this build reports. Exit before any gate is held so the
+        # agent's own permission flow runs untouched.
+        sys.exit(0)
     if actual != state["source"]:
         if _agent_has_own_hook(actual):
             # That agent's own hook is installed and reports this same event.

@@ -651,8 +651,10 @@ struct ChatView: View {
             // mode renders this untruncated; the lossy `toolInput` is only
             // the compact inline fallback.
             toolRawInput: session.pendingToolRawInput,
+            gateMode: session.activePermission?.gateMode ?? .held,
             onApprove: { approvePermission(toolUseId: toolUseId) },
-            onDeny: { denyPermission(toolUseId: toolUseId) }
+            onDeny: { denyPermission(toolUseId: toolUseId) },
+            onFocusTerminal: { focusTerminal() }
         )
     }
 
@@ -1453,12 +1455,19 @@ struct ChatApprovalBar: View {
     let toolInput: String?
     /// Verbatim, untruncated command (GW-139). Rendered in `.fullRaw` mode.
     let toolRawInput: String?
+    /// Codex adaptive flow: `.terminalFirst` keeps Allow/Deny (they answer the
+    /// native menu by keystroke); `.handedOff` swaps them for a terminal jump
+    /// — the gate is answerable only at the prompt, and dead buttons that
+    /// silently fail are worse than none. Claude is always `.held`.
+    var gateMode: PermissionGateMode = .held
     let onApprove: () -> Void
     let onDeny: () -> Void
+    var onFocusTerminal: (() -> Void)? = nil
 
     @State private var showContent = false
     @State private var showAllowButton = false
     @State private var showDenyButton = false
+
 
     // GW-144/GW-139: in full-raw mode the command under approval is shown
     // verbatim and untruncated — what you approve is what runs.
@@ -1498,50 +1507,85 @@ struct ChatApprovalBar: View {
                         .foregroundColor(.white.opacity(0.5))
                         .lineLimit(1)
                 }
+                if gateMode == .terminalFirst {
+                    Text("Also live at the terminal prompt")
+                        .font(.system(size: 10))
+                        .foregroundColor(.white.opacity(0.35))
+                }
             }
             .opacity(showContent ? 1 : 0)
             .offset(x: showContent ? 0 : -10)
 
             Spacer()
 
-            // Deny button
-            Button {
-                onDeny()
-            } label: {
-                Text("Deny")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(.white.opacity(0.7))
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 8)
-                    .background(Color.white.opacity(0.1))
-                    .clipShape(Capsule())
-            }
-            .buttonStyle(.plain)
-            .help("Deny this request")
-            .opacity(showDenyButton ? 1 : 0)
-            .scaleEffect(showDenyButton ? 1 : 0.8)
+            if gateMode == .handedOff {
+                // The hold window elapsed and the gate now lives at the
+                // terminal prompt. One honest button beats two dead ones.
+                Button {
+                    onFocusTerminal?()
+                } label: {
+                    Text("Answer in terminal")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(.black)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 8)
+                        .background(Color.white.opacity(0.95))
+                        .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .help("This request is now waiting at the terminal prompt")
+                .opacity(showAllowButton ? 1 : 0)
+                .scaleEffect(showAllowButton ? 1 : 0.8)
+            } else {
+                // Deny button
+                Button {
+                    onDeny()
+                } label: {
+                    Text("Deny")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(.white.opacity(0.7))
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 8)
+                        .background(Color.white.opacity(0.1))
+                        .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .help("Deny this request")
+                .opacity(showDenyButton ? 1 : 0)
+                .scaleEffect(showDenyButton ? 1 : 0.8)
 
-            // Allow button.
-            // FOCUS SAFETY (GW-139): deliberate activation only — explicit
-            // ⌘⇧↩ shortcut, NOT `.defaultAction`/`.keyboardShortcut(.return)`,
-            // so a stray Enter/Space while typing can never approve. `.plain`
-            // style also keeps it from inheriting default-button key behavior.
-            Button {
-                onApprove()
-            } label: {
-                Text("Allow")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(.black)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 8)
-                    .background(Color.white.opacity(0.95))
-                    .clipShape(Capsule())
+                // Allow button.
+                // FOCUS SAFETY (GW-139): deliberate activation only — explicit
+                // ⌘⇧↩ shortcut, NOT `.defaultAction`/`.keyboardShortcut(.return)`,
+                // so a stray Enter/Space while typing can never approve. `.plain`
+                // style also keeps it from inheriting default-button key behavior.
+                //
+                // NO "Always allow" here (tried 2026-08-18, pulled same day):
+                // Codex's menu options VARY per request — 'p' (prefix-always)
+                // only exists for simple exec commands; multi-line/heredoc got
+                // a bare Yes/No menu. A blind keystroke can't know which menu
+                // rendered, so "always" pressed a dead key while the notch
+                // dismissed the card — the exact says-done-but-terminal-waits
+                // failure GW-322 exists to prevent. Patch preserved at the
+                // session scratchpad (codex-always-allow.patch); a real
+                // version needs the rules-file route (GW-324), not keystrokes.
+                Button {
+                    onApprove()
+                } label: {
+                    Text("Allow")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(.black)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 8)
+                        .background(Color.white.opacity(0.95))
+                        .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .keyboardShortcut(.return, modifiers: [.command, .shift])
+                .help("Allow (⌘⇧↩)")
+                .opacity(showAllowButton ? 1 : 0)
+                .scaleEffect(showAllowButton ? 1 : 0.8)
             }
-            .buttonStyle(.plain)
-            .keyboardShortcut(.return, modifiers: [.command, .shift])
-            .help("Allow (⌘⇧↩)")
-            .opacity(showAllowButton ? 1 : 0)
-            .scaleEffect(showAllowButton ? 1 : 0.8)
         }
         .frame(minHeight: 44)  // Consistent height with other bars
         .padding(.horizontal, 16)

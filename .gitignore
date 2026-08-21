@@ -68,3 +68,6 @@ scripts/
 CLAUDE.md
 # Real captured hook payloads (GW-148/GW-168) - sanitize before ever committing
 fixtures/hook-payloads/
+
+# Local per-agent subagent definitions (twin of .claude/agents/)
+.codex/

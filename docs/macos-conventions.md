@@ -52,6 +52,12 @@ constraint:
   app; a `GhostwireSurface` `.notch` / `.window` environment flag lets the same
   SwiftUI views render in both. Design surfaces to work at both notch size and
   window size.
+- **`fullSizeContentView` + a transparent titlebar means `.toolbar` renders beside
+  the traffic lights.** In the detached window that produced a single control next
+  to close/minimise/zoom whose identity changed with the selected pane — "Quit
+  app" on General, "Check for Updates…" on About, "＋" on MCP (fixed in PR #85).
+  Pane actions belong in the pane's own header (`WindowPaneHeader`); app-level
+  actions belong in the sidebar footer. Don't reach for `.toolbar` here.
 - New Swift files must live under the nested synced group `Ghostwire/Ghostwire/…`
   (files under `components/` / `models/` are explicit pbxproj refs and silently
   won't compile) — see `ghostwire-codebase`.

@@ -71,12 +71,13 @@ struct GhostwireHeader: View {
                         OpenNotchHUD(type: $coordinator.sneakPeek.type, value: $coordinator.sneakPeek.value, icon: $coordinator.sneakPeek.icon)
                             .transition(.scale(scale: 0.8).combined(with: .opacity))
                     } else {
-                        // GW-223: detach the Shelf into a full resizable window.
-                        // Always shown while the notch is open — it's a destination
-                        // opener, not a shelf-only action — in the same 30×30 capsule
-                        // vocabulary as the gear/camera buttons.
+                        // GW-223: open the full Ghostwire window. Always shown while
+                        // the notch is open — it's a destination opener, not a
+                        // shelf-only action — in the same 30×30 capsule vocabulary as
+                        // the camera button. Since the window absorbed Settings it is
+                        // the notch's ONLY window affordance; the old gear is gone.
                         // (In-notch expand is GW-222; this is the simple opener.)
-                        NotchHeaderIconButton(systemName: "macwindow", help: "Open Shelf in window") {
+                        NotchHeaderIconButton(systemName: "macwindow", help: "Open Ghostwire window") {
                             DispatchQueue.main.async {
                                 ShelfWindowController.shared.showWindow()
                             }
@@ -84,13 +85,6 @@ struct GhostwireHeader: View {
                         if Defaults[.showMirror] {
                             NotchHeaderIconButton(systemName: "web.camera", help: "Toggle camera preview") {
                                 vm.toggleCameraPreview()
-                            }
-                        }
-                        if Defaults[.settingsIconInNotch] {
-                            NotchHeaderIconButton(systemName: "gear", help: "Open Settings") {
-                                DispatchQueue.main.async {
-                                    SettingsWindowController.shared.showWindow()
-                                }
                             }
                         }
                         if Defaults[.showBatteryIndicator] {
@@ -128,7 +122,7 @@ struct GhostwireHeader: View {
     }
 }
 
-/// GW-223: notch-header action button (detach / camera / settings). Dimmed to
+/// GW-223: notch-header action button (open window / camera). Dimmed to
 /// grey at rest so it reads as an inactive affordance like the tabs, brightening
 /// to full white on hover. Same 30×30 black capsule vocabulary as before.
 private struct NotchHeaderIconButton: View {

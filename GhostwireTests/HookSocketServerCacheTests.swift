@@ -15,6 +15,19 @@ import XCTest
 
 final class HookSocketServerCacheTests: XCTestCase {
 
+    /// Unique per call. `HookSocketServer.shared` is a process-wide singleton and
+    /// `evictCachedToolUseId` scans EVERY cache key, returning on the first entry
+    /// whose id matches — correct in production, where a tool_use_id is globally
+    /// unique, but it means a literal id here is shared state with every other
+    /// test file. `GateCorrelationRecoveryTests` caches a "toolu_b" of its own and
+    /// never pops it, so eviction here would delete whichever of the two
+    /// dictionary iteration reached first: a flake that passes or fails by hash
+    /// order, with nothing in the diff to explain it. Session ids in these tests
+    /// were already unique for the same reason; the tool ids have to be too.
+    private func uniqueToolUseId(_ name: String) -> String {
+        "toolu_\(name)_\(UUID().uuidString)"
+    }
+
     private func makeEvent(
         sessionId: String,
         event: String,
@@ -41,10 +54,12 @@ final class HookSocketServerCacheTests: XCTestCase {
         let sessionId = "gw192-cache-fifo-\(UUID().uuidString)"
         let server = HookSocketServer.shared
 
-        server.cacheToolUseId(event: makeEvent(sessionId: sessionId, event: "PreToolUse", toolUseId: "toolu_1"))
+        let first = uniqueToolUseId("1")
+
+        server.cacheToolUseId(event: makeEvent(sessionId: sessionId, event: "PreToolUse", toolUseId: first))
 
         let popped = server.popCachedToolUseId(event: makeEvent(sessionId: sessionId, event: "PermissionRequest"))
-        XCTAssertEqual(popped, "toolu_1")
+        XCTAssertEqual(popped, first)
     }
 
     func testExecutedToolIdIsEvictedFromCache() {
@@ -54,14 +69,17 @@ final class HookSocketServerCacheTests: XCTestCase {
         let sessionId = "gw192-cache-evict-\(UUID().uuidString)"
         let server = HookSocketServer.shared
 
-        server.cacheToolUseId(event: makeEvent(sessionId: sessionId, event: "PreToolUse", toolUseId: "toolu_ran"))
-        server.cacheToolUseId(event: makeEvent(sessionId: sessionId, event: "PreToolUse", toolUseId: "toolu_pending"))
+        let ran = uniqueToolUseId("ran")
+        let pending = uniqueToolUseId("pending")
 
-        // toolu_ran executed without needing permission
-        server.evictCachedToolUseId("toolu_ran")
+        server.cacheToolUseId(event: makeEvent(sessionId: sessionId, event: "PreToolUse", toolUseId: ran))
+        server.cacheToolUseId(event: makeEvent(sessionId: sessionId, event: "PreToolUse", toolUseId: pending))
+
+        // `ran` executed without needing permission
+        server.evictCachedToolUseId(ran)
 
         let popped = server.popCachedToolUseId(event: makeEvent(sessionId: sessionId, event: "PermissionRequest"))
-        XCTAssertEqual(popped, "toolu_pending",
+        XCTAssertEqual(popped, pending,
                        "PermissionRequest correlated to an already-executed tool's id")
     }
 
@@ -69,32 +87,39 @@ final class HookSocketServerCacheTests: XCTestCase {
         let sessionId = "gw192-cache-target-\(UUID().uuidString)"
         let server = HookSocketServer.shared
 
-        server.cacheToolUseId(event: makeEvent(sessionId: sessionId, event: "PreToolUse", toolUseId: "toolu_a"))
-        server.cacheToolUseId(event: makeEvent(sessionId: sessionId, event: "PreToolUse", toolUseId: "toolu_b"))
-        server.cacheToolUseId(event: makeEvent(sessionId: sessionId, event: "PreToolUse", toolUseId: "toolu_c"))
+        let a = uniqueToolUseId("a")
+        let b = uniqueToolUseId("b")
+        let c = uniqueToolUseId("c")
 
-        server.evictCachedToolUseId("toolu_b")
+        server.cacheToolUseId(event: makeEvent(sessionId: sessionId, event: "PreToolUse", toolUseId: a))
+        server.cacheToolUseId(event: makeEvent(sessionId: sessionId, event: "PreToolUse", toolUseId: b))
+        server.cacheToolUseId(event: makeEvent(sessionId: sessionId, event: "PreToolUse", toolUseId: c))
+
+        server.evictCachedToolUseId(b)
 
         let first = server.popCachedToolUseId(event: makeEvent(sessionId: sessionId, event: "PermissionRequest"))
         let second = server.popCachedToolUseId(event: makeEvent(sessionId: sessionId, event: "PermissionRequest"))
-        XCTAssertEqual(first, "toolu_a")
-        XCTAssertEqual(second, "toolu_c")
+        XCTAssertEqual(first, a)
+        XCTAssertEqual(second, c)
     }
 
     func testEvictingUnknownIdIsHarmless() {
         let sessionId = "gw192-cache-unknown-\(UUID().uuidString)"
         let server = HookSocketServer.shared
 
-        server.cacheToolUseId(event: makeEvent(sessionId: sessionId, event: "PreToolUse", toolUseId: "toolu_x"))
-        server.evictCachedToolUseId("toolu_never_cached")
+        let x = uniqueToolUseId("x")
+
+        server.cacheToolUseId(event: makeEvent(sessionId: sessionId, event: "PreToolUse", toolUseId: x))
+        server.evictCachedToolUseId(uniqueToolUseId("never_cached"))
 
         let popped = server.popCachedToolUseId(event: makeEvent(sessionId: sessionId, event: "PermissionRequest"))
-        XCTAssertEqual(popped, "toolu_x")
+        XCTAssertEqual(popped, x)
     }
 
     func testNestedToolInputKeyOrderIsCanonical() {
         let sessionId = "audit-nested-cache-\(UUID().uuidString)"
         let server = HookSocketServer.shared
+        let nested = uniqueToolUseId("nested")
 
         let preInput: [String: AnyCodable] = [
             "question": AnyCodable([
@@ -116,7 +141,7 @@ final class HookSocketServerCacheTests: XCTestCase {
             event: "PreToolUse",
             tool: "AskUserQuestion",
             toolInput: preInput,
-            toolUseId: "toolu_nested"
+            toolUseId: nested
         ))
 
         let popped = server.popCachedToolUseId(event: makeEvent(
@@ -126,6 +151,6 @@ final class HookSocketServerCacheTests: XCTestCase {
             toolInput: permissionInput
         ))
 
-        XCTAssertEqual(popped, "toolu_nested")
+        XCTAssertEqual(popped, nested)
     }
 }

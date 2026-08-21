@@ -269,12 +269,21 @@ section answers *how the surface is composed* — everything in Settings that
 isn't a `Form` row. It **does not override §5**: native controls stay native,
 and nothing here asks you to hand-roll one.
 
-**The frame.** Settings is a 700×600 `NavigationSplitView`
-(`SettingsWindowController.swift:22`) with a 200pt sidebar
-(`SettingsView.swift:83`) and `.formStyle(.grouped)` applied at the root
-(`SettingsView.swift:150`). Detail panes get ≈490pt. **Every detail pane is a
-`Form`** — except `MCPSettingsView`, which is a bare `List` and so inherits none
-of the grouped styling every other pane shares.
+**The frame** (rewritten for PR #85 — the standalone 700×600
+`NavigationSplitView` and its `SettingsWindowController` are gone). Settings is
+now a pane inside the unified Ghostwire window: a 224pt sidebar whose **Settings**
+disclosure lists the panes, and a content column that runs the **full remaining
+width** with 28pt gutters. Every pane sits under one `WindowPaneHeader` — title
+left, a single fixed-width action slot right — and gets `.formStyle(.grouped)`
+from `WindowSettingsView`. **Every pane is a `Form`.**
+
+**Settings is dark-only now.** The window forces `.darkAqua` and paints black
+(`ShelfWindowController.swift`), so the §2 `state/` axis has no light arm in play
+and the light values below are unused until a light surface exists again. The
+notch's white-opacity ladder (`terminal/dim`, `dimmer`, `surface/*`,
+`button/allow-fill`) still must not be carried in — it composites to 1.00:1 on a
+light background, and that is the reason the ladder is notch-only, not a fact
+about which appearance ships today.
 
 ### 8.1 Sheets
 

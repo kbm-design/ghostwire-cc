@@ -205,7 +205,8 @@ struct ContentView: View {
                     .contextMenu {
                         Button("Settings") {
                             DispatchQueue.main.async {
-                                SettingsWindowController.shared.showWindow()
+                                GhostwireWindowModel.shared.showSettings()
+                                ShelfWindowController.shared.showWindow()
                             }
                         }
                         .keyboardShortcut(KeyEquivalent(","), modifiers: .command)

@@ -2,6 +2,11 @@
 //  SettingsView.swift
 //  Ghostwire
 //
+//  The settings PANES. The standalone settings window that used to host them
+//  (`SettingsView` + `SettingsWindowController`) is gone — the unified Ghostwire
+//  window is the app's only settings surface, and it reuses every struct below
+//  verbatim via `WindowSettingsView`. Add a new pane here, then map it in
+//  `SettingsPane` (core) or `SettingsModule` + `ModuleBlock.pane` (module).
 //
 
 import AVFoundation
@@ -11,152 +16,6 @@ import KeyboardShortcuts
 import LaunchAtLogin
 import Sparkle
 import SwiftUI
-import SwiftUIIntrospect
-
-struct SettingsView: View {
-    @State private var selectedTab = "General"
-    @State private var accentColorUpdateTrigger = UUID()
-    @State private var searchQuery = ""
-
-    /// Pane ids matching the search query (everything when empty).
-    private var matchingPanes: Set<String> {
-        SettingsSearchIndex.matches(searchQuery)
-    }
-
-    let updaterController: SPUStandardUpdaterController?
-
-    init(updaterController: SPUStandardUpdaterController? = nil) {
-        self.updaterController = updaterController
-    }
-
-    var body: some View {
-        NavigationSplitView {
-            VStack(spacing: 0) {
-                // Settings search (GW-144, MacNotch pattern)
-                HStack(spacing: 6) {
-                    Image(systemName: "magnifyingglass")
-                        .foregroundStyle(.secondary)
-                        .imageScale(.small)
-                    TextField("Search", text: $searchQuery)
-                        .textFieldStyle(.plain)
-                }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 5)
-                .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(Color(nsColor: .quaternarySystemFill))
-                )
-                .padding(.horizontal, 10)
-                .padding(.top, 8)
-
-                List(selection: $selectedTab) {
-                    // Core sections (GW-144 IA: fixed up top, MODULES below)
-                    Section {
-                        ForEach(SettingsSearchIndex.core.filter { matchingPanes.contains($0.id) }) { entry in
-                            NavigationLink(value: entry.id) {
-                                Label(entry.label, systemImage: entry.icon)
-                            }
-                        }
-                    }
-
-                    let visibleModules = SettingsModule.all.filter { matchingPanes.contains($0.id) }
-                    if !visibleModules.isEmpty {
-                        Section {
-                            ForEach(visibleModules) { module in
-                                NavigationLink(value: module.id) {
-                                    HStack {
-                                        Label(module.label, systemImage: module.icon)
-                                        Spacer()
-                                        ModuleSidebarToggle(module)
-                                    }
-                                }
-                            }
-                        } header: {
-                            Text("Modules")
-                        }
-                    }
-                }
-                .listStyle(SidebarListStyle())
-            }
-            .tint(.effectiveAccent)
-            .toolbar(removing: .sidebarToggle)
-            .navigationSplitViewColumnWidth(200)
-            // Keep selection and detail in sync with the search results:
-            // when the selected pane is filtered out, jump to the first match.
-            .onChange(of: searchQuery) { _, _ in
-                let matches = matchingPanes
-                guard !matches.isEmpty, !matches.contains(selectedTab) else { return }
-                if let first = SettingsSearchIndex.core.first(where: { matches.contains($0.id) })?.id
-                    ?? SettingsModule.all.first(where: { matches.contains($0.id) })?.id {
-                    selectedTab = first
-                }
-            }
-        } detail: {
-            Group {
-                switch selectedTab {
-                case "General":
-                    GeneralSettings()
-                case "Agents":
-                    AgentsSettings()
-                case "Appearance":
-                    Appearance()
-                case "Media":
-                    ModuleGate(.media) { Media() }
-                case "Calendar":
-                    ModuleGate(.calendar) { CalendarSettings() }
-                case "HUD":
-                    ModuleGate(.huds) { HUD() }
-                case "Battery":
-                    ModuleGate(.battery) { Charge() }
-                case "Shelf":
-                    ModuleGate(.shelf) { Shelf() }
-                case "Mirror":
-                    ModuleGate(.mirror) { MirrorSettings() }
-                case "Activity":
-                    ModuleGate(.ambient) { AmbientSettings() }
-                case "Feed":
-                    ModuleGate(.feed) { FeedSettings() }
-                case "Shortcuts":
-                    Shortcuts()
-                case "MCP":
-                    MCPSettingsView()
-                case "Advanced":
-                    Advanced()
-                case "About":
-                    if let controller = updaterController {
-                        About(updaterController: controller)
-                    } else {
-                        // Fallback with a default controller
-                        About(
-                            updaterController: SPUStandardUpdaterController(
-                                startingUpdater: false, updaterDelegate: nil,
-                                userDriverDelegate: nil))
-                    }
-                default:
-                    GeneralSettings()
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
-        .navigationSplitViewStyle(.balanced)
-        .toolbar(removing: .sidebarToggle)
-        .toolbar {
-            ToolbarItem(placement: .principal) {
-                Text("")
-                    .frame(width: 0, height: 0)
-                    .accessibilityHidden(true)
-            }
-        }
-        .formStyle(.grouped)
-        .frame(width: 700)
-        .background(Color(NSColor.windowBackgroundColor))
-        .tint(.effectiveAccent)
-        .id(accentColorUpdateTrigger)
-        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("AccentColorChanged"))) { _ in
-            accentColorUpdateTrigger = UUID()
-        }
-    }
-}
 
 // Notch tab management (GW-144, Perch's Tab Management pattern):
 // reorder + hide the open-notch tabs. Shelf follows its module toggle.
@@ -418,12 +277,10 @@ struct GeneralSettings: View {
                 .leadingFooter()
             }
         }
-        .toolbar {
-            Button("Quit app") {
-                NSApp.terminate(self)
-            }
-            .controlSize(.extraLarge)
-        }
+        // Quit moved to the sidebar footer. A `.toolbar` here rendered in the
+        // window's transparent titlebar next to the traffic lights, where the
+        // MCP and About panes then put their own controls — one slot beside the
+        // window buttons that changed identity per pane.
         .accentColor(.effectiveAccent)
         .navigationTitle("General")
         .onChange(of: openNotchOnHover) {
@@ -972,13 +829,8 @@ struct About: View {
             }
             .frame(maxWidth: .infinity, alignment: .center)
         }
-        .toolbar {
-            //            Button("Welcome window") {
-            //                openWindow(id: "onboarding")
-            //            }
-            //            .controlSize(.extraLarge)
-            CheckForUpdatesView(updater: updaterController.updater)
-        }
+        // "Check for Updates…" is rendered by the settings pane header (see
+        // WindowSettingsView.paneAction) — same reason as General's Quit above.
         .navigationTitle("About")
     }
 }
@@ -1120,10 +972,6 @@ struct Appearance: View {
         Form {
             Section {
                 Toggle("Always show tabs", isOn: $coordinator.alwaysShowTabs)
-                Defaults.Toggle(key: .settingsIconInNotch) {
-                    Text("Show settings icon in notch")
-                }
-
             } header: {
                 Text("General")
             }

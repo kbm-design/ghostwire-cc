@@ -34,23 +34,28 @@ struct GhostwireApp: App {
     let updaterController: SPUStandardUpdaterController
 
     init() {
+        // The delegate is how the sidebar footer learns "up to date" vs "update
+        // available" — Sparkle only reports a check's result through it.
         updaterController = SPUStandardUpdaterController(
-            startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil)
+            startingUpdater: true,
+            updaterDelegate: MainActor.assumeIsolated { UpdateStatusModel.shared },
+            userDriverDelegate: nil)
 
-        // Initialize the settings window controller with the updater controller
-        SettingsWindowController.shared.setUpdaterController(updaterController)
+        // The About pane lives in the unified window now; hand it the updater.
+        GhostwireWindowModel.shared.updaterController = updaterController
     }
 
     var body: some Scene {
         MenuBarExtra("Notch", systemImage: "sparkle", isInserted: $showMenuBarIcon) {
-            Button("Open Shelf Window") {
+            Button("Open Ghostwire") {
                 DispatchQueue.main.async {
                     ShelfWindowController.shared.showWindow()
                 }
             }
             Button("Settings") {
                 DispatchQueue.main.async {
-                    SettingsWindowController.shared.showWindow()
+                    GhostwireWindowModel.shared.showSettings()
+                    ShelfWindowController.shared.showWindow()
                 }
             }
             .keyboardShortcut(KeyEquivalent(","), modifiers: .command)
@@ -1013,7 +1018,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     },
                     onOpenSettings: {
                         window.close()
-                        SettingsWindowController.shared.showWindow()
+                        GhostwireWindowModel.shared.showSettings()
+                        ShelfWindowController.shared.showWindow()
                     }
                 ))
             window.isRestorable = false

@@ -25,20 +25,35 @@
 
 import SwiftUI
 
-struct MCPSettingsView: View {
-    @ObservedObject private var service = MCPClientService.shared
-    @State private var showingAddSheet = false
-    @State private var showingImportSheet = false
-    @State private var openServerID: UUID?
+/// The pane's own navigation + sheet state, hoisted out of the view because the
+/// "Add Server" control now lives in the settings PANE HEADER, which the window
+/// owns (it used to be a `.toolbar` item, which macOS rendered up in the
+/// transparent titlebar beside the traffic lights — one slot that changed hands
+/// pane to pane). The header and the pane read the same object, so there is
+/// still exactly one source of truth for "is a sheet up" and "am I drilled in".
+@MainActor
+final class MCPPaneModel: ObservableObject {
+    @Published var showingAddSheet = false
+    @Published var showingImportSheet = false
+    @Published var openServerID: UUID?
 
     /// Whether there's a Claude Code config to read at all. Checked once per
     /// appearance rather than per redraw — this is a stat() in a view body.
-    @State private var canImport = false
+    @Published var canImport = false
 
-    /// The drill-in target, resolved fresh each render: a server removed from
+    /// The drill-in target, resolved fresh each read: a server removed from
     /// under us must fall back to the list rather than render an empty pane.
+    var openServer: MCPServerConfig? {
+        openServerID.flatMap { MCPClientService.shared.store.server(id: $0) }
+    }
+}
+
+struct MCPSettingsView: View {
+    @ObservedObject private var service = MCPClientService.shared
+    @ObservedObject var model: MCPPaneModel
+
     private var openServer: MCPServerConfig? {
-        openServerID.flatMap { service.store.server(id: $0) }
+        model.openServerID.flatMap { service.store.server(id: $0) }
     }
 
     var body: some View {
@@ -49,33 +64,15 @@ struct MCPSettingsView: View {
                 root
             }
         }
-        .onAppear { canImport = AgentMCPConfigImporter.claudeCodeConfigExists }
-        // Every other detail pane sets one; this pane never did, so the window
-        // kept whichever title was set last and read "General" while MCP was
-        // selected. Stable across the drill-in on purpose — the back control
-        // already says where you are, and retitling the window mid-pane is the
-        // kind of movement that makes a flow feel jumpy.
-        .navigationTitle("MCP Servers")
-        .toolbar {
-            ToolbarItem {
-                // A plain menu, NOT `Menu(primaryAction:)`. The split-button
-                // form listed "Import…" twice — once as the + click, once
-                // inside its own chevron menu — so the two halves looked like
-                // two different commands that happened to do the same thing.
-                Menu {
-                    Button("Import Servers…") { showingImportSheet = true }
-                        .disabled(!canImport)
-                    Button("Add Manually…") { showingAddSheet = true }
-                } label: {
-                    Label("Add Server", systemImage: "plus")
-                }
-                // Adding a server from inside one server's page is incoherent —
-                // the drill-in is a place, not a list.
-                .disabled(openServer != nil)
-            }
+        .onAppear { model.canImport = AgentMCPConfigImporter.claudeCodeConfigExists }
+        // The open server can be deleted out from under the drill-in. `openServer`
+        // already falls back to the list, but the id has to be cleared too or the
+        // header's Add control stays disabled over a list it should be usable on.
+        .onChange(of: openServer == nil) { _, isList in
+            if isList { model.openServerID = nil }
         }
-        .sheet(isPresented: $showingAddSheet) { MCPAddServerSheet() }
-        .sheet(isPresented: $showingImportSheet) { MCPImportSheet() }
+        .sheet(isPresented: $model.showingAddSheet) { MCPAddServerSheet() }
+        .sheet(isPresented: $model.showingImportSheet) { MCPImportSheet() }
     }
 
     // MARK: - Root
@@ -93,7 +90,7 @@ struct MCPSettingsView: View {
                             .contentShape(Rectangle())
                             // §8.2: the whole row taps ONLY because the tap
                             // drills in. It carries no control of its own.
-                            .onTapGesture { openServerID = server.id }
+                            .onTapGesture { model.openServerID = server.id }
                     }
                 }
             } header: {
@@ -122,16 +119,16 @@ struct MCPSettingsView: View {
             Text("Connect MCP servers to glance at — kept out of your agents' context.")
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
-            if canImport {
+            if model.canImport {
                 Text("You already have servers configured for Claude Code.")
                     .font(.caption)
                     .foregroundStyle(.tertiary)
-                Button("Import Servers…") { showingImportSheet = true }
+                Button("Import Servers…") { model.showingImportSheet = true }
                     .buttonStyle(.borderedProminent)
-                Button("Add manually…") { showingAddSheet = true }
+                Button("Add manually…") { model.showingAddSheet = true }
                     .buttonStyle(.link)
             } else {
-                Button("Add manually…") { showingAddSheet = true }
+                Button("Add manually…") { model.showingAddSheet = true }
             }
         }
         .frame(maxWidth: .infinity)
@@ -146,7 +143,7 @@ struct MCPSettingsView: View {
             // outside the Form so it reads as navigation chrome rather than a
             // row you could mistake for a setting.
             Button {
-                openServerID = nil
+                model.openServerID = nil
             } label: {
                 Label("Servers", systemImage: "chevron.left")
                     .labelStyle(.titleAndIcon)
@@ -159,7 +156,7 @@ struct MCPSettingsView: View {
             .accessibilityLabel("Back to servers")
             .keyboardShortcut("[", modifiers: .command)
 
-            MCPServerDetailView(serverID: server.id, onRemoved: { openServerID = nil })
+            MCPServerDetailView(serverID: server.id, onRemoved: { model.openServerID = nil })
         }
     }
 }

@@ -336,7 +336,7 @@ final class MCPFeedSourceStateTests: XCTestCase {
             return XCTFail("expected .generic")
         }
         XCTAssertEqual(title, "Linear")
-        XCTAssertEqual(subtitle, "Sign in to this server in Settings › MCP.")
+        XCTAssertEqual(subtitle, "Sign in to this server in Connections.")
         XCTAssertTrue(backend.calls.isEmpty)
     }
 
@@ -410,7 +410,7 @@ final class MCPFeedSourceStateTests: XCTestCase {
         guard case let .generic(_, subtitle, _) = cards[0].kind else {
             return XCTFail("expected an attention card")
         }
-        XCTAssertEqual(subtitle, "Set query in Settings › MCP.")
+        XCTAssertEqual(subtitle, "Needs query — remove this card in Cards.")
     }
 
     func testFilledArgumentsBecomeRunnable() async throws {
@@ -440,7 +440,7 @@ final class MCPFeedSourceStateTests: XCTestCase {
         guard case let .generic(_, subtitle, _) = cards[0].kind else {
             return XCTFail("expected an attention card")
         }
-        XCTAssertEqual(subtitle, "Set query in Settings › MCP.")
+        XCTAssertEqual(subtitle, "Needs query — remove this card in Cards.")
     }
 
     func testMissingArgumentsCoversBothAbsentKeysAndBlankValues() {

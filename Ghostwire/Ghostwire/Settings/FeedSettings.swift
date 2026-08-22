@@ -137,8 +137,8 @@ struct FeedSettings: View {
                         // emptiness. "No tools bound yet." told the user
                         // nothing they couldn't already see.
                         Text(
-                            "Bind a read-only tool in MCP settings and its result shows up "
-                            + "here as a Feed card."
+                            "Press ＋ on the Cards page to add a connected server's "
+                            + "read-only tools as cards."
                         )
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -155,7 +155,7 @@ struct FeedSettings: View {
             } header: {
                 Text("Connected servers")
             } footer: {
-                Text("Your own data — issues, builds, balances — from the MCP servers you've connected. Bind a tool in Settings › MCP: open a server, allow a read-only tool, then press the grid icon. Nothing polls until you do, and Ghostwire only ever calls tools you've allowed.")
+                Text("Your own data — issues, builds, balances — from the MCP servers you've connected. Add and remove these cards with ＋ on the Cards page. Nothing polls until you add one, and Ghostwire only ever calls tools you've allowed in Connections.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .leadingFooter()
@@ -194,8 +194,8 @@ struct FeedSettings: View {
         .onChange(of: mcpRefreshSeconds) { restart() }
     }
 
-    /// Read-only mirror of what's bound over in Settings › MCP. Bindings are
-    /// edited there (next to the allowlist they depend on); this pane just makes
+    /// Read-only mirror of what's bound on the Cards page (GW-466). Bindings
+    /// are edited there (next to the cards they produce); this pane just makes
     /// them visible from the place the user goes to ask "what's in my feed?".
     private var boundTools: [String] {
         MCPClientService.shared.store.servers.flatMap { config in

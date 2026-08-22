@@ -148,6 +148,24 @@ struct MCPFeedSource: FeedSource {
 
     static func sourceId(serverID: UUID) -> String { "mcp.\(serverID.uuidString)" }
 
+    /// Inverse of the card-id scheme (`mcp.<uuid>.<tool>`) — lets the Cards
+    /// surface map a rendered card back to its binding (GW-466). The tool name
+    /// may itself contain dots, so only the fixed-width UUID is parsed
+    /// positionally. Callers must still confirm a binding with that tool name
+    /// exists: the server-wide attention card ends in `.server`, which is
+    /// indistinguishable from a tool of that name by the id alone.
+    static func parseCardId(_ id: String) -> (serverID: UUID, tool: String)? {
+        guard id.hasPrefix("mcp.") else { return nil }
+        let rest = id.dropFirst(4)
+        let uuidLength = 36
+        guard rest.count > uuidLength + 1,
+              let serverID = UUID(uuidString: String(rest.prefix(uuidLength))),
+              rest.dropFirst(uuidLength).first == "."
+        else { return nil }
+        let tool = String(rest.dropFirst(uuidLength + 1))
+        return tool.isEmpty ? nil : (serverID, tool)
+    }
+
     init(
         serverID: UUID,
         serverName: String,
@@ -223,7 +241,10 @@ struct MCPFeedSource: FeedSource {
                 id: cardId,
                 sourceId: id,
                 title: MCPFeedCardMapper.title(tool: binding.tool, serverName: serverName),
-                detail: "Set \(missing.joined(separator: ", ")) in Settings › MCP.",
+                // GW-466: arguments are no longer editable anywhere in the UI —
+                // only zero-input tools are offered — so a binding in this
+                // state is a legacy one, and the honest remedy is removal.
+                detail: "Needs \(missing.joined(separator: ", ")) — remove this card in Cards.",
                 now: now
             )
         }
@@ -273,10 +294,10 @@ struct MCPFeedSource: FeedSource {
 
     static func attentionCopy(for status: MCPServerRuntime.Status) -> String {
         switch status {
-        case .needsAuth: return "Sign in to this server in Settings › MCP."
-        case .needsTrust: return "Trust this server's command in Settings › MCP."
+        case .needsAuth: return "Sign in to this server in Connections."
+        case .needsTrust: return "Trust this server's command in Connections."
         case .failed(let reason): return reason
-        case .disconnected: return "Not connected — connect it in Settings › MCP."
+        case .disconnected: return "Not connected — connect it in Connections."
         case .connecting: return "Connecting…"
         case .connected: return "Connected."
         }

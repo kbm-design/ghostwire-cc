@@ -115,8 +115,10 @@ struct GhostwireWindowView: View {
             switch nav.tab {
             case .feed:
                 // GW-259: cards only — no media controls in the window (they're
-                // not useful here). FeedSurfaceView renders the grid for .window.
-                FeedSurfaceView()
+                // not useful here). GW-466: FeedPaneView adds the pane header,
+                // the floating ＋ and the Add-cards page over the grid.
+                FeedPaneView()
+                    .tint(.effectiveAccent)
             case .shelf:
                 ShelfWindowView()
             case .agents:

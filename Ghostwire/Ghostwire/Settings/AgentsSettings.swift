@@ -58,6 +58,12 @@ struct AgentsSettings: View {
             // GW-173: pull side — let agents read the Shelf over local MCP.
             ShelfAccessSection()
 
+            // GW-449: the gateway's setup moved here from the Connections pane,
+            // beside its sibling in shape. Both answer "what can agents reach?"
+            // — Shelf access is the Shelf, this is the connected servers. The
+            // Connections pane keeps a one-line status that links back here.
+            GatewaySection()
+
             // Reserved IA slot (GW-144): per-agent approval modes are gated
             // on the PreToolUse-as-gate work (GW-139) — greyed, not wired.
             Section {

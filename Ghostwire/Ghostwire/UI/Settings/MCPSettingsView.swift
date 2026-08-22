@@ -5,11 +5,15 @@
 //  GW-219 shipped this debug-grade ("the full settings redesign comes later").
 //  GW-255 is that redesign, and the first consumer of the GW-356 §8 vocabulary.
 //
+//  GW-449 then replaced its ROOT with a connector catalog grid
+//  (`ConnectionsCatalogView`), so point 1 below no longer holds: this pane is
+//  deliberately not a `Form` any more. What survives is the drill-in contract.
+//
 //  Three structural changes:
 //
-//  1. It's a `Form` now. Every other detail pane is one; this was a bare `List`
-//     and inherited none of the grouped styling the rest of Settings shares
-//     (§8 "The frame").
+//  1. ~~It's a `Form` now.~~ SUPERSEDED by GW-449 — the root is a card grid.
+//     The drill-in below is still a `Form`, and every other Settings pane
+//     still is one; this pane is the single documented exception.
 //  2. The server detail is a DRILL-IN, not a sheet (§8.6) — every control in it
 //     writes through immediately, so there was never anything for Cancel to
 //     mean. The Settings shell is a `NavigationSplitView` switching on a
@@ -77,144 +81,29 @@ struct MCPSettingsView: View {
 
     // MARK: - Root
 
+    /// GW-449: the root is a card GRID now, not a `Form`. The grouped list of
+    /// servers-you-already-added answered the wrong question — it could only
+    /// show you what you'd already found somewhere else.
     @ViewBuilder private var root: some View {
-        Form {
-            GatewaySection()
-
-            Section {
-                if service.store.servers.isEmpty {
-                    emptyState
-                } else {
-                    ForEach(service.store.servers) { server in
-                        MCPServerRow(server: server, runtime: service.runtime(id: server.id))
-                            .contentShape(Rectangle())
-                            // §8.2: the whole row taps ONLY because the tap
-                            // drills in. It carries no control of its own.
-                            .onTapGesture { model.openServerID = server.id }
-                    }
-                }
-            } header: {
-                Text("Servers")
-            } footer: {
-                if !service.store.servers.isEmpty {
-                    Text(
-                        "Local servers run a program on this Mac. Hosted servers are reached "
-                        + "over the network. Open one to choose which of its tools Ghostwire may call."
-                    )
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .leadingFooter()
-                }
-            }
-        }
-        .formStyle(.grouped)
-    }
-
-    /// §8.3 / GW-367: state the section's JOB, not its emptiness.
-    private var emptyState: some View {
-        VStack(spacing: 8) {
-            Image(systemName: "server.rack")
-                .font(.largeTitle)
-                .foregroundStyle(.secondary)
-            Text("Connect MCP servers to glance at — kept out of your agents' context.")
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-            if model.canImport {
-                Text("You already have servers configured for Claude Code.")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
-                Button("Import Servers…") { model.showingImportSheet = true }
-                    .buttonStyle(.borderedProminent)
-                Button("Add manually…") { model.showingAddSheet = true }
-                    .buttonStyle(.link)
-            } else {
-                Button("Add manually…") { model.showingAddSheet = true }
-            }
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 24)
+        ConnectionsCatalogView(model: model)
     }
 
     // MARK: - Drill-in
 
+    /// The back control lives in `WindowPaneHeader` now (GW-449), which also
+    /// carries the server's name and tool count — so the drill-in is just the
+    /// server's content.
     private func detail(for server: MCPServerConfig) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            // The back affordance the Settings shell can't provide. Kept
-            // outside the Form so it reads as navigation chrome rather than a
-            // row you could mistake for a setting.
-            Button {
-                model.openServerID = nil
-            } label: {
-                Label("Servers", systemImage: "chevron.left")
-                    .labelStyle(.titleAndIcon)
-                    .font(.callout)
-            }
-            .buttonStyle(.link)
-            .padding(.horizontal, 20)
-            .padding(.top, 12)
-            .padding(.bottom, 2)
-            .accessibilityLabel("Back to servers")
-            .keyboardShortcut("[", modifiers: .command)
-
-            MCPServerDetailView(serverID: server.id, onRemoved: { model.openServerID = nil })
-        }
-    }
-}
-
-// MARK: - Server row
-
-struct MCPServerRow: View {
-    let server: MCPServerConfig
-    let runtime: MCPServerRuntime?
-
-    private var severity: SettingsStateSeverity { runtime?.status.severity ?? .inert }
-
-    var body: some View {
-        HStack(spacing: 8) {
-            if runtime?.status == .connecting {
-                ProgressView().controlSize(.small).frame(width: 8, height: 8)
-            } else {
-                SettingsStateDot(severity: severity, caption: statusCaption ?? "Connected")
-            }
-            VStack(alignment: .leading, spacing: 2) {
-                Text(server.name)
-                // §8.4: every non-default state gets WORDS, not just a dot
-                // colour. Before this, a freshly imported stdio server showed
-                // an unlabelled grey dot and read as "the import didn't work".
-                if let caption = statusCaption {
-                    Text(caption)
-                        .font(.caption)
-                        .foregroundStyle(severity.color)
-                        .lineLimit(1)
-                }
-            }
-            Spacer()
-            // The allowed count, not the tool count: a connected server with an
-            // empty allowlist can't be called, and "41 tools" implied otherwise.
-            if case .connected(let count) = runtime?.status {
-                Text("\(server.allowedTools.count) of \(count) allowed")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
-            }
-            MCPTransportBadge(transport: server.transport)
-            Image(systemName: "chevron.right")
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
-        }
-        .padding(.vertical, 2)
-    }
-
-    /// nil for the two states that need no explanation: connected (the count
-    /// already says so) and never-touched.
-    private var statusCaption: String? {
-        switch runtime?.status {
-        case .failed(let reason): return reason
-        case .needsTrust: return "Not trusted — open to review the command"
-        case .needsAuth: return "Needs authorization"
-        case .connecting: return "Connecting…"
-        case .connected, .disconnected, nil: return nil
-        }
+        MCPServerDetailView(serverID: server.id, onRemoved: { model.openServerID = nil })
+            // These used to live on the whole pane in `GhostwireWindowView`,
+            // where they styled the root Form AND this drill-in. GW-449 removed
+            // them along with the root Form, which silently took the drill-in's
+            // styling with it — it started painting its own opaque background
+            // over the black pane. They belong to the Form, so they live here.
+            .formStyle(.grouped)
+            .scrollContentBackground(.hidden)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .background(Color.black)
     }
 }
 

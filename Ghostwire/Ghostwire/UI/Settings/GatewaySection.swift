@@ -4,11 +4,22 @@
 //
 //  GW-255 / GW-350 / GW-351: the gateway's real settings surface.
 //
-//  It sits at the TOP of the MCP pane rather than beside `ShelfAccessSection`
-//  in Agents, even though the two are siblings in shape. The gateway's content
-//  IS the server list underneath it, and the allowlist you curate down there is
-//  literally what it exposes up here — putting them on one screen makes that
-//  cause and effect legible. Shelf access has no such dependency.
+//  MOVED TO AGENTS (GW-449). It used to sit at the top of the MCP pane, on the
+//  argument that the gateway's content IS the server list underneath it, so one
+//  screen made that cause and effect legible. That argument survives; the
+//  twenty rows it justified do not. Once the pane became a card GRID this block
+//  filled the surface before a single connector was visible — an endpoint, a
+//  copy command, a token and an explainer paragraph sitting on top of a browse
+//  surface.
+//
+//  The whole thing lives here now, beside `ShelfAccessSection` — its sibling in
+//  shape — where "what can agents reach?" is the question the pane already
+//  answers. Connections says nothing about the gateway at all.
+//
+//  A one-line "Agents can reach N tools" summary was tried on Connections and
+//  removed: the union of every connected server's `allowedTools` is a CEILING,
+//  not what an agent sees, because GW-184's working set clips it. GW-451 owns
+//  deciding what that surface should claim.
 //
 //  The trust posture is unchanged: the app never writes an agent's config. It
 //  emits a command; the user runs it.

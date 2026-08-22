@@ -227,18 +227,55 @@ final class MCPToolGroupingTests: XCTestCase {
         let grouping = MCPToolGrouping.build(tools: tools, serverName: "Linear")
         XCTAssertTrue(grouping.isCategorized)
 
-        let destructive = grouping.sections.first { $0.capability == .destructive }
-        XCTAssertEqual(destructive?.count, 4)
-        XCTAssertFalse(
-            destructive?.isCategorized ?? true,
-            "4 tools across 4 categories must not render 4 headers over 4 rows")
+        let write = grouping.sections.first { $0.kind == .write }
+        let destructiveNames = write?.tools.filter { $0.capability == .destructive }.map(\.name)
+        XCTAssertEqual(destructiveNames?.count, 4)
+        XCTAssertEqual(
+            write?.tools.suffix(4).map(\.name), destructiveNames,
+            "destructive tools sort last inside the merged Write section")
+    }
+
+    /// Category groups must use the SAME severity-then-name order as the flat
+    /// path. They sorted by name alone, which silently discarded destructive-
+    /// last inside every categorized section — i.e. on the servers that
+    /// categorize best (Codex, 2026-08-21).
+    ///
+    /// Uses the real Linear fixture because categorization needs 12+ tools;
+    /// its `attachment` group holds both creates and a delete, which is exactly
+    /// the mix the ordering is about.
+    func testCategoryGroupsAlsoSortDestructiveLast() throws {
+        let tools = Self.linearTools.map { name -> MCPToolInfo in
+            self.tool(
+                name,
+                readOnly: name.hasPrefix("get_") || name.hasPrefix("list_")
+                    || name.hasPrefix("search_"),
+                destructive: name.hasPrefix("delete_") ? true : nil)
+        }
+        let grouping = MCPToolGrouping.build(tools: tools, serverName: "Linear")
+        let write = try XCTUnwrap(grouping.sections.first { $0.kind == .write })
+        XCTAssertTrue(write.isCategorized, "expected the Write section to sub-group")
+
+        var checkedAMixedGroup = false
+        for group in write.categories {
+            let capabilities = group.tools.map(\.capability)
+            let lastWrite = capabilities.lastIndex(of: .writes)
+            let firstDestructive = capabilities.firstIndex(of: .destructive)
+            guard let lastWrite, let firstDestructive else { continue }
+            checkedAMixedGroup = true
+            XCTAssertGreaterThan(
+                firstDestructive, lastWrite,
+                "\(group.title): destructive tools must follow every write tool")
+        }
+        XCTAssertTrue(
+            checkedAMixedGroup,
+            "fixture no longer produces a group mixing writes and deletes — the test proves nothing")
     }
 
     /// Singletons collapse into one trailing catch-all rather than a header each.
     func testSingletonCategoriesCollapseIntoATrailingOtherGroup() {
         let grouping = MCPToolGrouping.build(
             tools: Self.linearTools.map { self.tool($0, readOnly: true) }, serverName: "Linear")
-        guard let read = grouping.sections.first(where: { $0.capability == .readOnly }) else {
+        guard let read = grouping.sections.first(where: { $0.kind == .read }) else {
             return XCTFail("expected a read-only section")
         }
         XCTAssertTrue(read.isCategorized)
@@ -275,7 +312,7 @@ final class MCPToolGroupingTests: XCTestCase {
             let inCategories = section.categories.flatMap(\.toolNames)
             XCTAssertEqual(
                 Set(inCategories), Set(section.toolNames),
-                "\(section.capability.rawValue) categories must cover exactly its tools")
+                "\(section.kind.rawValue) categories must cover exactly its tools")
             XCTAssertEqual(
                 inCategories.count, section.count, "no tool may appear in two categories")
         }
@@ -289,9 +326,7 @@ final class MCPToolGroupingTests: XCTestCase {
             tool("save_thing", readOnly: false),
         ]
         let grouping = MCPToolGrouping.build(tools: tools, serverName: "X")
-        XCTAssertEqual(
-            grouping.sections.map(\.capability),
-            [.readOnly, .writes, .destructive, .unclassified])
+        XCTAssertEqual(grouping.sections.map(\.kind), [.read, .write, .other])
     }
 
     /// An all-inferred section drives the "we guessed these" footer.
@@ -322,18 +357,54 @@ final class MCPToolGroupingTests: XCTestCase {
         ]
         let grouping = MCPToolGrouping.build(tools: tools, serverName: "X")
         let eligibility = Dictionary(
-            uniqueKeysWithValues: grouping.sections.map { ($0.capability, $0.canBulkAllow) })
+            uniqueKeysWithValues: grouping.sections.map { ($0.kind, $0.canBulkAllow) })
 
-        XCTAssertEqual(eligibility[.readOnly], true)
-        XCTAssertEqual(eligibility[.writes], false)
-        XCTAssertEqual(eligibility[.destructive], false)
-        XCTAssertEqual(eligibility[.unclassified], false)
+        XCTAssertEqual(eligibility[.read], true)
+        XCTAssertEqual(eligibility[.write], false)
+        XCTAssertEqual(eligibility[.other], false)
+    }
+
+    /// `writes` and `destructive` render as ONE section (2026-08-21). The write
+    /// lexicon holds `update`/`set`/`edit`/`merge`, so "Write" sounded additive
+    /// while containing every way to overwrite your work, and "Destructive"
+    /// implied it was the only dangerous one.
+    ///
+    /// Merging is safe precisely because bulk-allow was ALREADY read-only-only:
+    /// neither half could be bulk-allowed before or after. If that ever stops
+    /// being true, this merge stops being safe.
+    func testWritesAndDestructiveShareOneSection() {
+        let tools = [
+            tool("get_thing", readOnly: true),
+            tool("update_thing", readOnly: false),
+            tool("delete_thing", readOnly: false, destructive: true),
+            tool("mystery"),
+        ]
+        let grouping = MCPToolGrouping.build(tools: tools, serverName: "X")
+
+        XCTAssertEqual(grouping.sections.map(\.kind), [.read, .write, .other])
+
+        let write = grouping.sections.first { $0.kind == .write }
+        XCTAssertEqual(write?.toolNames.sorted(), ["delete_thing", "update_thing"])
+        XCTAssertFalse(write?.canBulkAllow ?? true, "the merged section must never bulk-allow")
+
+        // The consequence line speaks for the WORST member, not the first.
+        XCTAssertEqual(write?.severestCapability, .destructive)
+
+        // Per-tool badges keep the finer claim — that is where it matters, on
+        // the individual toggle the user actually flips.
+        XCTAssertEqual(
+            write?.tools.first { $0.name == "delete_thing" }?.capability, .destructive)
+        XCTAssertEqual(
+            write?.tools.first { $0.name == "update_thing" }?.capability, .writes)
+
+        // Destructive tools sort LAST within the merged section.
+        XCTAssertEqual(write?.tools.map(\.name), ["update_thing", "delete_thing"])
     }
 
     func testCategoryBulkAllowRequiresReadOnlyAndNamedGroup() {
         let grouping = MCPToolGrouping.build(
             tools: Self.linearTools.map { self.tool($0, readOnly: true) }, serverName: "Linear")
-        guard let read = grouping.sections.first(where: { $0.capability == .readOnly }) else {
+        guard let read = grouping.sections.first(where: { $0.kind == .read }) else {
             return XCTFail("expected read-only section")
         }
         XCTAssertTrue(read.categories.contains { $0.canBulkAllow(in: read) })
@@ -343,7 +414,7 @@ final class MCPToolGroupingTests: XCTestCase {
 
         let mutatingGroup = MCPToolGrouping.build(
             tools: Self.linearTools.map { self.tool($0, readOnly: false) }, serverName: "Linear")
-        guard let writes = mutatingGroup.sections.first(where: { $0.capability == .writes }) else {
+        guard let writes = mutatingGroup.sections.first(where: { $0.kind == .write }) else {
             return XCTFail("expected writes section")
         }
         XCTAssertTrue(writes.isCategorized)

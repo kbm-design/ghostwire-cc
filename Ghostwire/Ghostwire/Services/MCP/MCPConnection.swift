@@ -16,6 +16,11 @@ import MCP
 /// Snapshot of one tool for the UI/probe (decoupled from SDK types).
 struct MCPToolInfo: Equatable, Identifiable {
     let name: String
+    /// Human-readable label the server declared, if any — MCP carries it at
+    /// `Tool.title` (newer spec) or `annotations.title` (older). Cloudflare
+    /// ships "Get D1 database" for `d1_database_get`; Claude's connector UI
+    /// shows exactly this, and it reads far better than the wire name.
+    let title: String?
     let description: String?
     let hasOutputSchema: Bool
     let isReadOnlyHinted: Bool?
@@ -32,10 +37,26 @@ struct MCPToolInfo: Equatable, Identifiable {
 
     var id: String { name }
 
+    /// What the allowlist shows. Falls back to the wire name with separators
+    /// turned into spaces and the first letter capitalised — `list_issues`
+    /// becomes "List issues". Never invents words; if a name is already
+    /// unreadable, a readable *casing* of it is still an improvement on
+    /// `snake_case` at 10pt.
+    var displayTitle: String {
+        if let title { return title }
+        let spaced = name
+            .replacingOccurrences(of: "_", with: " ")
+            .replacingOccurrences(of: "-", with: " ")
+            .trimmingCharacters(in: .whitespaces)
+        guard let first = spaced.first else { return name }
+        return String(first).uppercased() + spaced.dropFirst()
+    }
+
     /// `requiredInputs` defaults to none — the same permissive read as a server
     /// that declares no requirements.
     init(
         name: String,
+        title: String? = nil,
         description: String?,
         hasOutputSchema: Bool,
         isReadOnlyHinted: Bool?,
@@ -43,6 +64,7 @@ struct MCPToolInfo: Equatable, Identifiable {
         requiredInputs: [String] = []
     ) {
         self.name = name
+        self.title = title
         self.description = description
         self.hasOutputSchema = hasOutputSchema
         self.isReadOnlyHinted = isReadOnlyHinted
@@ -74,6 +96,12 @@ struct MCPToolInfo: Equatable, Identifiable {
 extension MCPToolInfo {
     init(tool: Tool) {
         self.name = tool.name
+        // Top-level `title` first (current spec), then the annotation (older
+        // servers). Blank strings are treated as absent.
+        let declared = tool.title ?? tool.annotations.title
+        self.title = (declared?.trimmingCharacters(in: .whitespaces)).flatMap {
+            $0.isEmpty ? nil : $0
+        }
         self.description = tool.description
         self.hasOutputSchema = tool.outputSchema != nil
         self.isReadOnlyHinted = tool.annotations.readOnlyHint

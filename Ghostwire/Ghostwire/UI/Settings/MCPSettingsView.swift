@@ -50,6 +50,70 @@ final class MCPPaneModel: ObservableObject {
     var openServer: MCPServerConfig? {
         openServerID.flatMap { MCPClientService.shared.store.server(id: $0) }
     }
+
+    // MARK: - Connection test
+    //
+    // Lives HERE, not in the detail view, because the control that starts it is
+    // in `WindowPaneHeader` (which the window owns) while the result renders in
+    // the pane. Same reason the sheet flags live here: one object both halves
+    // read, so there is exactly one source of truth.
+
+    struct TestResult: Equatable {
+        let tool: String
+        let text: String
+        let failed: Bool
+    }
+
+    @Published var testResult: TestResult?
+    @Published var isTesting = false
+
+    /// The tool the test calls, or nil when there isn't one.
+    ///
+    /// Three requirements, all load-bearing:
+    /// 1. **Allowlisted** — `callAllowedTool` is the single security choke point
+    ///    and rejects anything else BEFORE any network request, so testing an
+    ///    un-allowed tool reports "Failed" on a connection that is fine. That
+    ///    was this control's own bug (Codex P2, 2026-08-21).
+    /// 2. **Read-only**, declared or inferred — a test may not change anything.
+    /// 3. **No required inputs** — the call sends `[:]`, so a tool needing
+    ///    `id`/`team` can only answer "Invalid arguments".
+    static func testableTool(
+        tools: [MCPToolInfo], allowed: Set<String>, serverName: String
+    ) -> MCPToolInfo? {
+        tools.first { tool in
+            guard allowed.contains(tool.name), tool.requiredInputs.isEmpty else { return false }
+            return MCPToolClassifier.classify(tool: tool, serverName: serverName).0 == .readOnly
+        }
+    }
+
+    func testableTool(for serverID: UUID) -> MCPToolInfo? {
+        let service = MCPClientService.shared
+        guard let config = service.store.server(id: serverID),
+            let runtime = service.runtime(id: serverID)
+        else { return nil }
+        return Self.testableTool(
+            tools: runtime.tools, allowed: config.allowedTools, serverName: config.name)
+    }
+
+    func runTest(serverID: UUID) async {
+        guard let tool = testableTool(for: serverID) else { return }
+        isTesting = true
+        defer { isTesting = false }
+        do {
+            // Empty object, not nil: strict (zod-validated) servers reject a
+            // missing arguments field with "expected object, received undefined".
+            let output = try await MCPClientService.shared.callAllowedTool(
+                serverID: serverID, name: tool.name, arguments: [:])
+            let body = output.textRepresentation
+            testResult = TestResult(
+                tool: tool.name,
+                text: body.isEmpty ? "Returned an empty result." : String(body.prefix(300)),
+                failed: false)
+        } catch {
+            testResult = TestResult(
+                tool: tool.name, text: error.localizedDescription, failed: true)
+        }
+    }
 }
 
 struct MCPSettingsView: View {
@@ -75,6 +139,9 @@ struct MCPSettingsView: View {
         .onChange(of: openServer == nil) { _, isList in
             if isList { model.openServerID = nil }
         }
+        // A result belongs to the server it was run against — carrying it into
+        // the next drill-in would attribute one server's failure to another.
+        .onChange(of: model.openServerID) { _, _ in model.testResult = nil }
         .sheet(isPresented: $model.showingAddSheet) { MCPAddServerSheet() }
         .sheet(isPresented: $model.showingImportSheet) { MCPImportSheet() }
     }
@@ -94,7 +161,7 @@ struct MCPSettingsView: View {
     /// carries the server's name and tool count — so the drill-in is just the
     /// server's content.
     private func detail(for server: MCPServerConfig) -> some View {
-        MCPServerDetailView(serverID: server.id, onRemoved: { model.openServerID = nil })
+        MCPServerDetailView(serverID: server.id, model: model, onRemoved: { model.openServerID = nil })
             // These used to live on the whole pane in `GhostwireWindowView`,
             // where they styled the root Form AND this drill-in. GW-449 removed
             // them along with the root Form, which silently took the drill-in's
@@ -145,7 +212,7 @@ struct MCPAddServerSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Add MCP Server").font(.headline)
+            Text("Add a server").font(.headline)
             TextField("Name", text: $name)
             TextField("Hosted URL or command (e.g. npx -y @example/server)", text: $input)
                 .font(.body.monospaced())
@@ -216,7 +283,7 @@ struct MCPAddServerSheet: View {
 
             switch authMode {
             case .auto:
-                Text("Signs in automatically (dynamic registration). Works for servers that support it.")
+                Text("Signs you in with no setup. Most hosted servers support this.")
                     .font(.caption).foregroundStyle(.secondary)
             case .apiKey:
                 SecureField("API key / token (stored in Keychain)", text: $apiKeyToken)

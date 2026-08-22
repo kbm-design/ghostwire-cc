@@ -23,7 +23,7 @@ final class MCPConnectionTestSelectionTests: XCTestCase {
     }
 
     private func pick(_ tools: [MCPToolInfo], allowed: Set<String>) -> MCPToolInfo? {
-        MCPServerDetailView.testableTool(tools: tools, allowed: allowed, serverName: "Linear")
+        MCPPaneModel.testableTool(tools: tools, allowed: allowed, serverName: "Linear")
     }
 
     /// THE regression. A connected server starts with an empty allowlist.

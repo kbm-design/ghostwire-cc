@@ -391,6 +391,13 @@ extension Defaults.Keys {
     static let notchTabOrder = Key<[String]>("notchTabOrder", default: ["agents", "dashboard", "shelf", "feed"])
     static let hiddenNotchTabs = Key<Set<String>>("hiddenNotchTabs", default: [])
 
+    /// GW-449: whether the Connections pane has already pointed out the Import
+    /// button once. Import is a ONE-TIME migration — you arrive with servers
+    /// configured for Claude Code, or you never do — so it earns one mention
+    /// and then gets out of the way. A permanent callout for a thing you do
+    /// once is just clutter with a delay.
+    static let didSeeConnectorImportHint = Key<Bool>("didSeeConnectorImportHint", default: false)
+
     // MARK: Dashboard feed curation (GW-259)
     // User-curated order of feed cards, persisted as stable FeedCard ids (same
     // idiom as notchTabOrder). FeedCardStore applies this to the live card set:

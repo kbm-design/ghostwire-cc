@@ -12,7 +12,6 @@ concurrency:
 
 env:
   SCHEME: Ghostwire
-  DEVELOPER_DIR: /Applications/Xcode_26.4.app/Contents/Developer
 
 jobs:
   build:
@@ -23,23 +22,22 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Not pinned to an absolute Xcode path: a hardcoded
+      # /Applications/Xcode_26.4.app fails outright the moment the runner image
+      # moves, which is what the previous config would have done. Printing it
+      # instead makes a toolchain change visible in the log — this repo has
+      # already had a toolchain bump ACTIVATE dormant code with no diff
+      # (SpeechAnalyzer, Swift 6.1.2 -> 6.3.3), so which compiler ran matters.
+      - name: Toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+
       - name: Resolve packages
         run: |
           xcodebuild -resolvePackageDependencies \
             -scheme "$SCHEME" \
             -clonedSourcePackagesDirPath .spm
-
-      - name: Build
-        run: |
-          xcodebuild build \
-            -scheme "$SCHEME" \
-            -destination 'platform=macOS' \
-            -configuration Debug \
-            -clonedSourcePackagesDirPath .spm \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY="-" \
-            | xcpretty || exit ${PIPESTATUS[0]}
 
       - name: Python hook tests
         run: python3 -m unittest GhostwireTests/ghostwire_hook_tests.py
@@ -54,4 +52,12 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="-" \
-            | xcpretty || exit ${PIPESTATUS[0]}
+            -resultBundlePath TestResults.xcresult
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: TestResults.xcresult
+          retention-days: 7

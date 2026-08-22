@@ -27,12 +27,11 @@ struct MCPServerDetailView: View {
     var onRemoved: () -> Void = {}
 
     @ObservedObject private var service = MCPClientService.shared
-    @State private var runOutput: RunOutput?
-    @State private var runningTool: String?
+    @State private var testResult: TestResult?
+    @State private var isTesting = false
     @State private var confirmRemove = false
 
-    private struct RunOutput: Identifiable {
-        let id = UUID()
+    private struct TestResult {
         let tool: String
         let text: String
         let failed: Bool
@@ -56,7 +55,6 @@ struct MCPServerDetailView: View {
             } else if runtime?.status.isConnected == true {
                 noToolsSection
             }
-            if let output = runOutput { runOutputSection(output) }
             removeSection
         }
         .formStyle(.grouped)
@@ -64,65 +62,104 @@ struct MCPServerDetailView: View {
 
     // MARK: - Connection
 
+    /// ONE row, not four.
+    ///
+    /// This used to stack a lone `Hosted` badge, a lone Test button, a
+    /// label/value URL row, and a sentence explaining what "hosted" means —
+    /// four left-aligned things down the page with a mostly empty right half.
+    /// Everything identifying the server now sits on one line, and the action
+    /// sits at its end where actions belong.
+    ///
+    /// The transport explanation ("Reached over the network. Nothing runs on
+    /// this Mac.") is GONE from the page, not lost: it is the badge's `.help`
+    /// tooltip, which is where a definition of a label belongs. It mattered
+    /// once because the badge was the only signal that a server could execute
+    /// something locally — that is still true, and still one hover away.
     @ViewBuilder private var connectionSection: some View {
         if let config {
             Section {
-                HStack(spacing: 8) {
-                    if runtime?.status == .connecting {
-                        ProgressView().controlSize(.small).frame(width: 8, height: 8)
-                    } else {
-                        SettingsStateDot(
-                            severity: runtime?.status.severity ?? .inert, caption: statusText)
-                    }
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(statusText)
-                            .foregroundStyle(statusNeedsTint ? statusSeverity.color : Color.primary)
-                        if let remedy = statusRemedy {
-                            Text(remedy).font(.caption2).foregroundStyle(.secondary)
+                // Only when there is something to say or do. Connected + no
+                // action = the header's tool count already said it.
+                if runtime?.status.isConnected != true {
+                    HStack(spacing: 8) {
+                        if runtime?.status == .connecting {
+                            ProgressView().controlSize(.small).frame(width: 8, height: 8)
+                        } else {
+                            SettingsStateDot(
+                                severity: runtime?.status.severity ?? .inert, caption: statusText)
+                        }
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(statusText)
+                                .foregroundStyle(
+                                    statusNeedsTint ? statusSeverity.color : Color.primary)
+                            if let remedy = statusRemedy {
+                                Text(remedy).font(.system(size: 11)).foregroundStyle(.secondary)
+                            }
+                        }
+                        Spacer()
+                        if let action = connectionAction {
+                            Button(action.title) {
+                                if action.trustFirst {
+                                    service.trustCurrentCommand(serverID: serverID)
+                                }
+                                Task { await service.connectInteractively(id: serverID) }
+                            }
+                            .disabled(runtime?.status == .connecting)
                         }
                     }
-                    Spacer()
-                    // ONE state-driven action, not three buttons. "Test" on a
-                    // server that already says "Connected — 36 tools" tests
-                    // nothing, so it only appears when there's something to fix.
-                    if let action = connectionAction {
-                        Button(action.title) {
-                            if action.trustFirst { service.trustCurrentCommand(serverID: serverID) }
-                            Task { await service.connectInteractively(id: serverID) }
-                        }
-                        .disabled(runtime?.status == .connecting)
-                    }
+                    .padding(.vertical, 2)
                 }
-                .padding(.vertical, 2)
 
                 if case .failed(let reason) = runtime?.status {
                     Text(reason)
-                        .font(.caption)
+                        .font(.system(size: 12))
                         .foregroundStyle(SettingsStateColors.error)
                         .textSelection(.enabled)
                 }
 
-                HStack(alignment: .firstTextBaseline) {
-                    Text(config.transport.isLocal ? "Command" : "URL")
-                        .foregroundStyle(.secondary)
-                    Spacer()
+                // Identity + action on one line: what it is, where it is, and
+                // the one thing you can do about it.
+                HStack(spacing: 10) {
+                    MCPTransportBadge(transport: config.transport)
                     Text(connectionInfo)
-                        .font(.caption.monospaced())
+                        .font(.system(size: 12, design: .monospaced))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                         .truncationMode(.middle)
                         .textSelection(.enabled)
+                    Spacer(minLength: 12)
+                    // Connecting proves `initialize` + `tools/list` and NOTHING
+                    // else — a server can list 58 tools and fail every call.
+                    // This is the only control that proves a real `tools/call`.
+                    if runtime?.status.isConnected == true, testableTool != nil {
+                        Button(isTesting ? "Testing…" : "Test") {
+                            Task { await testConnection() }
+                        }
+                        .disabled(isTesting)
+                    }
                 }
-            } header: {
-                HStack(spacing: 6) {
-                    Text(config.name)
-                    MCPTransportBadge(transport: config.transport)
+                .padding(.vertical, 2)
+
+                // The result lands next to the thing it is about — the old
+                // per-tool Run put its output below the remove button, off the
+                // bottom of a 58-tool page.
+                if let result = testResult {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        SettingsStateDot(
+                            severity: result.failed ? .error : .ok,
+                            caption: result.failed ? "Test failed" : "Test passed")
+                        Text("\(result.tool) — \(result.text)")
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(
+                                result.failed ? SettingsStateColors.error : .secondary)
+                            .lineLimit(3)
+                            .textSelection(.enabled)
+                        Spacer(minLength: 8)
+                        Button("Clear") { testResult = nil }
+                            .buttonStyle(.borderless)
+                            .font(.system(size: 12))
+                    }
                 }
-            } footer: {
-                Text(config.transport.explanation)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .leadingFooter()
             }
         }
     }
@@ -179,7 +216,7 @@ struct MCPServerDetailView: View {
             Section {
                 if section.isCategorized {
                     ForEach(section.categories) { group in
-                        categoryHeaderRow(group: group, section: section, config: config)
+                        categoryHeaderRow(group: group)
                         ForEach(group.tools) { item in
                             toolRow(item: item, config: config, indented: true)
                         }
@@ -202,10 +239,13 @@ struct MCPServerDetailView: View {
         let names = section.toolNames
         let allOn = names.allSatisfy { config.allowedTools.contains($0) }
         return HStack(spacing: 8) {
-            Text(section.capability.sectionTitle)
-            Text("\(section.count)")
-                .foregroundStyle(.tertiary)
-                .monospacedDigit()
+            Text(section.kind.title)
+                .font(.system(size: 13, weight: .semibold))
+                // macOS `Form` has a fixed inter-section gap and exposes no
+                // knob for it (`listSectionSpacing` is iOS-only), so the header
+                // pulls up into it. Without this, three short sections read as
+                // three separate screens.
+                .padding(.top, -6)
             Spacer()
             if section.canBulkAllow {
                 // Bulk allow exists only for read-only tools. `allowedTools` is
@@ -215,84 +255,70 @@ struct MCPServerDetailView: View {
                     setAllowed(names, allowed: !allOn)
                 }
                 .buttonStyle(.borderless)
-                .font(.caption)
+                .font(.system(size: 12))
             }
         }
     }
 
-    /// The read-only bulk action carries its count because that is the only
-    /// section where bulk widening is offered, and the number is the reassurance.
+    /// The section header already prints its own count two words to the left,
+    /// so "Allow all 36" said the number twice on one line.
     private func bulkTitle(section: MCPCapabilitySection, allOn: Bool) -> String {
-        if allOn { return "Remove all" }
-        return "Allow all \(section.count)"
+        allOn ? "Remove all" : "Allow all"
     }
 
+    /// ONE line, not three.
+    ///
+    /// This used to stack the consequence warning, an "we inferred these from
+    /// names" paragraph, and an "allow them one at a time" paragraph — three
+    /// sentences of prose under a three-row list, which is more words than the
+    /// thing they describe. Every extra sentence made the one that matters
+    /// (what allowing this REACHES) easier to skip.
+    ///
+    /// What was cut is not lost: the `unknown` badge on each row already says
+    /// Ghostwire couldn't classify it, and the badge's `source` already
+    /// distinguishes declared from inferred.
     @ViewBuilder
     private func sectionFooter(section: MCPCapabilitySection, config: MCPServerConfig) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            // §8.5: ONE consequence warning, on the section that earns it — and
-            // it's conditional, so a read-only server never sees it.
-            if section.capability.mutates, allowedCount(section, config: config) > 0 {
-                Label(consequenceCopy(for: section.capability), systemImage: "exclamationmark.shield")
-                    .font(.caption)
-                    .foregroundStyle(SettingsStateColors.attention)
-            }
-            if section.isEntirelyInferred {
-                Text(
-                    "This server doesn't say which of its tools only read — these are worked out "
-                    + "from each tool's name, so check anything you're unsure about."
-                )
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            }
-            if section.capability == .unclassified {
-                Text("Ghostwire couldn't tell what these do. Allow them one at a time.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
+        if section.kind != .read, allowedCount(section, config: config) > 0 {
+            Label(
+                consequenceCopy(for: section.severestCapability),
+                systemImage: "exclamationmark.shield"
+            )
+            .font(.system(size: 12))
+            .foregroundStyle(SettingsStateColors.attention)
+            .leadingFooter()
         }
-        .leadingFooter()
     }
 
     private func consequenceCopy(for capability: MCPToolCapability) -> String {
-        let verb = capability == .destructive ? "change or delete things in" : "write to"
         let name = config?.name ?? "this server"
-        return "These \(verb) \(name). Anything allowed here is also reachable by agents "
-            + "connected to the gateway."
+        switch capability {
+        case .destructive: return "These can change or delete things in \(name)."
+        case .unclassified: return "Ghostwire couldn't tell what these do."
+        default: return "These can write to \(name)."
+        }
     }
 
     private func allowedCount(_ section: MCPCapabilitySection, config: MCPServerConfig) -> Int {
         section.toolNames.filter { config.allowedTools.contains($0) }.count
     }
 
-    private func categoryHeaderRow(
-        group: MCPToolCategoryGroup, section: MCPCapabilitySection, config: MCPServerConfig
-    )
-        -> some View {
-        let names = group.toolNames
-        let allOn = names.allSatisfy { config.allowedTools.contains($0) }
+    private func categoryHeaderRow(group: MCPToolCategoryGroup) -> some View {
         return HStack(spacing: 6) {
             Text(group.title)
-                .font(.caption)
+                .font(.system(size: 12))
                 .fontWeight(.semibold)
                 .foregroundStyle(.secondary)
             Text("\(group.tools.count)")
-                .font(.caption2)
+                .font(.system(size: 11))
                 .foregroundStyle(.tertiary)
                 .monospacedDigit()
             Spacer()
-            // The catch-all gets no bulk control: "Allow all 6 unrelated
-            // things" isn't a meaningful action. Mutating groups get no bulk
-            // control either, even when a resource category is coherent.
-            if group.canBulkAllow(in: section) {
-                Button(allOn ? "Remove all" : "Allow all \(group.tools.count)") {
-                    setAllowed(names, allowed: !allOn)
-                }
-                .buttonStyle(.borderless)
-                .font(.caption2)
-            }
+            // No bulk control on a SUBSECTION. The section above already has
+            // one, and two "Allow all"s 30pt apart with different scopes is a
+            // way to widen more than you meant to.
         }
-        .padding(.top, 4)
+        .padding(.top, 2)
     }
 
     /// One tool. The switch is the only control on the title line; Run and the
@@ -302,15 +328,18 @@ struct MCPServerDetailView: View {
         let isAllowed = config.allowedTools.contains(item.name)
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
-                VStack(alignment: .leading, spacing: 1) {
-                    HStack(spacing: 4) {
-                        Text(item.name).font(.body.monospaced()).lineLimit(1)
-                        MCPCapabilityBadge(capability: item.capability, source: item.source)
-                    }
-                    if let description = item.tool.description {
-                        Text(description).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                    }
+                // Claude's connector UI shows the TITLE and nothing else, and
+                // it reads better: a wire name in mono plus a description
+                // truncated mid-sentence gave two unreadable things where one
+                // readable one fits. The description moves to the tooltip; the
+                // wire name is still what the badge and Run act on.
+                HStack(spacing: 6) {
+                    Text(item.tool.displayTitle)
+                        .font(.system(size: 13))
+                        .lineLimit(1)
+                    MCPCapabilityBadge(capability: item.capability, source: item.source)
                 }
+                .help(item.tool.description.map { "\(item.name)\n\n\($0)" } ?? item.name)
                 Spacer(minLength: 8)
                 Toggle(
                     "",
@@ -326,150 +355,9 @@ struct MCPServerDetailView: View {
                 .help("Allow Ghostwire to call this tool")
             }
 
-            if isAllowed { secondaryLine(tool: item.tool, config: config) }
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, 1)
         .padding(.leading, indented ? 10 : 0)
-    }
-
-    // MARK: - GW-214: bind a tool as a feed card
-
-    /// Run + the feed binding. Only reachable once the tool is allowed.
-    @ViewBuilder
-    private func secondaryLine(tool: MCPToolInfo, config: MCPServerConfig) -> some View {
-        let binding = config.feedTools?.first { $0.tool == tool.name }
-        VStack(alignment: .leading, spacing: 3) {
-            HStack(spacing: 10) {
-                Button(runningTool == tool.name ? "Running…" : "Run") {
-                    Task { await run(tool: tool.name) }
-                }
-                .font(.caption)
-                .buttonStyle(.borderless)
-                .disabled(runningTool != nil)
-                .help("Call this tool once and show the raw result")
-
-                if tool.isFeedCandidate {
-                    // The good path: no arguments to supply, so binding is one
-                    // click and nothing else appears.
-                    Toggle(
-                        "Show in Feed",
-                        isOn: Binding(
-                            get: { binding != nil },
-                            set: {
-                                service.setFeedTool(
-                                    serverID: serverID, tool: tool.name, bound: $0)
-                                restartFeed()
-                            }
-                        )
-                    )
-                    .toggleStyle(.checkbox)
-                    .font(.caption)
-                } else {
-                    // Needs input, so it's a QUESTION, not a standing value.
-                    // Reachable, but never the suggested path.
-                    needsArgumentsControl(tool: tool, isBound: binding != nil)
-                }
-                Spacer(minLength: 0)
-            }
-
-            if let binding {
-                if tool.isFeedCandidate {
-                    // Optional parameters, collapsed. The candidacy rule means
-                    // the common path needs none — but `list_issues` without
-                    // `assignee: me` returns the whole team's work, so scoping
-                    // has to be REACHABLE even though it isn't the default.
-                    //
-                    // A JSON box is a placeholder control, not the answer: the
-                    // tool's inputSchema already describes each parameter's type
-                    // and enum, so these should be generated native controls.
-                    // That's GW-333.
-                    DisclosureGroup("Options") {
-                        feedArgumentsField(binding: binding, tool: tool)
-                    }
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                } else {
-                    feedArgumentsField(binding: binding, tool: tool)
-                }
-            }
-        }
-        .padding(.leading, 2)
-    }
-
-    /// A tool with required inputs re-asks one frozen question on every poll.
-    /// Sometimes that's genuinely what you want (a pinned repo, a fixed
-    /// account), so it stays possible — behind a disclosure that says what
-    /// you're signing up for rather than an icon that invites it.
-    private func needsArgumentsControl(tool: MCPToolInfo, isBound: Bool) -> some View {
-        HStack(spacing: 6) {
-            Toggle(
-                "Show in Feed",
-                isOn: Binding(
-                    get: { isBound },
-                    set: {
-                        service.setFeedTool(serverID: serverID, tool: tool.name, bound: $0)
-                        restartFeed()
-                    }
-                )
-            )
-            .toggleStyle(.checkbox)
-            .font(.caption)
-            .foregroundStyle(.secondary)
-
-            Image(systemName: "exclamationmark.triangle")
-                .font(.caption2)
-                .foregroundStyle(SettingsStateColors.attention)
-                .help(
-                    "Needs \(tool.requiredInputs.joined(separator: ", ")) — this asks a fixed question on every refresh. Best for a pinned subject, not a search."
-                )
-        }
-    }
-
-    /// Arguments for the scheduled call. Only shown for tools that require
-    /// input; a feed candidate never needs it, which is the point.
-    private func feedArgumentsField(binding: MCPFeedToolBinding, tool: MCPToolInfo) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 6) {
-                Text("Arguments").font(.caption2).foregroundStyle(.secondary)
-                FeedArgumentsField(
-                    placeholder: Self.argumentsPlaceholder(for: tool),
-                    initialText: binding.argumentsJSON,
-                    onCommit: { text in
-                        service.setFeedToolArguments(
-                            serverID: serverID, tool: binding.tool, argumentsJSON: text)
-                    }
-                )
-                .id(binding.tool)
-            }
-            if !binding.hasValidArguments {
-                Text("Not a JSON object — the tool will be called with no arguments.")
-                    .font(.caption2).foregroundStyle(SettingsStateColors.attention)
-            } else if !binding.argumentsJSON.trimmingCharacters(in: .whitespaces).isEmpty,
-                binding.argumentsJSON.trimmingCharacters(in: .whitespaces) != "{}" {
-                // These are stored in ~/.ghostwire/mcp-servers.json, which is
-                // otherwise guaranteed secret-free (env values and tokens live
-                // in the Keychain). Say so rather than let a token land there
-                // silently.
-                Text("Saved in plain text — put credentials in the server's auth settings, not here.")
-                    .font(.caption2).foregroundStyle(.secondary)
-            } else if !tool.requiredInputs.isEmpty {
-                // The empty `{}` default is invalid for this tool by definition,
-                // so say what's missing instead of waiting for the server to
-                // return a -32602 the user has to decode. Feed candidates
-                // require nothing, so they never see this.
-                Text("Requires \(tool.requiredInputs.joined(separator: ", ")).")
-                    .font(.caption2).foregroundStyle(SettingsStateColors.attention)
-            }
-        }
-        .padding(.leading, 2)
-    }
-
-    /// A filled-in shape beats `{}` — the user shouldn't have to infer the
-    /// JSON from an error message.
-    static func argumentsPlaceholder(for tool: MCPToolInfo) -> String {
-        guard !tool.requiredInputs.isEmpty else { return "{}" }
-        let pairs = tool.requiredInputs.map { "\"\($0)\": \"\"" }.joined(separator: ", ")
-        return "{\(pairs)}"
     }
 
     // MARK: - Empty / output / remove
@@ -489,40 +377,13 @@ struct MCPServerDetailView: View {
         }
     }
 
-    private func runOutputSection(_ output: RunOutput) -> some View {
-        Section {
-            ScrollView {
-                Text(output.text)
-                    .font(.caption.monospaced())
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .frame(maxHeight: 120)
-        } header: {
-            HStack {
-                Text("Result — \(output.tool)")
-                if output.failed {
-                    Text("failed").foregroundStyle(SettingsStateColors.error)
-                }
-                Spacer()
-                Button("Clear") { runOutput = nil }
-                    .buttonStyle(.borderless)
-                    .font(.caption)
-            }
-        }
-    }
-
-    /// §8.1 puts a destructive action in a sheet's button bar; §8.6 removes the
-    /// button bar from a drill-in, so it has no specified home. It gets its own
-    /// trailing section — furthest from anything routine, and it still reads as
-    /// part of the page rather than floating over it. (Flagged to GW-356.)
     private var removeSection: some View {
         Section {
             HStack {
                 VStack(alignment: .leading, spacing: 1) {
                     Text("Remove this server")
                     Text("Its allowlist and any Feed cards go with it.")
-                        .font(.caption2)
+                        .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
@@ -567,27 +428,57 @@ struct MCPServerDetailView: View {
     }
 
     @MainActor
-    private func run(tool: String) async {
-        runningTool = tool
-        defer { runningTool = nil }
+    /// The tool the connection test calls, or nil when there isn't one.
+    ///
+    /// Three requirements, and **all three are load-bearing**:
+    ///
+    /// 1. **Allowlisted.** `callAllowedTool` is the single security choke point
+    ///    and rejects anything else BEFORE any network request — so testing an
+    ///    un-allowed tool reports "Failed" on a connection that is perfectly
+    ///    fine. That was this control's own bug (Codex P2, 2026-08-21), and it
+    ///    is the same class of mistake per-tool Run made: a failure about
+    ///    permissions or arguments, dressed as a failure about the connection.
+    ///    The allowlist is never bypassed to make a test pass.
+    /// 2. **Read-only** — declared or inferred. A test may not change anything.
+    /// 3. **No required inputs** — `testConnection` sends `[:]`, so a tool
+    ///    needing `id`/`team` can only answer "Invalid arguments".
+    ///
+    /// nil hides the button entirely rather than showing a disabled one with an
+    /// explanation: the next action ("allow a read-only tool") is already on
+    /// this page, a row below.
+    static func testableTool(
+        tools: [MCPToolInfo], allowed: Set<String>, serverName: String
+    ) -> MCPToolInfo? {
+        tools.first { tool in
+            guard allowed.contains(tool.name), tool.requiredInputs.isEmpty else { return false }
+            return MCPToolClassifier.classify(tool: tool, serverName: serverName).0 == .readOnly
+        }
+    }
+
+    private var testableTool: MCPToolInfo? {
+        guard let runtime, let config else { return nil }
+        return Self.testableTool(
+            tools: runtime.tools, allowed: config.allowedTools, serverName: config.name)
+    }
+
+    @MainActor
+    private func testConnection() async {
+        guard let tool = testableTool else { return }
+        isTesting = true
+        defer { isTesting = false }
         do {
-            // Empty object, not nil: strict servers (zod-validated) reject a
+            // Empty object, not nil: strict (zod-validated) servers reject a
             // missing arguments field with "expected object, received undefined".
             let output = try await service.callAllowedTool(
-                serverID: serverID, name: tool, arguments: [:])
-            var sections: [String] = []
-            if let structured = output.structuredContent {
-                sections.append("structuredContent:\n\(structured)")
-            }
-            if !output.textRepresentation.isEmpty {
-                sections.append("text:\n\(output.textRepresentation)")
-            }
-            runOutput = RunOutput(
-                tool: tool,
-                text: sections.isEmpty ? "(empty result)" : sections.joined(separator: "\n\n"),
+                serverID: serverID, name: tool.name, arguments: [:])
+            let body = output.textRepresentation
+            testResult = TestResult(
+                tool: tool.name,
+                text: body.isEmpty ? "Returned an empty result." : String(body.prefix(300)),
                 failed: false)
         } catch {
-            runOutput = RunOutput(tool: tool, text: error.localizedDescription, failed: true)
+            testResult = TestResult(
+                tool: tool.name, text: error.localizedDescription, failed: true)
         }
     }
 }
@@ -606,7 +497,7 @@ struct MCPCapabilityBadge: View {
 
     var body: some View {
         Text(capability.badge)
-            .font(.caption2)
+            .font(.system(size: 11))
             .padding(.horizontal, 5)
             .padding(.vertical, 2)
             .background {
@@ -644,7 +535,7 @@ struct MCPTransportBadge: View {
 
     var body: some View {
         Text(transport.displayLabel)
-            .font(.caption2)
+            .font(.system(size: 11))
             .padding(.horizontal, 5)
             .padding(.vertical, 2)
             .background(RoundedRectangle(cornerRadius: 4).fill(.quaternary))
@@ -652,47 +543,33 @@ struct MCPTransportBadge: View {
     }
 }
 
-// MARK: - Arguments field
+// MARK: - Tool count (pane header)
 
-/// A JSON text field that commits on Return **or on losing focus**.
-///
-/// Binding straight through to the store looked simpler and was wrong twice:
-/// it wrote `mcp-servers.json` on every keystroke, and — because only
-/// `.onSubmit` rebuilt the Sources — clicking away after typing persisted the
-/// new arguments while the running Source kept calling with the old ones until
-/// an unrelated restart. Buffering locally and committing on both paths fixes
-/// both. (Codex P2, 2026-07-29.)
-private struct FeedArgumentsField: View {
-    let placeholder: String
-    let initialText: String
-    let onCommit: (String) -> Void
+/// The connected tool count, rendered in `WindowPaneHeader`'s action slot while
+/// a server is drilled into. Its own view so the header can read live runtime
+/// state without `GhostwireWindowView` observing `MCPClientService`.
+struct MCPToolCountLabel: View {
+    let serverID: UUID
+    @ObservedObject private var service = MCPClientService.shared
 
-    @State private var text: String
-    @FocusState private var isFocused: Bool
+    init(serverID: UUID) { self.serverID = serverID }
 
-    init(placeholder: String, initialText: String, onCommit: @escaping (String) -> Void) {
-        self.placeholder = placeholder
-        self.initialText = initialText
-        self.onCommit = onCommit
-        _text = State(initialValue: initialText)
-    }
+    private var runtime: MCPServerRuntime? { service.runtime(id: serverID) }
 
     var body: some View {
-        TextField(placeholder, text: $text)
-            .textFieldStyle(.roundedBorder)
-            .font(.caption.monospaced())
-            .focused($isFocused)
-            .onSubmit { commit() }
-            .onChange(of: isFocused) { _, focused in
-                if !focused { commit() }
+        if case .connected(let count) = runtime?.status,
+            let config = service.store.server(id: serverID)
+        {
+            HStack(spacing: 6) {
+                SettingsStateDot(severity: .ok, caption: "Connected")
+                // The ALLOWED count over the advertised one: a connected server
+                // with an empty allowlist can't be called, so a bare "58 tools"
+                // would overclaim (GW-255).
+                Text("\(config.allowedTools.count) of \(count) tools")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
             }
-            // The pane can be navigated away from while the field still has
-            // focus, which fires no focus-loss event.
-            .onDisappear { commit() }
-    }
-
-    private func commit() {
-        guard text != initialText else { return }
-        onCommit(text)
+        }
     }
 }

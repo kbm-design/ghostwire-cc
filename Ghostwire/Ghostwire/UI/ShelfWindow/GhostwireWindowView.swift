@@ -138,10 +138,26 @@ struct GhostwireWindowView: View {
                 }
             case .mcp:
                 VStack(spacing: 0) {
-                    WindowPaneHeader(title: "Connections") { mcpAddMenu }
+                    // GW-449: Add moved OUT of the header's action slot to sit
+                    // beside search inside the pane. Two Add controls is worse
+                    // than either, and the catalog's top row wants search.
+                    //
+                    // Drilled in, the header becomes the SERVER's: its name as
+                    // the title, back to its left, tool count in the slot Add
+                    // vacated. The drill-in used to publish its own "‹ Servers"
+                    // link inside the content, under a header still reading
+                    // "Connections" — two competing answers to "where am I".
+                    if let server = mcp.openServer {
+                        WindowPaneHeader(
+                            title: server.name,
+                            onBack: { mcp.openServerID = nil }
+                        ) {
+                            MCPToolCountLabel(serverID: server.id)
+                        }
+                    } else {
+                        WindowPaneHeader(title: "Connections")
+                    }
                     MCPSettingsView(model: mcp)
-                        .formStyle(.grouped)
-                        .scrollContentBackground(.hidden)
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                 }
                 .tint(.effectiveAccent)
@@ -153,25 +169,6 @@ struct GhostwireWindowView: View {
         // opacity crossfade, not a full-window slide (too much travel here).
         .transition(.opacity)
         .animation(.easeOut(duration: 0.15), value: nav.tab)
-    }
-
-    /// A plain menu, NOT `Menu(primaryAction:)`. The split-button form listed
-    /// "Import…" twice — once as the ＋ click, once inside its own chevron menu —
-    /// so the two halves looked like two different commands that happened to do
-    /// the same thing.
-    private var mcpAddMenu: some View {
-        Menu {
-            Button("Import Servers…") { mcp.showingImportSheet = true }
-                .disabled(!mcp.canImport)
-            Button("Add Manually…") { mcp.showingAddSheet = true }
-        } label: {
-            Label("Add Server", systemImage: "plus")
-        }
-        .menuStyle(.borderlessButton)
-        .fixedSize()
-        // Adding a server from inside one server's page is incoherent — the
-        // drill-in is a place, not a list.
-        .disabled(mcp.openServer != nil)
     }
 
     private func unavailable(_ name: String) -> some View {

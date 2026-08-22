@@ -1,0 +1,207 @@
+{
+  "schemaVersion": 1,
+  "generated": "2026-08-21",
+  "connectors": [
+    {
+      "id": "calendly",
+      "name": "Calendly",
+      "endpoint": "https://mcp.calendly.com",
+      "blurb": "Meeting links",
+      "category": "Meetings & calendar",
+      "tier": 1,
+      "verified": false,
+      "icon": {
+        "monogram": "C",
+        "asset": "connector-calendly",
+        "tint": false,
+        "background": "#FFFFFF"
+      }
+    },
+    {
+      "id": "canva",
+      "name": "Canva",
+      "endpoint": "https://mcp.canva.com/mcp",
+      "blurb": "Designs and brand",
+      "category": "Design",
+      "tier": 1,
+      "verified": false,
+      "icon": {
+        "monogram": "C",
+        "asset": "connector-canva",
+        "tint": false,
+        "background": "#FFFFFF"
+      }
+    },
+    {
+      "id": "cloudflare",
+      "name": "Cloudflare",
+      "endpoint": "https://mcp.cloudflare.com/mcp",
+      "blurb": "Workers and DNS",
+      "category": "Dev & infra",
+      "tier": 1,
+      "verified": false,
+      "icon": {
+        "monogram": "C",
+        "asset": "connector-cloudflare",
+        "tint": false,
+        "background": "#1C1C1E"
+      }
+    },
+    {
+      "id": "figma",
+      "name": "Figma",
+      "endpoint": "https://mcp.figma.com/mcp",
+      "blurb": "Designs and code",
+      "category": "Design",
+      "tier": 1,
+      "verified": false,
+      "icon": {
+        "monogram": "F",
+        "asset": "connector-figma",
+        "tint": false,
+        "background": "#1E1E1E"
+      }
+    },
+    {
+      "id": "granola",
+      "name": "Granola",
+      "endpoint": "https://mcp.granola.ai/mcp",
+      "blurb": "Meeting notes",
+      "category": "Meetings & calendar",
+      "tier": 1,
+      "verified": false,
+      "icon": {
+        "monogram": "G",
+        "asset": "connector-granola",
+        "tint": false,
+        "background": "#B7D44B"
+      }
+    },
+    {
+      "id": "linear",
+      "name": "Linear",
+      "endpoint": "https://mcp.linear.app/mcp",
+      "blurb": "Issues and cycles",
+      "category": "Docs & PM",
+      "tier": 1,
+      "verified": false,
+      "icon": {
+        "monogram": "L",
+        "asset": "connector-linear",
+        "tint": true,
+        "background": "#5E6AD2",
+        "foreground": "#FFFFFF"
+      }
+    },
+    {
+      "id": "notion",
+      "name": "Notion",
+      "endpoint": "https://mcp.notion.com/mcp",
+      "blurb": "Pages and docs",
+      "category": "Docs & PM",
+      "tier": 1,
+      "verified": false,
+      "icon": {
+        "monogram": "N",
+        "asset": "connector-notion",
+        "tint": true,
+        "background": "#FFFFFF",
+        "foreground": "#000000"
+      }
+    },
+    {
+      "id": "posthog",
+      "name": "PostHog",
+      "endpoint": "https://mcp.posthog.com/mcp",
+      "blurb": "Product analytics",
+      "category": "Analytics",
+      "tier": 1,
+      "verified": false,
+      "icon": {
+        "monogram": "P",
+        "asset": "connector-posthog",
+        "tint": false,
+        "background": "#FFFFFF"
+      }
+    },
+    {
+      "id": "railway",
+      "name": "Railway",
+      "endpoint": "https://mcp.railway.app",
+      "blurb": "Deploy services",
+      "category": "Dev & infra",
+      "tier": 1,
+      "verified": false,
+      "icon": {
+        "monogram": "R",
+        "asset": "connector-railway",
+        "tint": true,
+        "background": "#0B0D0E",
+        "foreground": "#FFFFFF",
+        "border": "#FFFFFF24"
+      }
+    },
+    {
+      "id": "resend",
+      "name": "Resend",
+      "endpoint": "https://mcp.resend.com/mcp",
+      "blurb": "Transactional mail",
+      "category": "Dev & infra",
+      "tier": 1,
+      "verified": false,
+      "icon": {
+        "monogram": "R",
+        "asset": "connector-resend",
+        "tint": true,
+        "background": "#FFFFFF",
+        "foreground": "#000000"
+      }
+    },
+    {
+      "id": "supabase",
+      "name": "Supabase",
+      "endpoint": "https://mcp.supabase.com/mcp",
+      "blurb": "Database and auth",
+      "category": "Dev & infra",
+      "tier": 1,
+      "verified": false,
+      "icon": {
+        "monogram": "S",
+        "asset": "connector-supabase",
+        "tint": false,
+        "background": "#1C1C1E"
+      }
+    },
+    {
+      "id": "vercel",
+      "name": "Vercel",
+      "endpoint": "https://mcp.vercel.com/v1/mcp",
+      "blurb": "Deploys and logs",
+      "category": "Dev & infra",
+      "tier": 1,
+      "verified": false,
+      "icon": {
+        "monogram": "▲",
+        "asset": "connector-vercel",
+        "tint": true,
+        "background": "#FFFFFF",
+        "foreground": "#000000"
+      }
+    },
+    {
+      "id": "zapier",
+      "name": "Zapier",
+      "endpoint": "https://mcp.zapier.com/api/mcp/mcp",
+      "blurb": "Automations",
+      "category": "Files & automation",
+      "tier": 1,
+      "verified": false,
+      "icon": {
+        "monogram": "Z",
+        "asset": "connector-zapier",
+        "tint": false,
+        "background": "#FF4F00"
+      }
+    }
+  ]
+}

@@ -83,6 +83,48 @@ enum MCPToolCapability: String, CaseIterable, Identifiable, Equatable, Sendable 
     static let displayOrder: [MCPToolCapability] = [
         .readOnly, .writes, .destructive, .unclassified,
     ]
+
+    /// Which SECTION this capability renders under.
+    ///
+    /// `writes` and `destructive` share one, because the split misled: the
+    /// write lexicon holds `update`, `set`, `edit`, `merge`, `move` and
+    /// `rename` — so "Write" sounded additive while containing every way to
+    /// overwrite your work, and "Destructive" implied it was the only dangerous
+    /// one. Keelan caught it (2026-08-21). Anything that isn't read-only is now
+    /// one bucket.
+    ///
+    /// Nothing is lost where it counts: the per-row BADGE still says `writes`
+    /// vs `destructive` on the individual toggle, and bulk-allow was already
+    /// read-only-only, so merging changes no permission behaviour at all.
+    var section: MCPToolSection {
+        switch self {
+        case .readOnly: return .read
+        case .writes, .destructive: return .write
+        case .unclassified: return .other
+        }
+    }
+}
+
+/// The three sections the allowlist renders. Coarser than `MCPToolCapability`
+/// on purpose — this is the grouping, that is the claim.
+enum MCPToolSection: String, CaseIterable, Identifiable, Equatable, Sendable {
+    case read
+    case write
+    /// Neither annotated nor inferable. Its own section on purpose: folding a
+    /// tool nobody could classify into `read` is a security-relevant lie.
+    case other
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .read: return "Read"
+        case .write: return "Write"
+        case .other: return "Other"
+        }
+    }
+
+    static let displayOrder: [MCPToolSection] = [.read, .write, .other]
 }
 
 /// Where a capability came from. Surfaced in the UI because "the server told
@@ -274,12 +316,22 @@ struct MCPToolCategoryGroup: Identifiable, Equatable {
 /// One capability section: always present when non-empty, sub-grouped only when
 /// this section itself has enough structure to justify it.
 struct MCPCapabilitySection: Identifiable, Equatable {
-    let capability: MCPToolCapability
+    let kind: MCPToolSection
     let tools: [MCPGroupedTool]
     /// Empty when this section renders flat.
     let categories: [MCPToolCategoryGroup]
 
-    var id: String { capability.rawValue }
+    var id: String { kind.rawValue }
+
+    /// The most dangerous capability present. The consequence line must speak
+    /// for the WORST member, not the first — a section holding one `delete`
+    /// among nine `update`s is a delete section.
+    var severestCapability: MCPToolCapability {
+        if tools.contains(where: { $0.capability == .destructive }) { return .destructive }
+        if tools.contains(where: { $0.capability == .unclassified }) { return .unclassified }
+        if tools.contains(where: { $0.capability == .writes }) { return .writes }
+        return .readOnly
+    }
     var isCategorized: Bool { !categories.isEmpty }
     var toolNames: [String] { tools.map(\.name) }
     var count: Int { tools.count }
@@ -287,7 +339,7 @@ struct MCPCapabilitySection: Identifiable, Equatable {
     /// mutate many names at once, but the UI only widens authorization in bulk
     /// for tools that are actually read-only. Writes, destructive and unknown
     /// tools require one explicit per-tool toggle.
-    var canBulkAllow: Bool { capability == .readOnly }
+    var canBulkAllow: Bool { kind == .read }
     /// True when every tool here was guessed from its name — drives the section
     /// footer that says so.
     var isEntirelyInferred: Bool {
@@ -346,16 +398,22 @@ struct MCPToolGrouping: Equatable {
             && coverage >= minimumCategoryCoverage
 
         var sections: [MCPCapabilitySection] = []
-        for capability in MCPToolCapability.displayOrder {
-            let members = classified.filter { $0.capability == capability }
+        for kind in MCPToolSection.displayOrder {
+            let members = classified.filter { $0.capability.section == kind }
             guard !members.isEmpty else { continue }
             let categories = shouldCategorize
                 ? categorized(members, serverName: serverName, multiMember: Set(multiMember.keys))
                 : []
             sections.append(
                 MCPCapabilitySection(
-                    capability: capability,
-                    tools: members.sorted { $0.name < $1.name },
+                    kind: kind,
+                    // Within the merged Write section, destructive tools sort
+                    // LAST — the ones you are least likely to want are the ones
+                    // you should have to travel furthest to switch on.
+                    // Within the merged Write section, destructive tools sort
+                    // LAST — the ones you are least likely to want are the ones
+                    // you should have to travel furthest to switch on.
+                    tools: members.sorted(by: severityThenName),
                     categories: categories))
         }
 
@@ -370,6 +428,23 @@ struct MCPToolGrouping: Equatable {
     /// than two real groups renders flat — Linear's 4 Destructive tools span 4
     /// categories, so categorizing them would produce four headers over four
     /// rows inside a server that otherwise groups beautifully.
+    /// Severity first, then name.
+    ///
+    /// Used by the flat path AND by every category group. Having the sort in
+    /// only one of them was a real defect (Codex, 2026-08-21): the section-level
+    /// sort put destructive tools last, then `categorized()` re-sorted by name
+    /// and threw it away — so on Linear, which categorizes 95% of its tools,
+    /// `delete_issue` landed between `create_issue` and `get_issue`. The
+    /// ordering matters most exactly where it was being discarded.
+    static func severityThenName(_ a: MCPGroupedTool, _ b: MCPGroupedTool) -> Bool {
+        if a.capability != b.capability {
+            let order = MCPToolCapability.displayOrder
+            return (order.firstIndex(of: a.capability) ?? order.count)
+                < (order.firstIndex(of: b.capability) ?? order.count)
+        }
+        return a.name < b.name
+    }
+
     private static func categorized(
         _ members: [MCPGroupedTool], serverName: String, multiMember: Set<String>
     ) -> [MCPToolCategoryGroup] {
@@ -396,7 +471,7 @@ struct MCPToolGrouping: Equatable {
 
         var groups: [MCPToolCategoryGroup] = []
         for (category, items) in buckets {
-            let sorted: [MCPGroupedTool] = items.sorted { $0.name < $1.name }
+            let sorted: [MCPGroupedTool] = items.sorted(by: severityThenName)
             groups.append(
                 MCPToolCategoryGroup(
                     category: category,

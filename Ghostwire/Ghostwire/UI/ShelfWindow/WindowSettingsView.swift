@@ -217,13 +217,33 @@ struct WindowPaneHeader<Action: View>: View {
     static var actionSlotWidth: CGFloat { 120 }
 
     let title: String
+    /// When set, a back chevron sits to the LEFT of the title and the title
+    /// becomes the name of the thing you drilled into — so the header says
+    /// where you are, not which pane you started from. Drill-ins used to
+    /// publish their own back control inside the content, which put "‹ Servers"
+    /// under a header still reading "Connections": two competing answers to
+    /// "where am I".
+    var onBack: (() -> Void)? = nil
     @ViewBuilder let action: () -> Action
 
     var body: some View {
         HStack(spacing: 12) {
+            if let onBack {
+                Button(action: onBack) {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Back")
+                .keyboardShortcut("[", modifiers: .command)
+            }
             Text(title)
                 .font(.system(size: 18, weight: .semibold))
                 .foregroundStyle(.primary)
+                .lineLimit(1)
+                .truncationMode(.tail)
             Spacer(minLength: 0)
             action()
                 .frame(minWidth: Self.actionSlotWidth, alignment: .trailing)
@@ -235,7 +255,7 @@ struct WindowPaneHeader<Action: View>: View {
 }
 
 extension WindowPaneHeader where Action == EmptyView {
-    init(title: String) {
-        self.init(title: title) { EmptyView() }
+    init(title: String, onBack: (() -> Void)? = nil) {
+        self.init(title: title, onBack: onBack) { EmptyView() }
     }
 }

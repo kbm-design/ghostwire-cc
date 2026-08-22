@@ -118,6 +118,24 @@ enum AgentMCPConfigImporter {
         FileManager.default.fileExists(atPath: claudeCodeConfigURL.path)
     }
 
+    /// Whether there is anything the user could actually import RIGHT NOW.
+    ///
+    /// NOT the same as `claudeCodeConfigExists`, and the difference is the
+    /// whole point: Claude Code writes `~/.claude.json` for everyone, MCP
+    /// servers or not. Gating an offer on the file's existence promises
+    /// "you already have servers set up" to people who have none, and drops
+    /// them into an empty sheet (Codex P2, 2026-08-22).
+    ///
+    /// Also excludes servers already added — re-offering an import you've
+    /// completed is the same false promise one step later.
+    static func hasImportableServers(existing: [MCPServerConfig]) -> Bool {
+        guard claudeCodeConfigExists else { return false }
+        guard let discovered = try? discover(
+            claudeCodeConfigAt: claudeCodeConfigURL, existing: existing)
+        else { return false }
+        return discovered.contains { $0.isImportable }
+    }
+
     enum DiscoveryError: LocalizedError, Equatable {
         case unreadable
         case malformed

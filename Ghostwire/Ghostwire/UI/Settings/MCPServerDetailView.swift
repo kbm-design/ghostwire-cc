@@ -533,7 +533,14 @@ struct MCPServerHeaderActions: View {
                     Task { await service.disconnect(id: serverID) }
                 }
             }
-            if model.testableTool(for: serverID) != nil {
+            // Connected ONLY. `MCPClientService` keeps the session and tool
+            // list after a transient call failure but marks the runtime
+            // `.failed`, and a passing `callAllowedTool` records health without
+            // restoring that status — so testing in that state produced "Test
+            // passed" sitting beside "Couldn't connect · Reconnect" (Codex P2,
+            // 2026-08-22). Moving Test into the header dropped the guard the
+            // inline button used to have; this is it back.
+            if runtime?.status.isConnected == true, model.testableTool(for: serverID) != nil {
                 Menu {
                     Button(model.isTesting ? "Testing…" : "Test connection") {
                         Task { await model.runTest(serverID: serverID) }

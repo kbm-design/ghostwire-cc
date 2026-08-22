@@ -132,7 +132,12 @@ struct MCPSettingsView: View {
                 root
             }
         }
-        .onAppear { model.canImport = AgentMCPConfigImporter.claudeCodeConfigExists }
+        .onAppear {
+            // Reads the config, not just its existence — see
+            // `hasImportableServers`. Once per appearance, never per redraw.
+            model.canImport = AgentMCPConfigImporter.hasImportableServers(
+                existing: service.store.servers)
+        }
         // The open server can be deleted out from under the drill-in. `openServer`
         // already falls back to the list, but the id has to be cleared too or the
         // header's Add control stays disabled over a list it should be usable on.

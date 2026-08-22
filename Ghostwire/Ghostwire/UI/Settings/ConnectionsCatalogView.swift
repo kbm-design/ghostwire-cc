@@ -42,6 +42,7 @@
 //  tier-1 card today, which is wrong and is that ticket's problem.
 //
 
+import Defaults
 import SwiftUI
 
 // MARK: - Card metrics
@@ -59,6 +60,18 @@ private enum ConnectorCard {
     /// GW-451's deferred "N agents" already has.
     static let trailingSlot: CGFloat = 22
 
+    /// 10% measures **1.10:1** against the card fill — below WCAG 1.4.11's 3:1,
+    /// which would need 38% white. Deliberately NOT raised (Keelan, 2026-08-21,
+    /// after seeing all three treatments drawn): at 38% the border reads as a
+    /// drawn outline, the cards look like form fields, and it swamps the fill
+    /// difference between connected and idle.
+    ///
+    /// The judgement is that 1.4.11 covers a boundary that conveys STATE or is
+    /// needed to identify the control. Since the "Connected" / "Not connected"
+    /// section titles now carry the grouping in words, and the whole card is
+    /// the hit target, this border is decoration rather than the thing you must
+    /// see to use the control. **If the section titles ever go away, this
+    /// argument goes with them.**
     static let border = Color.white.opacity(0.10)
     static let borderHover = Color.white.opacity(0.16)
     /// Connected cards are filled; catalog cards are not. That difference IS
@@ -334,7 +347,13 @@ private struct CatalogConnectorCard: View {
                         .lineLimit(1)
                     Text(entry.blurb)
                         .font(.system(size: 11))
-                        .foregroundStyle(.tertiary)
+                        // `.secondary`, NOT `.tertiary`. Measured on the card
+                        // fill (#0F0F0F): tertiary is 1.82:1, which fails 4.5
+                        // badly — and this is the text carrying what a
+                        // connector DOES. secondary is 5.70:1. macOS
+                        // tertiaryLabelColor is alpha 0.247; on a near-black
+                        // ground it is decoration, not text.
+                        .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -365,7 +384,9 @@ private struct CatalogConnectorCard: View {
             } else {
                 Image(systemName: "plus")
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(isHovered ? AnyShapeStyle(.primary) : AnyShapeStyle(.tertiary))
+                    // Idle state was 1.82:1 — below the 3:1 a UI glyph needs,
+                    // on the one mark that says the card is pressable.
+                    .foregroundStyle(isHovered ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
             }
         }
         .frame(width: ConnectorCard.trailingSlot, height: ConnectorCard.trailingSlot)
@@ -382,6 +403,9 @@ struct ConnectionsCatalogView: View {
     @ObservedObject var model: MCPPaneModel
 
     @State private var query = ""
+    /// Shown once, and only when there is actually something to import.
+    @Default(.didSeeConnectorImportHint) private var didSeeImportHint
+    @State private var showImportHint = false
     @State private var addingIDs: Set<String> = []
 
     /// `.adaptive` rather than three fixed columns: the window is resizable down
@@ -405,7 +429,15 @@ struct ConnectionsCatalogView: View {
         .padding(.horizontal, 28)
         .padding(.top, 20)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .task { await catalog.refreshIfStale() }
+        .task {
+            await catalog.refreshIfStale()
+            // After `canImport` has been resolved by MCPSettingsView.onAppear —
+            // pointing at an Import button that isn't there would be worse than
+            // saying nothing.
+            if model.canImport && !didSeeImportHint {
+                showImportHint = true
+            }
+        }
     }
 
     // MARK: Controls
@@ -415,7 +447,7 @@ struct ConnectionsCatalogView: View {
             HStack(spacing: 8) {
                 Image(systemName: "magnifyingglass")
                     .font(.system(size: 12))
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.secondary)
                 TextField("Search connections", text: $query)
                     .textFieldStyle(.plain)
                     .font(.system(size: 12))
@@ -425,7 +457,7 @@ struct ConnectionsCatalogView: View {
                     } label: {
                         Image(systemName: "xmark.circle.fill")
                             .font(.system(size: 11))
-                            .foregroundStyle(.tertiary)
+                            .foregroundStyle(.secondary)
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("Clear search")
@@ -440,32 +472,75 @@ struct ConnectionsCatalogView: View {
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
                     .strokeBorder(Color.white.opacity(0.08), lineWidth: 1))
 
-            addMenu
+            addControls
         }
     }
 
-    /// A plain menu, NOT `Menu(primaryAction:)` — the split-button form listed
-    /// "Import…" twice, once as the ＋ click and once inside its own chevron.
-    private var addMenu: some View {
-        Menu {
-            Button("Import Servers…") { model.showingImportSheet = true }
-                .disabled(!model.canImport)
-            Button("Add Manually…") { model.showingAddSheet = true }
-        } label: {
-            HStack(spacing: 6) {
-                Image(systemName: "plus").font(.system(size: 11, weight: .medium))
-                Text("Add").font(.system(size: 12, weight: .medium))
+    /// Two controls, not a menu.
+    ///
+    /// Import and Add-custom were one dropdown, which made the common case (add
+    /// a server by URL) cost two clicks and hid the rare one behind the same
+    /// chevron. They aren't siblings: **Add custom is the everyday escape
+    /// hatch; Import is a one-time migration** you do when you arrive with
+    /// servers already configured for Claude Code (GW-332 Phase 1).
+    ///
+    /// So Add is a labelled button and Import is an icon beside it. Import
+    /// hides entirely when there is no Claude Code config to read — an
+    /// always-visible control that can't do anything is worse than no control.
+    @ViewBuilder private var addControls: some View {
+        HStack(spacing: 6) {
+            Button {
+                model.showingAddSheet = true
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "plus").font(.system(size: 11, weight: .medium))
+                    Text("Add custom").font(.system(size: 12, weight: .medium))
+                }
+                .frame(height: 30)
+                .padding(.horizontal, 12)
+                .background(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(ConnectorCard.fillControl))
             }
-            .frame(height: 30)
-            .padding(.horizontal, 12)
-            .background(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(ConnectorCard.fillControl))
+            .buttonStyle(.plain)
+            .accessibilityLabel("Add a server by URL or command")
+
+            if model.canImport {
+                Button {
+                    showImportHint = false
+                    didSeeImportHint = true
+                    model.showingImportSheet = true
+                } label: {
+                    Image(systemName: "square.and.arrow.down")
+                        .font(.system(size: 12))
+                        .frame(width: 30, height: 30)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .fill(ConnectorCard.fillControl))
+                }
+                .buttonStyle(.plain)
+                .help("Import the servers you already have configured for Claude Code")
+                .accessibilityLabel("Import servers from Claude Code")
+                .popover(isPresented: $showImportHint, arrowEdge: .bottom) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("You already have servers set up")
+                            .font(.system(size: 13, weight: .semibold))
+                        Text("Bring the ones from Claude Code over instead of adding them by hand.")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Button("Got it") {
+                            showImportHint = false
+                            didSeeImportHint = true
+                        }
+                        .buttonStyle(.borderless)
+                        .font(.system(size: 12))
+                    }
+                    .padding(12)
+                    .frame(width: 240)
+                }
+            }
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .accessibilityLabel("Add a server")
     }
 
     // MARK: Grid
@@ -481,6 +556,7 @@ struct ConnectionsCatalogView: View {
                 // which group a card is in.
                 VStack(alignment: .leading, spacing: 24) {
                     if !connectedServers.isEmpty {
+                        sectionTitle("Active")
                         LazyVGrid(
                             columns: columns, alignment: .leading, spacing: ConnectorCard.gap
                         ) {
@@ -489,15 +565,25 @@ struct ConnectionsCatalogView: View {
                             }
                         }
                     }
-                    if !idleServers.isEmpty || !catalogEntries.isEmpty {
+                    // THREE groups, not two. "Add connectors" cannot also head
+                    // the servers you already added — pressing one of those
+                    // reconnects it, and you can't add Cloudflare twice. Each
+                    // title now describes exactly what sits under it.
+                    if !idleServers.isEmpty {
+                        sectionTitle("Inactive")
                         LazyVGrid(
                             columns: columns, alignment: .leading, spacing: ConnectorCard.gap
                         ) {
-                            // Added-but-not-live first (you already chose these),
-                            // then the catalog you haven't taken up yet.
                             ForEach(idleServers) { server in
                                 serverCard(server)
                             }
+                        }
+                    }
+                    if !catalogEntries.isEmpty {
+                        sectionTitle("Add connectors")
+                        LazyVGrid(
+                            columns: columns, alignment: .leading, spacing: ConnectorCard.gap
+                        ) {
                             ForEach(catalogEntries) { entry in
                                 CatalogConnectorCard(
                                     entry: entry,
@@ -513,6 +599,20 @@ struct ConnectionsCatalogView: View {
         }
     }
 
+    /// GW-449 shipped this grid with NO section headers, on the reasoning that a
+    /// heading over two cards costs more vertical space than it explains.
+    /// Reversed by Keelan (2026-08-21) for a better reason: the groups were
+    /// distinguished by FILL, and white 6% on black measures 1.10:1 — a
+    /// difference of 15 in 255. It could not carry the meaning, which is why
+    /// "added" kept reading as "connected". Words carry it; the same shape the
+    /// drill-in's Read/Write/Other headers use.
+    private func sectionTitle(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundStyle(.primary)
+            .padding(.bottom, -10)
+    }
+
     private func serverCard(_ server: MCPServerConfig) -> some View {
         ConnectedConnectorCard(
             server: server,
@@ -524,11 +624,11 @@ struct ConnectionsCatalogView: View {
     private var emptyState: some View {
         VStack(spacing: 8) {
             Text(query.isEmpty
-                ? "No connectors available."
+                ? "No connectors yet."
                 : "Nothing matches “\(query)”.")
                 .font(.system(size: 13))
                 .foregroundStyle(.secondary)
-            Button("Add manually…") { model.showingAddSheet = true }
+            Button("Add custom") { model.showingAddSheet = true }
                 .buttonStyle(.link)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

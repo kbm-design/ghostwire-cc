@@ -22,20 +22,13 @@ import SwiftUI
 
 struct MCPServerDetailView: View {
     let serverID: UUID
+    @ObservedObject var model: MCPPaneModel
     /// Called after the server is removed — the pane has to go back, because
     /// the thing it was showing no longer exists.
     var onRemoved: () -> Void = {}
 
     @ObservedObject private var service = MCPClientService.shared
-    @State private var testResult: TestResult?
-    @State private var isTesting = false
     @State private var confirmRemove = false
-
-    private struct TestResult {
-        let tool: String
-        let text: String
-        let failed: Bool
-    }
 
     private var config: MCPServerConfig? { service.store.server(id: serverID) }
     private var runtime: MCPServerRuntime? { service.runtime(id: serverID) }
@@ -128,22 +121,13 @@ struct MCPServerDetailView: View {
                         .truncationMode(.middle)
                         .textSelection(.enabled)
                     Spacer(minLength: 12)
-                    // Connecting proves `initialize` + `tools/list` and NOTHING
-                    // else — a server can list 58 tools and fail every call.
-                    // This is the only control that proves a real `tools/call`.
-                    if runtime?.status.isConnected == true, testableTool != nil {
-                        Button(isTesting ? "Testing…" : "Test") {
-                            Task { await testConnection() }
-                        }
-                        .disabled(isTesting)
-                    }
                 }
                 .padding(.vertical, 2)
 
                 // The result lands next to the thing it is about — the old
                 // per-tool Run put its output below the remove button, off the
                 // bottom of a 58-tool page.
-                if let result = testResult {
+                if let result = model.testResult {
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
                         SettingsStateDot(
                             severity: result.failed ? .error : .ok,
@@ -155,9 +139,10 @@ struct MCPServerDetailView: View {
                             .lineLimit(3)
                             .textSelection(.enabled)
                         Spacer(minLength: 8)
-                        Button("Clear") { testResult = nil }
+                        Button("Clear") { model.testResult = nil }
                             .buttonStyle(.borderless)
                             .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
                     }
                 }
             }
@@ -241,42 +226,42 @@ struct MCPServerDetailView: View {
         return HStack(spacing: 8) {
             Text(section.kind.title)
                 .font(.system(size: 13, weight: .semibold))
+            // "N of M" per section, instead of one server-wide total in the
+            // pane header. Says the same thing where the decision is made, and
+            // frees the header's action slot for Disconnect.
+            Text("\(allowedCount(section, config: config)) of \(section.count)")
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
                 // macOS `Form` has a fixed inter-section gap and exposes no
                 // knob for it (`listSectionSpacing` is iOS-only), so the header
                 // pulls up into it. Without this, three short sections read as
                 // three separate screens.
                 .padding(.top, -6)
             Spacer()
+            // REMOVE ALL on every section; ALLOW ALL only on Read.
+            //
+            // The asymmetry is the point: narrowing permissions is always safe,
+            // widening them is the thing `allowedTools` exists to gate. A
+            // "Allow all" over Write would hand every connected agent every
+            // mutating tool in one click, which is what read-only-only bulk
+            // allow has always prevented (GW-255).
             if section.canBulkAllow {
-                // Bulk allow exists only for read-only tools. `allowedTools` is
-                // also the gateway floor, so mutating and unknown tools need a
-                // visible one-tool decision.
-                Button(bulkTitle(section: section, allOn: allOn)) {
+                Button(allOn ? "Remove all" : "Allow all") {
                     setAllowed(names, allowed: !allOn)
                 }
                 .buttonStyle(.borderless)
                 .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+            } else if allowedCount(section, config: config) > 0 {
+                Button("Remove all") { setAllowed(names, allowed: false) }
+                    .buttonStyle(.borderless)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
             }
         }
     }
 
-    /// The section header already prints its own count two words to the left,
-    /// so "Allow all 36" said the number twice on one line.
-    private func bulkTitle(section: MCPCapabilitySection, allOn: Bool) -> String {
-        allOn ? "Remove all" : "Allow all"
-    }
-
-    /// ONE line, not three.
-    ///
-    /// This used to stack the consequence warning, an "we inferred these from
-    /// names" paragraph, and an "allow them one at a time" paragraph — three
-    /// sentences of prose under a three-row list, which is more words than the
-    /// thing they describe. Every extra sentence made the one that matters
-    /// (what allowing this REACHES) easier to skip.
-    ///
-    /// What was cut is not lost: the `unknown` badge on each row already says
-    /// Ghostwire couldn't classify it, and the badge's `source` already
-    /// distinguishes declared from inferred.
     @ViewBuilder
     private func sectionFooter(section: MCPCapabilitySection, config: MCPServerConfig) -> some View {
         if section.kind != .read, allowedCount(section, config: config) > 0 {
@@ -349,7 +334,10 @@ struct MCPServerDetailView: View {
                     )
                 )
                 .toggleStyle(.switch)
-                .controlSize(.mini)
+                // NOT `.mini`. AppKit squashes the mini switch's knob into an
+                // oval rather than scaling it down as a circle — visible the
+                // moment you zoom in. `.small` keeps a round knob.
+                .controlSize(.small)
                 .labelsHidden()
                 .accessibilityLabel("Allow \(item.name)")
                 .help("Allow Ghostwire to call this tool")
@@ -368,7 +356,7 @@ struct MCPServerDetailView: View {
                 Image(systemName: "wrench.and.screwdriver")
                     .font(.largeTitle)
                     .foregroundStyle(.secondary)
-                Text("This server is connected but offers no tools.")
+                Text("Connected, but this server offers no tools.")
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
             }
@@ -377,34 +365,64 @@ struct MCPServerDetailView: View {
         }
     }
 
-    private var removeSection: some View {
-        Section {
-            HStack {
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("Remove this server")
-                    Text("Its allowlist and any Feed cards go with it.")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
+    /// ONE state-driven action, matching `connectionAction` above: **Disconnect
+    /// while connected, Remove while not** (Keelan, 2026-08-21).
+    ///
+    /// They are genuinely different — Disconnect drops the live session and
+    /// keeps the server, its allowlist and its Feed cards; Remove forgets all
+    /// of it. Showing only the one that fits the current state means a live
+    /// connection cannot be deleted in a single click: you disconnect first,
+    /// then remove. That two-step is the point, not a cost.
+    ///
+    /// Remove is the only RED control on this pane. Everything else is
+    /// reversible; this is the one that isn't.
+    @ViewBuilder private var removeSection: some View {
+        if runtime?.status.isConnected == true {
+            Section {
+                HStack {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Disconnect")
+                        Text("Keeps this server and everything you've allowed.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button("Disconnect") {
+                        Task { await service.disconnect(id: serverID) }
+                    }
                 }
-                Spacer()
-                Button("Remove…", role: .destructive) { confirmRemove = true }
+                .padding(.vertical, 2)
             }
-            .padding(.vertical, 2)
-        }
-        // A confirmation dialog is safe HERE and only here: Settings is an
-        // ordinary NSWindow. Presenting one while the notch panel is open
-        // deadlocks (macos-conventions.md §3).
-        .confirmationDialog(
-            "Remove \(config?.name ?? "this server")?",
-            isPresented: $confirmRemove, titleVisibility: .visible
-        ) {
-            Button("Remove", role: .destructive) {
-                service.removeServer(id: serverID)
-                onRemoved()
+        } else {
+            Section {
+                HStack {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Remove this server")
+                        Text("The tools you allowed and its Feed cards go with it.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button("Remove…", role: .destructive) { confirmRemove = true }
+                        .tint(SettingsStateColors.error)
+                }
+                .padding(.vertical, 2)
             }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("Ghostwire stops calling it and any Feed cards from it disappear.")
+            // A confirmation dialog is safe HERE and only here: Settings is an
+            // ordinary NSWindow. Presenting one while the notch panel is open
+            // deadlocks (macos-conventions.md §3).
+            .confirmationDialog(
+                "Remove \(config?.name ?? "this server")?",
+                isPresented: $confirmRemove, titleVisibility: .visible
+            ) {
+                Button("Remove", role: .destructive) {
+                    service.removeServer(id: serverID)
+                    onRemoved()
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Ghostwire stops calling it, and its Feed cards disappear.")
+            }
         }
     }
 
@@ -425,61 +443,6 @@ struct MCPServerDetailView: View {
     /// has already happened.
     private func restartFeed() {
         FeedSourceCoordinator.shared.start()
-    }
-
-    @MainActor
-    /// The tool the connection test calls, or nil when there isn't one.
-    ///
-    /// Three requirements, and **all three are load-bearing**:
-    ///
-    /// 1. **Allowlisted.** `callAllowedTool` is the single security choke point
-    ///    and rejects anything else BEFORE any network request — so testing an
-    ///    un-allowed tool reports "Failed" on a connection that is perfectly
-    ///    fine. That was this control's own bug (Codex P2, 2026-08-21), and it
-    ///    is the same class of mistake per-tool Run made: a failure about
-    ///    permissions or arguments, dressed as a failure about the connection.
-    ///    The allowlist is never bypassed to make a test pass.
-    /// 2. **Read-only** — declared or inferred. A test may not change anything.
-    /// 3. **No required inputs** — `testConnection` sends `[:]`, so a tool
-    ///    needing `id`/`team` can only answer "Invalid arguments".
-    ///
-    /// nil hides the button entirely rather than showing a disabled one with an
-    /// explanation: the next action ("allow a read-only tool") is already on
-    /// this page, a row below.
-    static func testableTool(
-        tools: [MCPToolInfo], allowed: Set<String>, serverName: String
-    ) -> MCPToolInfo? {
-        tools.first { tool in
-            guard allowed.contains(tool.name), tool.requiredInputs.isEmpty else { return false }
-            return MCPToolClassifier.classify(tool: tool, serverName: serverName).0 == .readOnly
-        }
-    }
-
-    private var testableTool: MCPToolInfo? {
-        guard let runtime, let config else { return nil }
-        return Self.testableTool(
-            tools: runtime.tools, allowed: config.allowedTools, serverName: config.name)
-    }
-
-    @MainActor
-    private func testConnection() async {
-        guard let tool = testableTool else { return }
-        isTesting = true
-        defer { isTesting = false }
-        do {
-            // Empty object, not nil: strict (zod-validated) servers reject a
-            // missing arguments field with "expected object, received undefined".
-            let output = try await service.callAllowedTool(
-                serverID: serverID, name: tool.name, arguments: [:])
-            let body = output.textRepresentation
-            testResult = TestResult(
-                tool: tool.name,
-                text: body.isEmpty ? "Returned an empty result." : String(body.prefix(300)),
-                failed: false)
-        } catch {
-            testResult = TestResult(
-                tool: tool.name, text: error.localizedDescription, failed: true)
-        }
     }
 }
 
@@ -548,6 +511,53 @@ struct MCPTransportBadge: View {
 /// The connected tool count, rendered in `WindowPaneHeader`'s action slot while
 /// a server is drilled into. Its own view so the header can read live runtime
 /// state without `GhostwireWindowView` observing `MCPClientService`.
+/// The drill-in's header action: the ONE state-driven control, plus an
+/// overflow for the rare things.
+///
+/// Disconnect while connected, Reconnect/Authorize otherwise — Remove stays at
+/// the bottom of the page, because forgetting a server is not a thing you do
+/// from a toolbar. Test lives in the overflow: it is a diagnostic you reach for
+/// when something looks wrong, not a step in connecting, and a green dot
+/// already says the handshake worked (Keelan, 2026-08-22).
+struct MCPServerHeaderActions: View {
+    let serverID: UUID
+    @ObservedObject var model: MCPPaneModel
+    @ObservedObject private var service = MCPClientService.shared
+
+    private var runtime: MCPServerRuntime? { service.runtime(id: serverID) }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            if runtime?.status.isConnected == true {
+                Button("Disconnect") {
+                    Task { await service.disconnect(id: serverID) }
+                }
+            }
+            // Connected ONLY. `MCPClientService` keeps the session and tool
+            // list after a transient call failure but marks the runtime
+            // `.failed`, and a passing `callAllowedTool` records health without
+            // restoring that status — so testing in that state produced "Test
+            // passed" sitting beside "Couldn't connect · Reconnect" (Codex P2,
+            // 2026-08-22). Moving Test into the header dropped the guard the
+            // inline button used to have; this is it back.
+            if runtime?.status.isConnected == true, model.testableTool(for: serverID) != nil {
+                Menu {
+                    Button(model.isTesting ? "Testing…" : "Test connection") {
+                        Task { await model.runTest(serverID: serverID) }
+                    }
+                    .disabled(model.isTesting)
+                } label: {
+                    Image(systemName: "ellipsis")
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .accessibilityLabel("More actions")
+            }
+        }
+    }
+}
+
 struct MCPToolCountLabel: View {
     let serverID: UUID
     @ObservedObject private var service = MCPClientService.shared

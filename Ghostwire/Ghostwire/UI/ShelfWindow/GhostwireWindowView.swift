@@ -152,7 +152,7 @@ struct GhostwireWindowView: View {
                             title: server.name,
                             onBack: { mcp.openServerID = nil }
                         ) {
-                            MCPToolCountLabel(serverID: server.id)
+                            MCPServerHeaderActions(serverID: server.id, model: mcp)
                         }
                     } else {
                         WindowPaneHeader(title: "Connections")
@@ -160,6 +160,11 @@ struct GhostwireWindowView: View {
                     MCPSettingsView(model: mcp)
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                 }
+                // The tint reaches every control beneath it, which is how one
+                // screen ended up with six blue things competing (Keelan,
+                // 2026-08-22). Accent now means ONE thing here — a toggle that
+                // is ON — matching how Linear and Qatalog handle the same
+                // screen. Text actions opt out with `.foregroundStyle`.
                 .tint(.effectiveAccent)
             case .settings:
                 WindowSettingsView()

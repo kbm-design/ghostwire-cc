@@ -8,10 +8,12 @@
 //    • window → a multi-column grid of all cards (3–4 across), no media controls.
 //  The surface is chosen by the `ghostwireSurface` environment flag (GW-223).
 //
-//  GW-466/GW-290: the window grid now drag-reorders (persisting through
-//  `FeedCardStore.move`, whose order feeds the notch's top-N — dragging a card
-//  to the front IS putting it in the notch) and MCP-backed cards carry a
-//  context menu (Card Settings… / Remove Card). The notch row stays read-only.
+//  GW-466/GW-290: the window grid now drag-reorders (live in memory while the
+//  drag hovers, persisted once on drop) and MCP-backed cards carry a context
+//  menu (Card Settings… / Remove Card). The persisted order is what the
+//  notch's top-N candidate set comes FROM — but the notch row renders
+//  `FeedRankingController.notchCards`, so under any ranking mode but `.fixed`
+//  an escalation can override a fresh drag. The notch row stays read-only.
 //
 
 import SwiftUI
@@ -104,6 +106,12 @@ struct FeedGridView: View {
                 reduceMotion ? nil : .spring(response: 0.35, dampingFraction: 0.8),
                 value: store.orderedCards.map(\.id))
         }
+        // A drag released over the padding, the header, or outside any cell
+        // never reaches a cell delegate's performDrop — without this
+        // container-level catch the dragged card would stay ghosted at 40%.
+        .onDrop(
+            of: [UTType.text],
+            delegate: FeedGridEndDropDelegate(draggingID: $draggingID, store: store))
     }
 
     @ViewBuilder
@@ -133,14 +141,17 @@ struct FeedGridView: View {
             Divider()
             Button("Remove Card", role: .destructive) {
                 service.setFeedTool(serverID: binding.serverID, tool: binding.tool, bound: false)
+                // Immediate: the next successful publish would drop it anyway,
+                // but that can be arbitrarily far away when other sources fail.
+                store.drop(id: card.id)
                 FeedSourceCoordinator.shared.start()
             }
         }
     }
 
     /// The card's binding, recovered from its id — only when that binding
-    /// actually exists, so the server-wide attention card (`….server`) and any
-    /// tool that happens to share its spelling never get a bogus menu.
+    /// actually exists. The server-wide attention card can't reach this at
+    /// all: its id uses `#server`, which `parseCardId` rejects.
     private func mcpBinding(for card: FeedCard) -> (serverID: UUID, tool: String)? {
         guard let parsed = MCPFeedSource.parseCardId(card.id),
               let config = service.store.servers.first(where: { $0.id == parsed.serverID }),
@@ -172,9 +183,9 @@ struct FeedGridView: View {
 // MARK: - Drag-reorder (GW-290)
 
 /// Live-reorders while the drag hovers (the standard LazyVGrid idiom — grids
-/// have no native `onMove`), then clears the drag state on drop. Every hover
-/// swap goes through `FeedCardStore.move`, which persists the id order the
-/// notch's top-N reads.
+/// have no native `onMove`). Hover swaps are in-memory only (`reorderLive`) so
+/// a drag that never lands commits nothing and each crossing costs no
+/// Defaults write; the order persists exactly once, on drop (`commitOrder`).
 private struct FeedCardDropDelegate: DropDelegate {
     let cardID: String
     @Binding var draggingID: String?
@@ -185,7 +196,7 @@ private struct FeedCardDropDelegate: DropDelegate {
               let from = store.orderedCards.firstIndex(where: { $0.id == draggingID }),
               let to = store.orderedCards.firstIndex(where: { $0.id == cardID })
         else { return }
-        store.move(
+        store.reorderLive(
             fromOffsets: IndexSet(integer: from),
             toOffset: to > from ? to + 1 : to)
     }
@@ -195,6 +206,26 @@ private struct FeedCardDropDelegate: DropDelegate {
     }
 
     func performDrop(info: DropInfo) -> Bool {
+        store.commitOrder()
+        draggingID = nil
+        return true
+    }
+}
+
+/// Catches a drag released anywhere in the grid that isn't a card cell.
+/// Committing here too keeps "I dropped it, it stays where it is" true no
+/// matter which delegate the release lands on.
+private struct FeedGridEndDropDelegate: DropDelegate {
+    @Binding var draggingID: String?
+    let store: FeedCardStore
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        DropProposal(operation: .move)
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        guard draggingID != nil else { return false }
+        store.commitOrder()
         draggingID = nil
         return true
     }

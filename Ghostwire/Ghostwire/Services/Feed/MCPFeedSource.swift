@@ -148,12 +148,18 @@ struct MCPFeedSource: FeedSource {
 
     static func sourceId(serverID: UUID) -> String { "mcp.\(serverID.uuidString)" }
 
-    /// Inverse of the card-id scheme (`mcp.<uuid>.<tool>`) — lets the Cards
-    /// surface map a rendered card back to its binding (GW-466). The tool name
-    /// may itself contain dots, so only the fixed-width UUID is parsed
-    /// positionally. Callers must still confirm a binding with that tool name
-    /// exists: the server-wide attention card ends in `.server`, which is
-    /// indistinguishable from a tool of that name by the id alone.
+    /// One tool's card id. The single composer for the `mcp.<uuid>.<tool>`
+    /// scheme — `parseCardId` below is its inverse, and having exactly one of
+    /// each keeps them from drifting apart.
+    static func cardId(serverID: UUID, tool: String) -> String {
+        "\(sourceId(serverID: serverID)).\(tool)"
+    }
+
+    /// Inverse of `cardId` — lets the Cards surface map a rendered card back
+    /// to its binding (GW-466). The tool name may itself contain dots, so only
+    /// the fixed-width UUID is parsed positionally. The server-wide attention
+    /// card uses `#server` (a character no MCP tool name can carry), so it can
+    /// never parse as a tool; callers still confirm the binding exists.
     static func parseCardId(_ id: String) -> (serverID: UUID, tool: String)? {
         guard id.hasPrefix("mcp.") else { return nil }
         let rest = id.dropFirst(4)
@@ -229,7 +235,7 @@ struct MCPFeedSource: FeedSource {
     }
 
     private func card(for binding: MCPFeedToolBinding, now: Date) async -> FeedCard {
-        let cardId = "\(id).\(binding.tool)"
+        let cardId = Self.cardId(serverID: serverID, tool: binding.tool)
         // Never call a tool the binding can't satisfy — that's a guaranteed
         // -32602 on a timer. Say what's missing instead of relaying the
         // server's error code to someone who can't act on it.
@@ -284,7 +290,12 @@ struct MCPFeedSource: FeedSource {
         now: Date
     ) -> FeedCard {
         MCPFeedCardMapper.attentionCard(
-            id: "\(sourceId).server",
+            // `#server`, not `.server`: `#` can't appear in an MCP tool name,
+            // so this id can never collide with a tool literally named
+            // "server" — which would otherwise give the server-wide attention
+            // card that tool's context menu, and "Remove Card" on what looks
+            // like a connection warning would silently unbind the real tool.
+            id: "\(sourceId)#server",
             sourceId: sourceId,
             title: serverName,
             detail: attentionCopy(for: status),

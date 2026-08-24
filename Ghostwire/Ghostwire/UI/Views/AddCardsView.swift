@@ -133,7 +133,18 @@ struct AddCardsView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .task { await loadPreviews() }
+        // Keyed on the section signature, not run-once: a server that connects
+        // or gets a tool allowed AFTER the page opened re-fires the load, so a
+        // late section gets previews instead of permanent skeletons — and each
+        // re-fire clears `failed`, which is also the retry path for a
+        // transient preview failure.
+        .task(id: sectionsKey) { await loadPreviews() }
+    }
+
+    private var sectionsKey: String {
+        sections.map { section in
+            "\(section.serverID.uuidString):\(section.tools.map(\.name).joined(separator: ","))"
+        }.joined(separator: "|")
     }
 
     // §8.3: the empty state says what the page is FOR, not that it's empty.
@@ -277,11 +288,16 @@ struct AddCardsView: View {
     // MARK: Actions & loading
 
     static func cardId(serverID: UUID, tool: String) -> String {
-        "\(MCPFeedSource.sourceId(serverID: serverID)).\(tool)"
+        MCPFeedSource.cardId(serverID: serverID, tool: tool)
     }
 
     private func setBound(_ bound: Bool, section: AddCardsSection, tool: MCPToolInfo) {
         service.setFeedTool(serverID: section.serverID, tool: tool.name, bound: bound)
+        if !bound {
+            // Removal must not wait on the next successful publish — with the
+            // surviving sources failing, that can be arbitrarily far away.
+            FeedCardStore.shared.drop(id: Self.cardId(serverID: section.serverID, tool: tool.name))
+        }
         // Same immediacy idiom as Connections' setAllowed: the debounced
         // feedConfigDidChange subscription would get there, but the card should
         // appear/disappear with the click, not at the next poll.
@@ -290,19 +306,32 @@ struct AddCardsView: View {
 
     /// One preview call per candidate, through the allowlist choke point.
     /// Bound tools reuse their live card instead of spending a second call.
-    /// Sequential per server (they share one session); a stale preview is
-    /// impossible because a preview IS one fresh call.
+    /// Currently serial across servers too — GW-471 owns fanning the
+    /// independent server lanes out into a task group.
     private func loadPreviews() async {
+        failed.removeAll()
         // Nothing connects servers at launch (GW-214); without this the page
-        // would open empty until the user visited Connections. Non-interactive:
-        // a server needing auth lands as .needsAuth and simply has no section.
+        // would open empty until the user visited Connections. Opening the
+        // page is a user gesture, so connecting here mirrors Connections'
+        // "Test" — non-interactive (needsAuth lands as no section), and
+        // NEVER while a connect is already in flight: `connect` has no
+        // re-entry guard of its own, and racing it can strand the losing
+        // stdio subprocess (the same hazard MCPFeedSource's
+        // `.connectInFlight` throw exists for).
         for config in service.store.servers where config.isEnabled {
-            if service.runtime(id: config.id)?.status.isConnected != true {
+            guard !Task.isCancelled else { return }
+            let status = service.runtime(id: config.id)?.status ?? .disconnected
+            if case .connecting = status { continue }
+            if !status.isConnected {
                 await service.connect(id: config.id)
             }
         }
         for section in sections {
             for tool in section.tools {
+                // The page can be left mid-fan-out; without this check the
+                // loop would keep spending real calls against billing-backed
+                // APIs for a view that no longer exists.
+                guard !Task.isCancelled else { return }
                 let cardId = Self.cardId(serverID: section.serverID, tool: tool.name)
                 guard previews[cardId] == nil else { continue }
                 if let live = FeedCardStore.shared.orderedCards.first(where: { $0.id == cardId }) {
@@ -313,7 +342,7 @@ struct AddCardsView: View {
                     let output = try? await service.callAllowedTool(
                         serverID: section.serverID, name: tool.name, arguments: [:])
                 else {
-                    failed.insert(cardId)
+                    if !Task.isCancelled { failed.insert(cardId) }
                     continue
                 }
                 previews[cardId] = MCPFeedCardMapper.card(

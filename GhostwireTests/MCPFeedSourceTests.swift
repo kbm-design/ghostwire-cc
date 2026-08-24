@@ -331,7 +331,7 @@ final class MCPFeedSourceStateTests: XCTestCase {
         // Two bindings, one card: every tool is unavailable for the same reason,
         // so N copies of the same sentence would be noise.
         XCTAssertEqual(cards.count, 1)
-        XCTAssertEqual(cards[0].id, "mcp.\(serverID.uuidString).server")
+        XCTAssertEqual(cards[0].id, "mcp.\(serverID.uuidString)#server")
         guard case let .generic(title, subtitle, _) = cards[0].kind else {
             return XCTFail("expected .generic")
         }

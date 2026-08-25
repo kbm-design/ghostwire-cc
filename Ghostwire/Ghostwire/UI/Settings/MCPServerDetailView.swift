@@ -213,8 +213,6 @@ struct MCPServerDetailView: View {
                 }
             } header: {
                 sectionHeader(section: section, config: config)
-            } footer: {
-                sectionFooter(section: section, config: config)
             }
         }
     }
@@ -222,7 +220,7 @@ struct MCPServerDetailView: View {
     private func sectionHeader(section: MCPCapabilitySection, config: MCPServerConfig)
         -> some View {
         let names = section.toolNames
-        let allOn = names.allSatisfy { config.allowedTools.contains($0) }
+        let anyOn = names.contains { config.allowedTools.contains($0) }
         return HStack(spacing: 8) {
             Text(section.kind.title)
                 .font(.system(size: 13, weight: .semibold))
@@ -239,48 +237,17 @@ struct MCPServerDetailView: View {
                 // three separate screens.
                 .padding(.top, -6)
             Spacer()
-            // REMOVE ALL on every section; ALLOW ALL only on Read.
-            //
-            // The asymmetry is the point: narrowing permissions is always safe,
-            // widening them is the thing `allowedTools` exists to gate. A
-            // "Allow all" over Write would hand every connected agent every
-            // mutating tool in one click, which is what read-only-only bulk
-            // allow has always prevented (GW-255).
-            if section.canBulkAllow {
-                Button(allOn ? "Remove all" : "Allow all") {
-                    setAllowed(names, allowed: !allOn)
-                }
-                .buttonStyle(.borderless)
-                .font(.system(size: 12))
-                .foregroundStyle(.secondary)
-            } else if allowedCount(section, config: config) > 0 {
-                Button("Remove all") { setAllowed(names, allowed: false) }
-                    .buttonStyle(.borderless)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
+            // ONE bulk control on every section (Keelan, 2026-08-25 — reverses
+            // the read-only-only Allow all from GW-255/GW-449; the section
+            // title is the warning). "Allow all" while nothing is on, "Remove
+            // all" as soon as anything is — the label names the action that
+            // is actually available, not a toggle of the current state.
+            Button(anyOn ? "Remove all" : "Allow all") {
+                setAllowed(names, allowed: !anyOn)
             }
-        }
-    }
-
-    @ViewBuilder
-    private func sectionFooter(section: MCPCapabilitySection, config: MCPServerConfig) -> some View {
-        if section.kind != .read, allowedCount(section, config: config) > 0 {
-            Label(
-                consequenceCopy(for: section.severestCapability),
-                systemImage: "exclamationmark.shield"
-            )
+            .buttonStyle(.borderless)
             .font(.system(size: 12))
-            .foregroundStyle(SettingsStateColors.attention)
-            .leadingFooter()
-        }
-    }
-
-    private func consequenceCopy(for capability: MCPToolCapability) -> String {
-        let name = config?.name ?? "this server"
-        switch capability {
-        case .destructive: return "These can change or delete things in \(name)."
-        case .unclassified: return "Ghostwire couldn't tell what these do."
-        default: return "These can write to \(name)."
+            .foregroundStyle(.secondary)
         }
     }
 
@@ -314,15 +281,14 @@ struct MCPServerDetailView: View {
             // Claude's connector UI shows the TITLE and nothing else, and
             // it reads better: a wire name in mono plus a description
             // truncated mid-sentence gave two unreadable things where one
-            // readable one fits. The description moves to the tooltip; the
-            // wire name is still what the badge and Run act on.
-            HStack(spacing: 6) {
-                Text(item.tool.displayTitle)
-                    .font(.system(size: 13))
-                    .lineLimit(1)
-                MCPCapabilityBadge(capability: item.capability, source: item.source)
-            }
-            .help(item.tool.description.map { "\(item.name)\n\n\($0)" } ?? item.name)
+            // readable one fits. The description moves to the tooltip, and so
+            // does the capability (Keelan, 2026-08-25): the section header
+            // already says Read / Write / Other, so a per-row "read-only" /
+            // "unknown" pill repeated it on every line.
+            Text(item.tool.displayTitle)
+                .font(.system(size: 13))
+                .lineLimit(1)
+                .help(toolTooltip(item))
             Spacer(minLength: 8)
             Toggle(
                 "",
@@ -344,6 +310,20 @@ struct MCPServerDetailView: View {
         .padding(.leading, indented ? 10 : 0)
     }
 
+    /// Wire name · capability (and whether the server declared it or we
+    /// inferred it from the verb) · description. The provenance matters: "the
+    /// server says this only reads" and "we guessed from the name" are
+    /// different promises on a security toggle.
+    private func toolTooltip(_ item: MCPGroupedTool) -> String {
+        let provenance = item.source == .declared ? "declared by the server" : "inferred from the name"
+        var lines = ["\(item.name) · \(item.capability.badge) (\(provenance))"]
+        if let description = item.tool.description, !description.isEmpty {
+            lines.append("")
+            lines.append(description)
+        }
+        return lines.joined(separator: "\n")
+    }
+
     // MARK: - Empty / output / remove
 
     private var noToolsSection: some View {
@@ -361,35 +341,18 @@ struct MCPServerDetailView: View {
         }
     }
 
-    /// ONE state-driven action, matching `connectionAction` above: **Disconnect
-    /// while connected, Remove while not** (Keelan, 2026-08-21).
+    /// Remove, and ONLY while not connected (Keelan, 2026-08-21/25).
     ///
-    /// They are genuinely different — Disconnect drops the live session and
-    /// keeps the server, its allowlist and its Feed cards; Remove forgets all
-    /// of it. Showing only the one that fits the current state means a live
-    /// connection cannot be deleted in a single click: you disconnect first,
-    /// then remove. That two-step is the point, not a cost.
+    /// Disconnect lives in the pane header — it is always there, so a second
+    /// copy at the foot of the list was the same button twice. Showing Remove
+    /// only when disconnected means a live connection cannot be deleted in a
+    /// single click: you disconnect first, then remove. That two-step is the
+    /// point, not a cost.
     ///
     /// Remove is the only RED control on this pane. Everything else is
     /// reversible; this is the one that isn't.
     @ViewBuilder private var removeSection: some View {
-        if runtime?.status.isConnected == true {
-            Section {
-                HStack {
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text("Disconnect")
-                        Text("Keeps this server and everything you've allowed.")
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    Button("Disconnect") {
-                        Task { await service.disconnect(id: serverID) }
-                    }
-                }
-                .padding(.vertical, 2)
-            }
-        } else {
+        if runtime?.status.isConnected != true {
             Section {
                 HStack {
                     VStack(alignment: .leading, spacing: 1) {
@@ -443,49 +406,6 @@ struct MCPServerDetailView: View {
 }
 
 // MARK: - Badges
-
-/// §8.2 badge: `caption2.monospaced()`, r4, h5/v2.
-///
-/// An INFERRED capability is outlined rather than filled. It isn't a new signal
-/// — it's the same badge with its provenance shown, because "the server told
-/// us this only reads" and "we guessed from the verb" are different promises
-/// and the user is making a security decision on one of them.
-struct MCPCapabilityBadge: View {
-    let capability: MCPToolCapability
-    let source: MCPCapabilitySource
-
-    var body: some View {
-        Text(capability.badge)
-            .font(.system(size: 11))
-            .padding(.horizontal, 5)
-            .padding(.vertical, 2)
-            .background {
-                if source == .declared {
-                    RoundedRectangle(cornerRadius: 4).fill(tint.opacity(0.15))
-                } else {
-                    RoundedRectangle(cornerRadius: 4).strokeBorder(tint.opacity(0.5), lineWidth: 1)
-                }
-            }
-            .foregroundStyle(tint)
-            .accessibilityLabel(
-                source == .declared
-                    ? capability.badge
-                    : "\(capability.badge), worked out from the tool's name")
-            .help(
-                source == .declared
-                    ? "The server declares this."
-                    : "This server declares nothing — worked out from the tool's name.")
-    }
-
-    private var tint: Color {
-        switch capability {
-        case .readOnly: return SettingsStateColors.ok
-        case .writes: return .secondary
-        case .destructive: return SettingsStateColors.error
-        case .unclassified: return SettingsStateColors.attention
-        }
-    }
-}
 
 /// GW-255 terminology fix: `stdio` / `http` told a user nothing. What they
 /// actually need to know is whether this runs a program on their Mac.

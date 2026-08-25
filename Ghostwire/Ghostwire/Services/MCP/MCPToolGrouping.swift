@@ -335,11 +335,11 @@ struct MCPCapabilitySection: Identifiable, Equatable {
     var isCategorized: Bool { !categories.isEmpty }
     var toolNames: [String] { tools.map(\.name) }
     var count: Int { tools.count }
-    /// Bulk allow is deliberately narrower than the store API. The store can
-    /// mutate many names at once, but the UI only widens authorization in bulk
-    /// for tools that are actually read-only. Writes, destructive and unknown
-    /// tools require one explicit per-tool toggle.
-    var canBulkAllow: Bool { kind == .read }
+    /// Every section takes a bulk Allow all / Remove all (Keelan, 2026-08-25).
+    /// This was read-only-only from GW-255 until then; the section title now
+    /// carries the warning and the per-tool toggle is still where the finer
+    /// decision lives. Kept as a property so a future narrowing is one line.
+    var canBulkAllow: Bool { true }
     /// True when every tool here was guessed from its name — drives the section
     /// footer that says so.
     var isEntirelyInferred: Bool {

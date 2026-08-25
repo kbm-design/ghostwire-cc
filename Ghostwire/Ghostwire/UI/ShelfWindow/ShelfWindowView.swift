@@ -235,7 +235,7 @@ struct ShelfWindowView: View {
         case .return:
             guard let card = model.selectedCard else { return .ignored }
             if press.modifiers.contains(.command) {
-                UnifiedShelfViewModel.shared.copy(card)
+                Task { await UnifiedShelfViewModel.shared.copy(card) }
             } else {
                 Task { await UnifiedShelfViewModel.shared.send(card) }
             }

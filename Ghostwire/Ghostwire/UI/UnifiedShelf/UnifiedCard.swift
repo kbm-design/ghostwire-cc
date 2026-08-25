@@ -14,6 +14,13 @@
 //  The per-type rendering keys off `CardKind` (text/image/color/link/file),
 //  modeled on the `ToolResultViews` dispatcher idiom rather than a parallel one.
 //
+//  GW-166: a transient entry the store has SEALED has no plaintext to adapt —
+//  `rawText`/`previewText` are empty by construction, which is what keeps the
+//  secret out of previews, tooltips, search and the send payload without a
+//  single "if sensitive" scattered through the render path. `isSensitive` drives
+//  the masked presentation; `sensitiveEntry` is the handle every gated action
+//  passes to `SensitiveClipAccess`.
+//
 
 import AppKit
 import Foundation
@@ -52,9 +59,36 @@ struct UnifiedCard: Identifiable {
         return false
     }
 
+    // MARK: - GW-166 sensitive clips
+
+    /// True when this card's content is sealed behind Touch ID. Only transient
+    /// (clipboard) cards can be sensitive — pinning a sealed clip is refused, so
+    /// a sealed secret never reaches the Shelf's plaintext store.
+    var isSensitive: Bool {
+        if case .transient(let entry) = source { return entry.isSensitive }
+        return false
+    }
+
+    /// Short shape label for the masked card ("API token", "Private key").
+    var sensitiveLabel: String {
+        if case .transient(let entry) = source, entry.isSensitive { return entry.sensitiveLabel }
+        return "Sensitive"
+    }
+
+    /// The sealed entry behind this card — the handle for `SensitiveClipAccess`.
+    /// Nil for anything that isn't a sealed clip, so a caller can't accidentally
+    /// route a normal card through the auth gate (or vice versa).
+    var sensitiveEntry: ClipboardEntry? {
+        guard case .transient(let entry) = source, entry.isSensitive else { return nil }
+        return entry
+    }
+
     // MARK: - Derived classification
 
     var kind: CardKind {
+        // A sealed clip has no text to classify — and must never be sniffed for
+        // a colour/link shape, which would leak structure about the secret.
+        if isSensitive { return .text }
         switch source {
         case .saved(let item):
             switch item.kind {
@@ -107,6 +141,8 @@ struct UnifiedCard: Identifiable {
             case .file: return item.displayName
             }
         case .transient(let entry):
+            // Sealed: `content` is nil, so this is "" — the property that keeps
+            // the secret out of previews, tooltips, search and sends.
             return entry.content ?? entry.path ?? ""
         }
     }
@@ -197,14 +233,23 @@ struct UnifiedCard: Identifiable {
                 }
                 return "file://missing/\(entry.id.uuidString)"
             case .text:
+                // A sealed clip dedupes on its keyed fingerprint (there is no
+                // plaintext to key on) and falls back to its own id so two
+                // different secrets never collide on an empty string.
+                if entry.isSensitive {
+                    return "sensitive://" + (entry.fingerprint ?? entry.id.uuidString)
+                }
                 return "text://" + (entry.content ?? "")
             }
         }
     }
 
     /// The payload for `SendToAgentCoordinator` — text inline, file as `@path`.
-    /// Returns nil when a file kind can't be resolved on disk.
+    /// Returns nil when a file kind can't be resolved on disk, and always for a
+    /// sealed clip: its payload only exists after `SensitiveClipAccess` has
+    /// unlocked it, so `UnifiedShelfViewModel.send` builds that one itself.
     var sendPayload: SendToAgentCoordinator.Payload? {
+        guard !isSensitive else { return nil }
         switch kind {
         case .text, .color:
             let s = rawText

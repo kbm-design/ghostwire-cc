@@ -86,9 +86,16 @@ final class UnifiedShelfViewModel: ObservableObject {
     /// Substring match over a card's preview / raw text / file path. Shared by the
     /// in-notch row's type-to-filter and the detached window's search field
     /// (GW-223) so both surfaces narrow identically. An empty query matches all.
+    ///
+    /// GW-166: a sealed clip is EXCLUDED from every non-empty query. Its text
+    /// fields are already empty so it could never match on content, but stating
+    /// it here means search can't become an oracle later ("type the token, see
+    /// if a card survives") if anything ever puts a hint back into a preview.
+    /// An empty query still shows it — it's in the feed, just not searchable.
     static func matches(_ card: UnifiedCard, query: String) -> Bool {
         let q = query.trimmingCharacters(in: .whitespaces).lowercased()
         guard !q.isEmpty else { return true }
+        guard !card.isSensitive else { return false }
         if card.previewText.lowercased().contains(q) { return true }
         if card.rawText.lowercased().contains(q) { return true }
         if let path = card.fileURL?.path.lowercased(), path.contains(q) { return true }
@@ -158,6 +165,10 @@ final class UnifiedShelfViewModel: ObservableObject {
     /// exempt). The transient twin stays put but is hidden by dedup, so deleting
     /// the saved card later quietly restores it to the rolling history.
     func pin(_ card: UnifiedCard) {
+        // GW-166: the Shelf store is plaintext-at-rest. Promoting a sealed clip
+        // into it would undo the encryption, so pinning one is refused outright
+        // (the UI hides the action; this is the enforcement).
+        guard !card.isSensitive else { return }
         guard case .transient(let entry) = card.source,
               let item = Self.makeShelfItem(from: entry) else { return }
         savedFirstSeen[item.id] = entry.date // keep its place in the feed
@@ -181,14 +192,29 @@ final class UnifiedShelfViewModel: ObservableObject {
 
     /// Copy = make this card the live clipboard again (marker-stamped so auto-
     /// capture ignores our own write). Files re-copy as real file URLs.
-    func copy(_ card: UnifiedCard) {
+    ///
+    /// GW-166: a sealed clip needs Touch ID first, so this is async. Returns
+    /// false when the user cancelled the prompt (or the clip won't decrypt) so
+    /// the caller can skip the "copied" flash.
+    @discardableResult
+    func copy(_ card: UnifiedCard) async -> Bool {
+        if let entry = card.sensitiveEntry {
+            guard let plain = await unlock(entry, reason: Self.reasonCopy) else { return false }
+            ClipboardHistoryService.shared.stagePlainTextForPaste(plain)
+            return true
+        }
         ClipboardHistoryService.shared.copyCardToPasteboard(card)
+        return true
     }
 
     /// Send to the active agent (staged, never auto-submitted). Text inline,
     /// file as `@path`. Returns the immediate outcome for glyph feedback.
     @discardableResult
     func send(_ card: UnifiedCard) async -> SendToAgentCoordinator.SendResult {
+        if let entry = card.sensitiveEntry {
+            guard let plain = await unlock(entry, reason: Self.reasonSend) else { return .failed }
+            return await SendToAgentCoordinator.shared.send(.text(plain))
+        }
         guard let payload = card.sendPayload else { return .failed }
         return await SendToAgentCoordinator.shared.send(payload)
     }
@@ -200,9 +226,55 @@ final class UnifiedShelfViewModel: ObservableObject {
     /// when that permission is missing or the keystroke couldn't be posted.
     @discardableResult
     func paste(_ card: UnifiedCard) async -> Bool {
-        ClipboardHistoryService.shared.stagePlainTextForPaste(card)
+        if let entry = card.sensitiveEntry {
+            // Staging plaintext on the pasteboard IS a copy, so it's gated the
+            // same way — the ⌘V just happens to follow.
+            guard let plain = await unlock(entry, reason: Self.reasonPaste) else { return false }
+            ClipboardHistoryService.shared.stagePlainTextForPaste(plain)
+        } else {
+            ClipboardHistoryService.shared.stagePlainTextForPaste(card)
+        }
         return await KeystrokePaster.pasteIntoPreviousApp()
     }
+
+    // MARK: - GW-166 sensitive clips
+
+    /// Reveal a sealed clip's plaintext for display. Nil when the prompt was
+    /// cancelled — the card stays masked.
+    func reveal(_ card: UnifiedCard) async -> String? {
+        guard let entry = card.sensitiveEntry else { return card.rawText }
+        return await unlock(entry, reason: Self.reasonReveal)
+    }
+
+    /// "Not sensitive": un-flag a clip so it behaves like any other. Requires the
+    /// same authentication — un-sealing exposes the content to search and to
+    /// un-gated actions, so it's a privilege escalation, not a display tweak.
+    @discardableResult
+    func markNotSensitive(_ card: UnifiedCard) async -> Bool {
+        guard let entry = card.sensitiveEntry else { return false }
+        guard await unlock(entry, reason: Self.reasonUnflag) != nil else { return false }
+        let ok = clipboard.markNotSensitive(entry)
+        SensitiveClipAccess.shared.relock(entry.id)
+        return ok
+    }
+
+    /// Re-lock a clip the user had revealed (the "Hide" affordance).
+    func relock(_ card: UnifiedCard) {
+        guard let entry = card.sensitiveEntry else { return }
+        SensitiveClipAccess.shared.relock(entry.id)
+    }
+
+    private func unlock(_ entry: ClipboardEntry, reason: String) async -> String? {
+        await SensitiveClipAccess.shared.plaintext(for: entry, reason: reason)
+    }
+
+    // LocalAuthentication renders these after "Ghostwire is trying to " — keep
+    // them lowercase, verb-first, and specific about what the unlock is FOR.
+    private static let reasonReveal = "reveal a sensitive clipboard item"
+    private static let reasonCopy = "copy a sensitive clipboard item"
+    private static let reasonPaste = "paste a sensitive clipboard item"
+    private static let reasonSend = "send a sensitive clipboard item to an agent"
+    private static let reasonUnflag = "unlock a sensitive clipboard item"
 
     // MARK: - Pin helper
 

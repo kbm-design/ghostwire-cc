@@ -116,7 +116,7 @@ struct UnifiedCardRow: View {
         case .return:
             guard let card = model.selectedCard else { return .ignored }
             if press.modifiers.contains(.command) {
-                model.copy(card)
+                Task { await model.copy(card) }
             } else {
                 Task { await model.send(card) }
             }

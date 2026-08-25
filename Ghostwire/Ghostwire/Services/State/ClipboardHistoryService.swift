@@ -22,6 +22,14 @@
 //  `entry(from:)` as a pure seam over a value type, so it's unit-testable
 //  without a live pasteboard (ClipboardHistoryServiceTests).
 //
+//  GW-166 adds one more rule to that same seam: credential-SHAPED text (a token
+//  prefix, a JWT, a PEM block, a high-entropy blob) is flagged `isSensitive` so
+//  the store seals it. That's the gap the concealed/transient convention leaves
+//  open — it only covers apps that opt in, and a token copied out of a terminal
+//  or a web dashboard carries no marker at all. Detection is flagging only; the
+//  concealed/transient skip above is untouched, and a marked copy is still never
+//  captured in the first place.
+//
 
 import AppKit
 import Combine
@@ -60,7 +68,16 @@ enum ClipboardCapture {
     /// Pure: derive the entry to record from a snapshot, applying every privacy
     /// rule and the text-length cap. Returns nil when nothing should be
     /// recorded (concealed/transient, our own write, or no usable payload).
-    static func entry(from snapshot: ClipboardSnapshot, maxTextBytes: Int) -> ClipboardEntry? {
+    ///
+    /// `protectCredentials` (GW-166, `Defaults[.clipboardCredentialProtection]`,
+    /// passed in rather than read here so this stays pure and the tests never
+    /// touch the live defaults domain) runs the shape heuristics over the text
+    /// and flags a match. Flagging only — the store does the sealing.
+    static func entry(
+        from snapshot: ClipboardSnapshot,
+        maxTextBytes: Int,
+        protectCredentials: Bool
+    ) -> ClipboardEntry? {
         // Privacy gates first — never inspect payloads of a protected copy.
         guard !snapshot.isConcealedOrTransient, !snapshot.isOwnWrite else { return nil }
 
@@ -77,12 +94,17 @@ enum ClipboardCapture {
         if let raw = snapshot.string {
             let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else { return nil }
+            // Detect on the RAW text, before the byte cap — a long PEM block
+            // truncated mid-key is still a private key.
+            let shape = protectCredentials ? CredentialShapeDetector.shape(of: raw) : nil
             let (capped, truncated) = cap(raw, maxBytes: maxTextBytes)
             return ClipboardEntry(
                 kind: .text,
                 content: capped,
                 sourceBundleId: snapshot.sourceBundleId,
-                truncated: truncated
+                truncated: truncated,
+                isSensitive: shape != nil,
+                sensitiveShape: shape?.rawValue
             )
         }
 
@@ -166,7 +188,11 @@ final class ClipboardHistoryService {
         //   1) file-url  -> record the path (sends as @path)
         //   2) image/data bytes, no file -> spill to a temp file (isTemporary)
         //   3) text      -> inline
-        let entry = ClipboardCapture.entry(from: snap, maxTextBytes: Self.maxTextBytes)
+        let entry = ClipboardCapture.entry(
+            from: snap,
+            maxTextBytes: Self.maxTextBytes,
+            protectCredentials: Defaults[.clipboardCredentialProtection]
+        )
 
         // Tier 1: a file URL wins outright.
         if let entry, entry.resolvedKind == .file {
@@ -237,7 +263,11 @@ final class ClipboardHistoryService {
     /// next poll ignores the change we just caused (GW-210 own-write skip).
     /// Declares all types up front (declareTypes) so the marker and the payload
     /// coexist — setString after writeObjects on an undeclared type is a no-op.
+    /// GW-166: a sealed entry has no plaintext to hand out here. Callers must go
+    /// through `SensitiveClipAccess` and then `stagePlainTextForPaste(_:)` — this
+    /// refuses rather than silently copying an empty pasteboard.
     func recopy(_ entry: ClipboardEntry) {
+        guard !entry.isSensitive else { return }
         let markerType = NSPasteboard.PasteboardType(ClipboardSnapshot.ghostwireMarkerType)
         switch entry.resolvedKind {
         case .text:

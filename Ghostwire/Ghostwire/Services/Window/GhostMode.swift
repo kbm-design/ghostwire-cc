@@ -46,11 +46,21 @@ enum GhostMode {
     /// Applies the current setting and re-applies it whenever the toggle changes,
     /// so ghost mode takes effect live rather than on the next launch.
     ///
-    /// `Defaults.publisher` emits the current value immediately, which is why
-    /// there is no separate `apply(to:)` call at the sites that use this — and
-    /// harmless to receive twice, since the sink is idempotent.
+    /// The first apply is done here, synchronously, rather than being left to the
+    /// publisher's `.initial` emission — both call sites subscribe from inside
+    /// window construction and must be ghosted before the window is ever ordered
+    /// in. `.dropFirst()` then discards that duplicate initial value.
+    ///
+    /// `Defaults.publisher` is KVO-backed and delivers on whichever thread wrote
+    /// the key, but `sharingType` is main-thread-only AppKit state — hence the
+    /// hop. Every writer today is the Settings toggle; this keeps the next one
+    /// from being a silent bug.
     static func observe(_ window: NSWindow, storingIn bag: inout Set<AnyCancellable>) {
+        apply(to: window)
+
         Defaults.publisher(.hideFromScreenRecording)
+            .dropFirst()
+            .receive(on: DispatchQueue.main)
             .sink { [weak window] _ in
                 guard let window else { return }
                 apply(to: window)

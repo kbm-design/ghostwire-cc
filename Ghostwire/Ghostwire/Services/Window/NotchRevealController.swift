@@ -49,7 +49,11 @@ final class NotchRevealController {
     /// resumes after its timer was replaced detects it's stale and drops out.
     private var generation = 0
 
-    private init() {}
+    /// Internal so tests can drive a private instance. The test host is the live
+    /// app: its notch hover (`ContentView`) and bridge reveals hit `.shared`
+    /// concurrently with a test, so a test on the singleton is a test of the
+    /// cursor's position (GW-444).
+    init() {}
 
     // MARK: - Inputs (from the reveal sites / hover)
 

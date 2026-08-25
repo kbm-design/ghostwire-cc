@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generated": "2026-08-21",
+  "generated": "2026-08-25",
   "connectors": [
     {
       "id": "calendly",
@@ -24,7 +24,7 @@
       "blurb": "Designs and brand",
       "category": "Design",
       "tier": 1,
-      "verified": false,
+      "verified": true,
       "icon": {
         "monogram": "C",
         "asset": "connector-canva",
@@ -69,7 +69,7 @@
       "blurb": "Meeting notes",
       "category": "Meetings & calendar",
       "tier": 1,
-      "verified": false,
+      "verified": true,
       "icon": {
         "monogram": "G",
         "asset": "connector-granola",
@@ -84,7 +84,7 @@
       "blurb": "Issues and cycles",
       "category": "Docs & PM",
       "tier": 1,
-      "verified": false,
+      "verified": true,
       "icon": {
         "monogram": "L",
         "asset": "connector-linear",
@@ -100,7 +100,7 @@
       "blurb": "Pages and docs",
       "category": "Docs & PM",
       "tier": 1,
-      "verified": false,
+      "verified": true,
       "icon": {
         "monogram": "N",
         "asset": "connector-notion",
@@ -131,7 +131,7 @@
       "blurb": "Deploy services",
       "category": "Dev & infra",
       "tier": 1,
-      "verified": false,
+      "verified": true,
       "icon": {
         "monogram": "R",
         "asset": "connector-railway",
@@ -148,7 +148,7 @@
       "blurb": "Transactional mail",
       "category": "Dev & infra",
       "tier": 1,
-      "verified": false,
+      "verified": true,
       "icon": {
         "monogram": "R",
         "asset": "connector-resend",
@@ -179,7 +179,7 @@
       "blurb": "Deploys and logs",
       "category": "Dev & infra",
       "tier": 1,
-      "verified": false,
+      "verified": true,
       "icon": {
         "monogram": "▲",
         "asset": "connector-vercel",

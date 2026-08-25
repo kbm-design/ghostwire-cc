@@ -97,14 +97,21 @@ final class ConnectorCatalogTests: XCTestCase {
         }
     }
 
-    /// GW-448 has not run. Shipping `verified: true` before a measured OAuth
-    /// round trip is the exact claim the ticket exists to stop.
-    func testBundledCatalogClaimsNothingIsVerifiedYet() throws {
+    /// GW-448 measured every entry (2026-08-25, docs/gw448-connector-verification.md).
+    /// `verified: true` is allowed ONLY for the servers that completed the whole
+    /// chain — DCR → loopback OAuth → tools/list → one real read-only
+    /// `tools/call` through `callAllowedTool`. "Connected" alone (Cloudflare,
+    /// PostHog: no zero-input read-only tool to call) does not qualify. Adding
+    /// a name here without a measured pass is the claim the ticket exists to stop.
+    func testBundledCatalogVerifiedMatchesMeasuredPasses() throws {
         let url = try XCTUnwrap(
             Bundle(for: type(of: self)).url(forResource: "catalog", withExtension: "json")
                 ?? Bundle.main.url(forResource: "catalog", withExtension: "json"))
         let entries = try XCTUnwrap(ConnectorCatalog.decode(try Data(contentsOf: url)))
-        XCTAssertTrue(entries.allSatisfy { $0.verified != true })
+        let measuredPasses: Set<String> = [
+            "canva", "granola", "linear", "notion", "railway", "resend", "vercel",
+        ]
+        XCTAssertEqual(Set(entries.filter { $0.verified == true }.map(\.id)), measuredPasses)
     }
 
     // MARK: - What it refuses

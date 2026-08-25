@@ -48,7 +48,7 @@ struct ExpandedItem {
 
 @MainActor
 class GhostwireViewCoordinator: ObservableObject {
-    static let shared = GhostwireViewCoordinator()
+    static let shared = GhostwireViewCoordinator(observeSystemState: true)
 
     @Published var currentView: NotchViews = .buddy
     /// GW-210: set by the `openClipboardHistory` hotkey to ask the Shelf tab to
@@ -116,7 +116,25 @@ class GhostwireViewCoordinator: ObservableObject {
     private var hudReplacementCancellable: AnyCancellable?
     private var notchTabsCancellable: AnyCancellable?
 
-    private init() {
+    /// `observeSystemState: false` builds a coordinator that only keeps
+    /// `currentView` on a visible tab — no screen migration, no Accessibility /
+    /// media-key observers, no startup task. That is the test seam (GW-472): the
+    /// XCTest host is the live app, so a test on `.shared` races the real notch
+    /// UI for `currentView`. Production always goes through `.shared`.
+    init(observeSystemState: Bool = false) {
+        // Keep currentView on a visible tab when tab visibility changes via
+        // paths that bypass NotchTab.setHidden — the Shelf module toggle and
+        // any direct writes to the tab prefs (GW-144).
+        notchTabsCancellable = Defaults.publisher(keys: .shelf, .hiddenNotchTabs, .notchTabOrder)
+            .sink { [weak self] _ in
+                Task { @MainActor in
+                    guard let self else { return }
+                    NotchTab.ensureCurrentViewVisible(coordinator: self)
+                }
+            }
+
+        guard observeSystemState else { return }
+
         // Perform migration from name-based to UUID-based storage
         if preferredScreenUUID == nil, let legacyName = legacyPreferredScreenName {
             // Try to find screen by name and migrate to UUID
@@ -149,16 +167,6 @@ class GhostwireViewCoordinator: ObservableObject {
                 }
             }
         }
-
-        // Keep currentView on a visible tab when tab visibility changes via
-        // paths that bypass NotchTab.setHidden — the Shelf module toggle and
-        // any direct writes to the tab prefs (GW-144).
-        notchTabsCancellable = Defaults.publisher(keys: .shelf, .hiddenNotchTabs, .notchTabOrder)
-            .sink { _ in
-                Task { @MainActor in
-                    NotchTab.ensureCurrentViewVisible()
-                }
-            }
 
         // Observe changes to hudReplacement
         hudReplacementCancellable = Defaults.publisher(.hudReplacement)
@@ -332,7 +340,7 @@ class GhostwireViewCoordinator: ObservableObject {
     func applyDefaultViewOnOpen() {
         currentView = defaultViewOnOpen()
         pendingShelfReveal = false   // GW-226: one-shot consumed
-        NotchTab.ensureCurrentViewVisible()
+        NotchTab.ensureCurrentViewVisible(coordinator: self)
     }
 
     /// GW-224 default-open policy (priority order), pure read - the one-shot is
@@ -371,7 +379,7 @@ class GhostwireViewCoordinator: ObservableObject {
             currentView = agents.view
         }
         pendingShelfReveal = false
-        NotchTab.ensureCurrentViewVisible()
+        NotchTab.ensureCurrentViewVisible(coordinator: self)
     }
 
     func showEmpty() {

@@ -182,7 +182,13 @@ extension Defaults.Keys {
     static let notchHeight = Key<CGFloat>("notchHeight", default: 32)
     //static let openLastTabByDefault = Key<Bool>("openLastTabByDefault", default: false)
     static let showOnLockScreen = Key<Bool>("showOnLockScreen", default: false)
-    static let hideFromScreenRecording = Key<Bool>("hideFromScreenRecording", default: false)
+    // GW-463 "ghost mode". Default ON: every Ghostwire surface is sensitive by
+    // nature — pending gates carry the command and diff, the Shelf holds files
+    // and text, clipboard history holds whatever was last copied — so the safe
+    // posture is to be absent from shares and recordings unless asked otherwise.
+    // Covers the notch panels and the unified window; the menu-bar icon is
+    // system-owned and unaffected. Turn it off to record a demo of the notch.
+    static let hideFromScreenRecording = Key<Bool>("hideFromScreenRecording", default: true)
     
     // MARK: Appearance
     //static let alwaysShowTabs = Key<Bool>("alwaysShowTabs", default: true)

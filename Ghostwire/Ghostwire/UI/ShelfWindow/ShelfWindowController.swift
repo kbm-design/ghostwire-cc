@@ -16,6 +16,7 @@
 //
 
 import AppKit
+import Combine
 import SwiftUI
 
 final class ShelfWindowController: NSWindowController {
@@ -24,6 +25,10 @@ final class ShelfWindowController: NSWindowController {
     /// Native frame autosave key — persists size + position across launches with
     /// no extra Defaults plumbing.
     private static let frameAutosaveName = NSWindow.FrameAutosaveName("GhostwireShelfWindow")
+
+    /// Holds the GW-463 ghost-mode subscription. The window is a singleton built
+    /// once, so this lives for the lifetime of the app.
+    private var observers: Set<AnyCancellable> = []
 
     private init() {
         let window = NSWindow(
@@ -66,6 +71,10 @@ final class ShelfWindowController: NSWindowController {
         window.isExcludedFromWindowsMenu = false
         window.isRestorable = true
         window.identifier = NSUserInterfaceItemIdentifier("GhostwireShelfWindow")
+
+        // GW-463: this window carries Shelf items, clipboard history and agent
+        // transcripts, so it honours ghost mode exactly like the notch panel does.
+        GhostMode.observe(window, storingIn: &observers)
 
         let hostingView = NSHostingView(rootView: GhostwireWindowView())
         window.contentView = hostingView

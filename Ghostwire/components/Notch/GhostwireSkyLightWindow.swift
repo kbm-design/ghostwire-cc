@@ -6,7 +6,6 @@
 
 import Cocoa
 import SkyLightWindow
-import Defaults
 import Combine
 
 extension SkyLightOperator {
@@ -79,26 +78,12 @@ class GhostwireSkyLightWindow: NSPanel {
             .canJoinAllSpaces,
             .ignoresCycle,
         ]
-        
-        // Apply initial sharing type setting
-        updateSharingType()
     }
     
     private func setupObservers() {
-        // Listen for changes to the hideFromScreenRecording setting
-        Defaults.publisher(.hideFromScreenRecording)
-            .sink { [weak self] _ in
-                self?.updateSharingType()
-            }
-            .store(in: &observers)
-    }
-    
-    private func updateSharingType() {
-        if Defaults[.hideFromScreenRecording] {
-            sharingType = .none
-        } else {
-            sharingType = .readWrite
-        }
+        // GW-463: ghost mode. Applies the current setting immediately and
+        // re-applies it whenever the toggle changes.
+        GhostMode.observe(self, storingIn: &observers)
     }
     
     func enableSkyLight() {

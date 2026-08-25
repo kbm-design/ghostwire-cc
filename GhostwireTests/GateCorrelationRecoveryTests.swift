@@ -27,6 +27,15 @@ final class GateCorrelationRecoveryTests: XCTestCase {
 
     private func session() -> String { "gw413-\(UUID().uuidString)" }
 
+    /// Unique per call. `HookSocketServer.shared` is process-wide and
+    /// `evictCachedToolUseId` matches by id across EVERY session's queue, so a
+    /// literal like "toolu_b" is shared state with every other test class that
+    /// drives the singleton (GW-444: `HookSocketServerCacheTests` evicting its
+    /// "toolu_b" deleted this file's, or vice versa, by dictionary order).
+    private func uniqueToolUseId(_ name: String) -> String {
+        "toolu_\(name)_\(UUID().uuidString)"
+    }
+
     private func preToolUse(
         sessionId: String,
         tool: String = "Bash",
@@ -61,8 +70,9 @@ final class GateCorrelationRecoveryTests: XCTestCase {
     /// rendering. The real id is right there.
     func testRelaxedMatchRecoversTheRealIdWhenInputShapesDisagree() {
         let s = session()
+        let real = uniqueToolUseId("real")
         server.cacheToolUseId(event: preToolUse(
-            sessionId: s, input: ["command": AnyCodable("ls")], toolUseId: "toolu_real"
+            sessionId: s, input: ["command": AnyCodable("ls")], toolUseId: real
         ))
 
         let resolved = server.resolveGateId(for: gate(
@@ -70,18 +80,20 @@ final class GateCorrelationRecoveryTests: XCTestCase {
             input: ["command": AnyCodable("ls"), "description": AnyCodable("list files")]
         ))
 
-        XCTAssertEqual(resolved.id, "toolu_real",
+        XCTAssertEqual(resolved.id, real,
                        "The agent's own id was in the cache — minting one instead discards it")
         XCTAssertEqual(resolved.correlation, .inferred)
     }
 
     func testRelaxedMatchAbstainsWhenTwoCallsAreOutstanding() {
         let s = session()
+        let a = uniqueToolUseId("a")
+        let b = uniqueToolUseId("b")
         server.cacheToolUseId(event: preToolUse(
-            sessionId: s, input: ["command": AnyCodable("ls")], toolUseId: "toolu_a"
+            sessionId: s, input: ["command": AnyCodable("ls")], toolUseId: a
         ))
         server.cacheToolUseId(event: preToolUse(
-            sessionId: s, input: ["command": AnyCodable("pwd")], toolUseId: "toolu_b"
+            sessionId: s, input: ["command": AnyCodable("pwd")], toolUseId: b
         ))
 
         let resolved = server.resolveGateId(for: gate(
@@ -94,43 +106,47 @@ final class GateCorrelationRecoveryTests: XCTestCase {
 
     func testRelaxedMatchIgnoresOtherSessionsAndOtherTools() {
         let s = session()
+        let otherSession = uniqueToolUseId("otherSession")
+        let otherTool = uniqueToolUseId("otherTool")
         server.cacheToolUseId(event: preToolUse(
-            sessionId: session(), input: ["command": AnyCodable("ls")], toolUseId: "toolu_other_session"
+            sessionId: session(), input: ["command": AnyCodable("ls")], toolUseId: otherSession
         ))
         server.cacheToolUseId(event: preToolUse(
-            sessionId: s, tool: "Write", input: ["file_path": AnyCodable("/x")], toolUseId: "toolu_other_tool"
+            sessionId: s, tool: "Write", input: ["file_path": AnyCodable("/x")], toolUseId: otherTool
         ))
 
         let resolved = server.resolveGateId(for: gate(sessionId: s, input: ["command": AnyCodable("ls")]))
 
         XCTAssertEqual(resolved.correlation, .provisional)
-        XCTAssertNotEqual(resolved.id, "toolu_other_session")
-        XCTAssertNotEqual(resolved.id, "toolu_other_tool")
+        XCTAssertNotEqual(resolved.id, otherSession)
+        XCTAssertNotEqual(resolved.id, otherTool)
     }
 
     func testRelaxedMatchConsumesTheIdSoASecondGateCannotReuseIt() {
         let s = session()
+        let once = uniqueToolUseId("once")
         server.cacheToolUseId(event: preToolUse(
-            sessionId: s, input: ["command": AnyCodable("ls")], toolUseId: "toolu_once"
+            sessionId: s, input: ["command": AnyCodable("ls")], toolUseId: once
         ))
 
         let first = server.resolveGateId(for: gate(sessionId: s, input: ["command": AnyCodable("ls -la")]))
         let second = server.resolveGateId(for: gate(sessionId: s, input: ["command": AnyCodable("ls -la")]))
 
-        XCTAssertEqual(first.id, "toolu_once")
+        XCTAssertEqual(first.id, once)
         XCTAssertEqual(second.correlation, .provisional,
                        "One PreToolUse is one call — two gates must not correlate to the same id")
     }
 
     func testRelaxedMatchExcludesIdsAlreadyHeldAsPendingGates() {
         let s = session()
+        let held = uniqueToolUseId("held")
         server.cacheToolUseId(event: preToolUse(
-            sessionId: s, input: ["command": AnyCodable("ls")], toolUseId: "toolu_held"
+            sessionId: s, input: ["command": AnyCodable("ls")], toolUseId: held
         ))
 
-        let held: Set<String> = ["toolu_held"]
+        let heldIds: Set<String> = [held]
         XCTAssertNil(
-            server.popRelaxedCachedToolUseId(event: gate(sessionId: s, input: ["command": AnyCodable("x")]), excluding: held),
+            server.popRelaxedCachedToolUseId(event: gate(sessionId: s, input: ["command": AnyCodable("x")]), excluding: heldIds),
             "An id already gating something is not a candidate for a second gate"
         )
     }
@@ -142,27 +158,29 @@ final class GateCorrelationRecoveryTests: XCTestCase {
     /// be adopted ahead of the correct one.
     func testExactHitResolvesCachedNeverInferred() {
         let s = session()
+        let exact = uniqueToolUseId("exact")
         let input: [String: AnyCodable] = ["command": AnyCodable("ls")]
-        server.cacheToolUseId(event: preToolUse(sessionId: s, input: input, toolUseId: "toolu_exact"))
+        server.cacheToolUseId(event: preToolUse(sessionId: s, input: input, toolUseId: exact))
 
         let resolved = server.resolveGateId(for: gate(sessionId: s, input: input))
 
-        XCTAssertEqual(resolved.id, "toolu_exact")
+        XCTAssertEqual(resolved.id, exact)
         XCTAssertEqual(resolved.correlation, .cached)
     }
 
     func testRequestCarryingItsOwnIdResolvesDirect() {
         let s = session()
+        let carried = uniqueToolUseId("carried")
         var event = gate(sessionId: s, input: ["command": AnyCodable("ls")])
         event = HookEvent(
             sessionId: event.sessionId, cwd: event.cwd, event: event.event, status: event.status,
             pid: nil, tty: nil, tool: event.tool, toolInput: event.toolInput,
-            toolUseId: "toolu_carried", notificationType: nil, message: nil, source: "claude"
+            toolUseId: carried, notificationType: nil, message: nil, source: "claude"
         )
 
         let resolved = server.resolveGateId(for: event)
 
-        XCTAssertEqual(resolved.id, "toolu_carried")
+        XCTAssertEqual(resolved.id, carried)
         XCTAssertEqual(resolved.correlation, .direct)
     }
 

@@ -7,6 +7,11 @@
 //  engaging/dismissing cancels it. Uses the controller's injected seams (a spy
 //  close + tiny dwell) so no window or run loop is needed.
 //
+//  GW-444: each test owns a fresh controller, never `.shared`. The test host is
+//  the running app, whose notch forwards real hover into the singleton and
+//  whose bridge fires real reveals — a cursor parked over the notch left the
+//  shared machine `paused`, and the dwell never collapsed. 1 in 9 runs.
+//
 
 import XCTest
 @testable import Ghostwire
@@ -15,30 +20,22 @@ import XCTest
 final class NotchRevealControllerTests: XCTestCase {
 
     private var controller: NotchRevealController!
-    private var savedClose: ((GhostwireViewModel?) -> Void)!
-    private var savedDwell: ((NotchRevealClass) -> Double)!
     private var closeCount = 0
     private var lastClosedTarget: GhostwireViewModel?
 
     override func setUp() async throws {
-        controller = NotchRevealController.shared
-        savedClose = controller.closeNotch
-        savedDwell = controller.dwellSeconds
+        controller = NotchRevealController()
         closeCount = 0
         controller.closeNotch = { [weak self] target in
             self?.closeCount += 1
             self?.lastClosedTarget = target
         }
         controller.dwellSeconds = { _ in 0.05 }   // 50ms dwell for fast tests
-        // Reset any in-flight dwell from a prior test/app state.
-        controller.dismissed()
-        closeCount = 0
     }
 
     override func tearDown() async throws {
         controller.dismissed()
-        controller.closeNotch = savedClose
-        controller.dwellSeconds = savedDwell
+        controller = nil
     }
 
     /// Poll for the collapse rather than a fixed sleep — removes lower-bound

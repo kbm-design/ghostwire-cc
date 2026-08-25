@@ -75,6 +75,17 @@ final class PermissionDeliveryFailureTests: XCTestCase {
         return nil
     }
 
+    /// Poll until `condition` holds or `timeout` elapses. The store mutates from
+    /// its own Tasks, so a fixed sleep is a bet on scheduler latency (GW-444).
+    private func waitUntil(
+        timeout: TimeInterval = 5, _ condition: () async -> Bool
+    ) async {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline, await !condition() {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+    }
+
     /// SessionStore is a shared singleton and one test shortens the undelivered-gate
     /// TTL, so every test that expects a gate to *stay* held pins the real value.
     override func setUp() async throws {
@@ -243,7 +254,7 @@ final class PermissionDeliveryFailureTests: XCTestCase {
         let immediately = await phase(of: sessionId)
         XCTAssertTrue(immediately?.isWaitingForApproval == true, "must not yank the bar away instantly")
 
-        try? await Task.sleep(nanoseconds: 900_000_000)
+        await waitUntil { await self.phase(of: sessionId)?.isWaitingForApproval != true }
 
         let afterTTL = await phase(of: sessionId)
         XCTAssertFalse(

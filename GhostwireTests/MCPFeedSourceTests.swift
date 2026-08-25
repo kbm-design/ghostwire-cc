@@ -331,12 +331,12 @@ final class MCPFeedSourceStateTests: XCTestCase {
         // Two bindings, one card: every tool is unavailable for the same reason,
         // so N copies of the same sentence would be noise.
         XCTAssertEqual(cards.count, 1)
-        XCTAssertEqual(cards[0].id, "mcp.\(serverID.uuidString).server")
+        XCTAssertEqual(cards[0].id, "mcp.\(serverID.uuidString)#server")
         guard case let .generic(title, subtitle, _) = cards[0].kind else {
             return XCTFail("expected .generic")
         }
         XCTAssertEqual(title, "Linear")
-        XCTAssertEqual(subtitle, "Sign in to this server in Settings › MCP.")
+        XCTAssertEqual(subtitle, "Sign in to this server in Connections.")
         XCTAssertTrue(backend.calls.isEmpty)
     }
 
@@ -410,7 +410,7 @@ final class MCPFeedSourceStateTests: XCTestCase {
         guard case let .generic(_, subtitle, _) = cards[0].kind else {
             return XCTFail("expected an attention card")
         }
-        XCTAssertEqual(subtitle, "Set query in Settings › MCP.")
+        XCTAssertEqual(subtitle, "Needs query — remove this card in Cards.")
     }
 
     func testFilledArgumentsBecomeRunnable() async throws {
@@ -440,7 +440,7 @@ final class MCPFeedSourceStateTests: XCTestCase {
         guard case let .generic(_, subtitle, _) = cards[0].kind else {
             return XCTFail("expected an attention card")
         }
-        XCTAssertEqual(subtitle, "Set query in Settings › MCP.")
+        XCTAssertEqual(subtitle, "Needs query — remove this card in Cards.")
     }
 
     func testMissingArgumentsCoversBothAbsentKeysAndBlankValues() {

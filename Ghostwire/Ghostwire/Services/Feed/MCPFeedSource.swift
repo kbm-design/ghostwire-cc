@@ -148,6 +148,30 @@ struct MCPFeedSource: FeedSource {
 
     static func sourceId(serverID: UUID) -> String { "mcp.\(serverID.uuidString)" }
 
+    /// One tool's card id. The single composer for the `mcp.<uuid>.<tool>`
+    /// scheme — `parseCardId` below is its inverse, and having exactly one of
+    /// each keeps them from drifting apart.
+    static func cardId(serverID: UUID, tool: String) -> String {
+        "\(sourceId(serverID: serverID)).\(tool)"
+    }
+
+    /// Inverse of `cardId` — lets the Cards surface map a rendered card back
+    /// to its binding (GW-466). The tool name may itself contain dots, so only
+    /// the fixed-width UUID is parsed positionally. The server-wide attention
+    /// card uses `#server` (a character no MCP tool name can carry), so it can
+    /// never parse as a tool; callers still confirm the binding exists.
+    static func parseCardId(_ id: String) -> (serverID: UUID, tool: String)? {
+        guard id.hasPrefix("mcp.") else { return nil }
+        let rest = id.dropFirst(4)
+        let uuidLength = 36
+        guard rest.count > uuidLength + 1,
+              let serverID = UUID(uuidString: String(rest.prefix(uuidLength))),
+              rest.dropFirst(uuidLength).first == "."
+        else { return nil }
+        let tool = String(rest.dropFirst(uuidLength + 1))
+        return tool.isEmpty ? nil : (serverID, tool)
+    }
+
     init(
         serverID: UUID,
         serverName: String,
@@ -211,7 +235,7 @@ struct MCPFeedSource: FeedSource {
     }
 
     private func card(for binding: MCPFeedToolBinding, now: Date) async -> FeedCard {
-        let cardId = "\(id).\(binding.tool)"
+        let cardId = Self.cardId(serverID: serverID, tool: binding.tool)
         // Never call a tool the binding can't satisfy — that's a guaranteed
         // -32602 on a timer. Say what's missing instead of relaying the
         // server's error code to someone who can't act on it.
@@ -223,7 +247,10 @@ struct MCPFeedSource: FeedSource {
                 id: cardId,
                 sourceId: id,
                 title: MCPFeedCardMapper.title(tool: binding.tool, serverName: serverName),
-                detail: "Set \(missing.joined(separator: ", ")) in Settings › MCP.",
+                // GW-466: arguments are no longer editable anywhere in the UI —
+                // only zero-input tools are offered — so a binding in this
+                // state is a legacy one, and the honest remedy is removal.
+                detail: "Needs \(missing.joined(separator: ", ")) — remove this card in Cards.",
                 now: now
             )
         }
@@ -263,7 +290,12 @@ struct MCPFeedSource: FeedSource {
         now: Date
     ) -> FeedCard {
         MCPFeedCardMapper.attentionCard(
-            id: "\(sourceId).server",
+            // `#server`, not `.server`: `#` can't appear in an MCP tool name,
+            // so this id can never collide with a tool literally named
+            // "server" — which would otherwise give the server-wide attention
+            // card that tool's context menu, and "Remove Card" on what looks
+            // like a connection warning would silently unbind the real tool.
+            id: "\(sourceId)#server",
             sourceId: sourceId,
             title: serverName,
             detail: attentionCopy(for: status),
@@ -273,10 +305,10 @@ struct MCPFeedSource: FeedSource {
 
     static func attentionCopy(for status: MCPServerRuntime.Status) -> String {
         switch status {
-        case .needsAuth: return "Sign in to this server in Settings › MCP."
-        case .needsTrust: return "Trust this server's command in Settings › MCP."
+        case .needsAuth: return "Sign in to this server in Connections."
+        case .needsTrust: return "Trust this server's command in Connections."
         case .failed(let reason): return reason
-        case .disconnected: return "Not connected — connect it in Settings › MCP."
+        case .disconnected: return "Not connected — connect it in Connections."
         case .connecting: return "Connecting…"
         case .connected: return "Connected."
         }

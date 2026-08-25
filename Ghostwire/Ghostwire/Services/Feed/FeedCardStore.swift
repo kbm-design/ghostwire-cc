@@ -59,11 +59,31 @@ final class FeedCardStore {
         orderedCards = Self.reconcile(cards: cards, order: Defaults[.feedCardOrder])
     }
 
-    /// Drag-reorder from the window list. Persists the new id order so the notch
-    /// top-N follows. Callers wrap this in `withAnimation` for the reshuffle.
+    /// Drag-reorder from the window grid. Persists the new id order so the
+    /// notch top-N follows. Callers wrap this in `withAnimation` for the
+    /// reshuffle.
     func move(fromOffsets source: IndexSet, toOffset destination: Int) {
         orderedCards.move(fromOffsets: source, toOffset: destination)
         persistOrder()
+    }
+
+    /// In-memory reorder for the hover phase of a drag — no persistence, so a
+    /// drag that ends nowhere commits nothing (the next `setCards` reconciles
+    /// back to the saved order). `commitOrder` persists exactly once on drop.
+    func reorderLive(fromOffsets source: IndexSet, toOffset destination: Int) {
+        orderedCards.move(fromOffsets: source, toOffset: destination)
+    }
+
+    func commitOrder() {
+        persistOrder()
+    }
+
+    /// Remove one card immediately (GW-466 "Remove Card"). The next successful
+    /// source publish would drop it anyway, but that publish can be arbitrarily
+    /// far away when the surviving sources are failing — removal must not wait
+    /// on someone else's fetch succeeding.
+    func drop(id: String) {
+        orderedCards.removeAll { $0.id == id }
     }
 
     private func persistOrder() {
@@ -73,9 +93,9 @@ final class FeedCardStore {
     /// One-time cleanup (GW-261). Every `feedCardOrder` written before this
     /// build came from `setCards` persisting whatever partial card set happened
     /// to refresh first — plus, on older installs, the ids of the deleted
-    /// `sampleCards`. No shipped build ever exposed a way to reorder cards
-    /// (GW-290 is still open, `move` has no caller), so there is no
-    /// user-authored order that this can destroy.
+    /// `sampleCards`. At the time this migration shipped, no build had ever
+    /// exposed a way to reorder cards (GW-466 later added drag-reorder), so
+    /// there was no user-authored order for it to destroy.
     nonisolated static func migrateRacedOrderIfNeeded() {
         guard !Defaults[.feedCardOrderMigrated] else { return }
         Defaults[.feedCardOrder] = []

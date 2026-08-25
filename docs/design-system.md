@@ -84,6 +84,18 @@ hover) · `bar-track` white 8% (token mode: tint 18%) · `scrim-bar` black 20%
 `text/primary` white 90% · `text/secondary` white 60% · `text/tertiary`
 white 40% · `text/disabled` white 30%.
 
+### overlay/ — menus, popovers, dropdowns (GW-466)
+The ONE raised-overlay material. Any surface floating above the pane — context
+menu, dropdown, popover — uses exactly these three tokens; nothing floating
+ever invents its own gray (the macOS `NSMenu` gray is a platform default, not
+this system's). Solid values, deliberately — not white-at-alpha (GW-470):
+
+`overlay/surface` **#141414** solid (one step above cards in the same
+near-black ladder) · `overlay/border` **#2E2E2E** solid (≈ white 18% on black)
+· `overlay/shadow` black 55%, `0 10px 30px` (the shadow is a scrim, so its
+alpha is load-bearing — the documented GW-470 exemption). Elevation comes from
+border + shadow, never from a lighter fill.
+
 ### state/ — Settings state (resolves per appearance)
 
 `terminal/` is dark-only: every value above is a fixed sRGB constant chosen

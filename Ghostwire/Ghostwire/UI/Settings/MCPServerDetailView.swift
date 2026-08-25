@@ -306,43 +306,39 @@ struct MCPServerDetailView: View {
         .padding(.top, 2)
     }
 
-    /// One tool. The switch is the only control on the title line; Run and the
-    /// Feed binding drop to a secondary line that exists only once allowed.
-    @ViewBuilder
+    /// One tool. The allow switch is the row's only control — feed binding
+    /// moved to the Cards page (GW-466), keeping this pane the allowlist and
+    /// nothing else.
     private func toolRow(item: MCPGroupedTool, config: MCPServerConfig, indented: Bool) -> some View {
-        let isAllowed = config.allowedTools.contains(item.name)
-        VStack(alignment: .leading, spacing: 4) {
+        HStack(spacing: 6) {
+            // Claude's connector UI shows the TITLE and nothing else, and
+            // it reads better: a wire name in mono plus a description
+            // truncated mid-sentence gave two unreadable things where one
+            // readable one fits. The description moves to the tooltip; the
+            // wire name is still what the badge and Run act on.
             HStack(spacing: 6) {
-                // Claude's connector UI shows the TITLE and nothing else, and
-                // it reads better: a wire name in mono plus a description
-                // truncated mid-sentence gave two unreadable things where one
-                // readable one fits. The description moves to the tooltip; the
-                // wire name is still what the badge and Run act on.
-                HStack(spacing: 6) {
-                    Text(item.tool.displayTitle)
-                        .font(.system(size: 13))
-                        .lineLimit(1)
-                    MCPCapabilityBadge(capability: item.capability, source: item.source)
-                }
-                .help(item.tool.description.map { "\(item.name)\n\n\($0)" } ?? item.name)
-                Spacer(minLength: 8)
-                Toggle(
-                    "",
-                    isOn: Binding(
-                        get: { isAllowed },
-                        set: { setAllowed([item.name], allowed: $0) }
-                    )
-                )
-                .toggleStyle(.switch)
-                // NOT `.mini`. AppKit squashes the mini switch's knob into an
-                // oval rather than scaling it down as a circle — visible the
-                // moment you zoom in. `.small` keeps a round knob.
-                .controlSize(.small)
-                .labelsHidden()
-                .accessibilityLabel("Allow \(item.name)")
-                .help("Allow Ghostwire to call this tool")
+                Text(item.tool.displayTitle)
+                    .font(.system(size: 13))
+                    .lineLimit(1)
+                MCPCapabilityBadge(capability: item.capability, source: item.source)
             }
-
+            .help(item.tool.description.map { "\(item.name)\n\n\($0)" } ?? item.name)
+            Spacer(minLength: 8)
+            Toggle(
+                "",
+                isOn: Binding(
+                    get: { config.allowedTools.contains(item.name) },
+                    set: { setAllowed([item.name], allowed: $0) }
+                )
+            )
+            .toggleStyle(.switch)
+            // NOT `.mini`. AppKit squashes the mini switch's knob into an
+            // oval rather than scaling it down as a circle — visible the
+            // moment you zoom in. `.small` keeps a round knob.
+            .controlSize(.small)
+            .labelsHidden()
+            .accessibilityLabel("Allow \(item.name)")
+            .help("Allow Ghostwire to call this tool")
         }
         .padding(.vertical, 1)
         .padding(.leading, indented ? 10 : 0)
@@ -553,32 +549,6 @@ struct MCPServerHeaderActions: View {
                 .menuIndicator(.hidden)
                 .fixedSize()
                 .accessibilityLabel("More actions")
-            }
-        }
-    }
-}
-
-struct MCPToolCountLabel: View {
-    let serverID: UUID
-    @ObservedObject private var service = MCPClientService.shared
-
-    init(serverID: UUID) { self.serverID = serverID }
-
-    private var runtime: MCPServerRuntime? { service.runtime(id: serverID) }
-
-    var body: some View {
-        if case .connected(let count) = runtime?.status,
-            let config = service.store.server(id: serverID)
-        {
-            HStack(spacing: 6) {
-                SettingsStateDot(severity: .ok, caption: "Connected")
-                // The ALLOWED count over the advertised one: a connected server
-                // with an empty allowlist can't be called, so a bare "58 tools"
-                // would overclaim (GW-255).
-                Text("\(config.allowedTools.count) of \(count) tools")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
             }
         }
     }

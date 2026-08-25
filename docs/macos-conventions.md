@@ -15,9 +15,25 @@ scriptable/AX windows, no URL scheme.** Design consequences:
 - You **cannot script-drive the UI** — specific states (approval pending,
   populated shelf, glow, recording) need a **live session / manual capture**.
   Don't design flows that assume automated screenshotting.
-- Entry points are the **notch**, the **menu-bar item**, and global hotkeys —
-  there's no app menu to hang commands off. Put controls in the notch header,
-  Settings, or shortcuts.
+- Entry points are the **notch**, the **menu-bar item**, global hotkeys, and
+  **App Intents** (GW-452) — there's no app menu to hang commands off. Put
+  controls in the notch header, Settings, or shortcuts.
+
+**`LSUIElement` does NOT hide App Intents from Shortcuts** — measured 2026-08-25
+with a clean A/B (same build, `LSUIElement` YES vs NO). Both appear. What *does*
+hide them is running out of **DerivedData**: LaunchServices never builds an app
+record for a bundle there, Shortcuts silently shows nothing, and the only trace
+is `Unable to create LSApplicationRecord … Code=-10814` in Shortcuts' log. So
+**you cannot test an intent from a `xcodebuild` product directory** — copy the
+`.app` to `/Applications`, `lsregister -f -R -trusted` it, then fully quit and
+relaunch Shortcuts (its action library is cached). Beware the ~60 stale
+`com.ghostwire.notch` bundles that accumulate across worktrees: check which copy
+wins with `osascript -e 'POSIX path of (path to application id "com.ghostwire.notch")'`
+before concluding anything, or you'll test a build you didn't make.
+
+Also note App Shortcuts (from an `AppShortcutsProvider`) are **not** invocable
+via `shortcuts run` — that only runs shortcuts the user has saved. Don't design
+a security assumption around either direction of that without measuring it.
 
 ## 2. Not sandboxed → not Mac App Store
 

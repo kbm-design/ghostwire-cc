@@ -348,7 +348,9 @@ final class MCPToolGroupingTests: XCTestCase {
 
     // MARK: - Bulk allow eligibility
 
-    func testBulkAllowIsOnlyAvailableForReadOnlySections() {
+    /// Reversed 2026-08-25: every section bulk-allows. The section header is
+    /// the warning; the per-tool toggle is the finer decision.
+    func testBulkAllowIsAvailableForEverySection() {
         let tools = [
             tool("read_thing", readOnly: true),
             tool("save_thing", readOnly: false),
@@ -360,8 +362,8 @@ final class MCPToolGroupingTests: XCTestCase {
             uniqueKeysWithValues: grouping.sections.map { ($0.kind, $0.canBulkAllow) })
 
         XCTAssertEqual(eligibility[.read], true)
-        XCTAssertEqual(eligibility[.write], false)
-        XCTAssertEqual(eligibility[.other], false)
+        XCTAssertEqual(eligibility[.write], true)
+        XCTAssertEqual(eligibility[.other], true)
     }
 
     /// `writes` and `destructive` render as ONE section (2026-08-21). The write
@@ -369,9 +371,9 @@ final class MCPToolGroupingTests: XCTestCase {
     /// while containing every way to overwrite your work, and "Destructive"
     /// implied it was the only dangerous one.
     ///
-    /// Merging is safe precisely because bulk-allow was ALREADY read-only-only:
-    /// neither half could be bulk-allowed before or after. If that ever stops
-    /// being true, this merge stops being safe.
+    /// The merged section bulk-allows like every other since 2026-08-25, so
+    /// "Allow all" on Write covers destructive tools too — the section title
+    /// and the consequence footer are what say so.
     func testWritesAndDestructiveShareOneSection() {
         let tools = [
             tool("get_thing", readOnly: true),
@@ -385,7 +387,7 @@ final class MCPToolGroupingTests: XCTestCase {
 
         let write = grouping.sections.first { $0.kind == .write }
         XCTAssertEqual(write?.toolNames.sorted(), ["delete_thing", "update_thing"])
-        XCTAssertFalse(write?.canBulkAllow ?? true, "the merged section must never bulk-allow")
+        XCTAssertTrue(write?.canBulkAllow ?? false, "every section bulk-allows since 2026-08-25")
 
         // The consequence line speaks for the WORST member, not the first.
         XCTAssertEqual(write?.severestCapability, .destructive)
@@ -401,7 +403,10 @@ final class MCPToolGroupingTests: XCTestCase {
         XCTAssertEqual(write?.tools.map(\.name), ["update_thing", "delete_thing"])
     }
 
-    func testCategoryBulkAllowRequiresReadOnlyAndNamedGroup() {
+    /// Category-level bulk allow is a MODEL affordance the UI deliberately does
+    /// not render (one "Allow all" per section, never per subsection). The rule
+    /// that survives 2026-08-25 is: a NAMED group may, the catch-all never does.
+    func testCategoryBulkAllowRequiresNamedGroup() {
         let grouping = MCPToolGrouping.build(
             tools: Self.linearTools.map { self.tool($0, readOnly: true) }, serverName: "Linear")
         guard let read = grouping.sections.first(where: { $0.kind == .read }) else {
@@ -418,9 +423,10 @@ final class MCPToolGroupingTests: XCTestCase {
             return XCTFail("expected writes section")
         }
         XCTAssertTrue(writes.isCategorized)
-        XCTAssertFalse(
-            writes.categories.contains { $0.canBulkAllow(in: writes) },
-            "mutating category groups must require per-tool approval")
+        XCTAssertTrue(writes.categories.contains { $0.canBulkAllow(in: writes) })
+        XCTAssertEqual(
+            writes.categories.last?.canBulkAllow(in: writes), false,
+            "the catch-all never bulk-allows, whatever the section")
     }
 
     // MARK: - Corpora (real tool names, captured 2026-08-06)

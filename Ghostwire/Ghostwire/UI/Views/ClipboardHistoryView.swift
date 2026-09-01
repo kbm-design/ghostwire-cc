@@ -15,6 +15,11 @@
 //  to a regular Shelf .text/.file item), delete. The action enum is the clean
 //  seam for GW-164's "send to agent" — add a case, no row restructure.
 //
+//  GW-166: a sealed (credential-shaped) entry renders masked with a lock glyph
+//  and gains reveal / "not sensitive" actions. Re-copy and send-to-agent route
+//  through `SensitiveClipAccess` (Touch ID) first; pin-to-shelf is refused,
+//  because the Shelf store is plaintext-at-rest.
+//
 
 import AppKit
 import Defaults
@@ -29,6 +34,10 @@ enum ClipboardRowAction {
     case pinToShelf
     case sendToAgent
     case delete
+    /// GW-166: show a sealed entry's plaintext in place (Touch ID first).
+    case reveal
+    /// GW-166: un-flag a sealed entry so it behaves like any other clip.
+    case notSensitive
 }
 
 // MARK: - Full swap-view
@@ -124,7 +133,7 @@ struct ClipboardHistoryView: View {
                     )
             }
             .buttonStyle(.plain)
-            Text("Captured locally. Password-manager and transient copies are skipped.")
+            Text("Captured locally. Password-manager and transient copies are skipped, and anything that looks like a credential is encrypted behind Touch ID.")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
                 .multilineTextAlignment(.center)
@@ -197,6 +206,9 @@ private struct ClipboardHistoryRow: View {
 
     @State private var isHovered = false
     @State private var didCopy = false
+    /// GW-166: plaintext of a sealed entry after a successful unlock. View state
+    /// only — it dies with the row.
+    @State private var revealed: String?
     /// GW-163: send-to-agent feedback — glyph swaps to a checkmark on delivery,
     /// to a slash on a quiet failure (no agent reachable). Resets after a beat.
     @State private var sendFeedback: SendFeedback = .idle
@@ -204,6 +216,10 @@ private struct ClipboardHistoryRow: View {
     private enum SendFeedback { case idle, sent, failed }
 
     private var preview: String {
+        if entry.isSensitive {
+            // Fixed-length mask — the row never hints at the secret's length.
+            return revealed ?? String(repeating: "•", count: 16)
+        }
         switch entry.resolvedKind {
         case .file:
             return (entry.path as NSString?)?.lastPathComponent ?? entry.path ?? ""
@@ -217,6 +233,7 @@ private struct ClipboardHistoryRow: View {
     /// Mono for file paths and text that looks like code (no spaces but has
     /// path/symbol punctuation). Cheap heuristic — preview only.
     private var usesMono: Bool {
+        if entry.isSensitive { return true }
         if entry.resolvedKind == .file { return true }
         let s = preview
         guard !s.isEmpty else { return false }
@@ -227,16 +244,23 @@ private struct ClipboardHistoryRow: View {
 
     var body: some View {
         HStack(alignment: .center, spacing: 8) {
-            Image(systemName: entry.resolvedKind == .file ? "doc" : "text.alignleft")
+            Image(systemName: glyph)
                 .font(.system(size: 9, weight: .medium))
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(entry.isSensitive ? AnyShapeStyle(TerminalColors.amber) : AnyShapeStyle(.tertiary))
                 .frame(width: 12)
+                .help(entry.isSensitive ? entry.sensitiveLabel : "")
 
             Text(preview.isEmpty ? "(empty)" : preview)
                 .font(usesMono ? .system(size: 11, design: .monospaced) : .caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
                 .truncationMode(entry.resolvedKind == .file ? .middle : .tail)
+
+            if entry.isSensitive, revealed == nil {
+                Text(entry.sensitiveLabel)
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
 
             if entry.truncated {
                 Text("…trimmed")
@@ -266,18 +290,35 @@ private struct ClipboardHistoryRow: View {
 
     private var actions: some View {
         HStack(spacing: 10) {
+            if entry.isSensitive {
+                actionButton(
+                    systemName: revealed == nil ? "eye" : "eye.slash",
+                    help: revealed == nil ? "Reveal (requires Touch ID)" : "Hide"
+                ) { perform(.reveal) }
+            }
+
             actionButton(
                 systemName: didCopy ? "checkmark" : "doc.on.doc",
                 help: "Copy"
             ) { perform(.recopy) }
 
-            actionButton(systemName: "pin", help: "Pin to shelf") { perform(.pinToShelf) }
+            // Pin is absent for a sealed entry: the Shelf store is plaintext.
+            if !entry.isSensitive {
+                actionButton(systemName: "pin", help: "Pin to shelf") { perform(.pinToShelf) }
+            } else {
+                actionButton(systemName: "lock.open", help: "Not sensitive") { perform(.notSensitive) }
+            }
 
             actionButton(systemName: sendGlyph, help: "Send to agent", tint: sendTint) { perform(.sendToAgent) }
 
             actionButton(systemName: "trash", help: "Delete") { perform(.delete) }
         }
         .layoutPriority(1)
+    }
+
+    private var glyph: String {
+        if entry.isSensitive { return revealed == nil ? "lock.fill" : "lock.open.fill" }
+        return entry.resolvedKind == .file ? "doc" : "text.alignleft"
     }
 
     private func actionButton(systemName: String, help: String, tint: Color = .secondary, action: @escaping () -> Void) -> some View {
@@ -315,26 +356,91 @@ private struct ClipboardHistoryRow: View {
     private func perform(_ action: ClipboardRowAction) {
         switch action {
         case .recopy:
-            ClipboardHistoryService.shared.recopy(entry)
-            withAnimation { didCopy = true }
-            Task {
-                try? await Task.sleep(for: .seconds(1.2))
-                await MainActor.run { withAnimation { didCopy = false } }
-            }
+            recopy()
         case .pinToShelf:
+            // Refused for a sealed entry — the Shelf store is plaintext-at-rest.
+            guard !entry.isSensitive else { return }
             pinToShelf()
         case .sendToAgent:
             sendToAgent()
         case .delete:
             ClipboardHistoryStore.shared.remove(entry)
+        case .reveal:
+            guard entry.isSensitive else { return }
+            if revealed == nil {
+                Task { revealed = await unlock(Self.reasonReveal) }
+            } else {
+                hideRevealed()
+            }
+        case .notSensitive:
+            guard entry.isSensitive else { return }
+            Task {
+                guard await unlock(Self.reasonUnflag) != nil else { return }
+                ClipboardHistoryStore.shared.markNotSensitive(entry)
+                hideRevealed()
+            }
         }
     }
+
+    /// GW-166: a sealed entry has no plaintext to re-copy directly — unlock it,
+    /// then stage the decrypted text as one of our own writes (so the poller
+    /// doesn't re-capture it, this time unflagged).
+    private func recopy() {
+        if entry.isSensitive {
+            Task {
+                guard let plain = await unlock(Self.reasonCopy) else { return }
+                ClipboardHistoryService.shared.stagePlainTextForPaste(plain)
+                flashCopied()
+            }
+            return
+        }
+        ClipboardHistoryService.shared.recopy(entry)
+        flashCopied()
+    }
+
+    private func flashCopied() {
+        withAnimation { didCopy = true }
+        Task {
+            try? await Task.sleep(for: .seconds(1.2))
+            await MainActor.run { withAnimation { didCopy = false } }
+        }
+    }
+
+    private func unlock(_ reason: String) async -> String? {
+        await SensitiveClipAccess.shared.plaintext(for: entry, reason: reason)
+    }
+
+    private func hideRevealed() {
+        revealed = nil
+        SensitiveClipAccess.shared.relock(entry.id)
+    }
+
+    private static let reasonReveal = "reveal a sensitive clipboard item"
+    private static let reasonCopy = "copy a sensitive clipboard item"
+    private static let reasonSend = "send a sensitive clipboard item to an agent"
+    private static let reasonUnflag = "unlock a sensitive clipboard item"
 
     /// GW-163: route this entry to the active agent's input. Text → inject(text:),
     /// file → inject(file:). The coordinator handles target resolution + picker;
     /// here we only reflect the immediate outcome in the glyph (the picker path
     /// resolves on its own, so it reads as a quiet no-op confirmation).
     private func sendToAgent() {
+        // GW-166: a sealed entry unlocks first, then sends the decrypted text.
+        if entry.isSensitive {
+            Task {
+                guard let plain = await unlock(Self.reasonSend) else {
+                    flashSendFeedback(.failed)
+                    return
+                }
+                switch await SendToAgentCoordinator.shared.send(.text(plain)) {
+                case .delivered: flashSendFeedback(.sent)
+                case .failed: flashSendFeedback(.failed)
+                case .awaitingPick: break
+                }
+            }
+            return
+        }
+
         let payload: SendToAgentCoordinator.Payload
         switch entry.resolvedKind {
         case .text:

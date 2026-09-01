@@ -359,6 +359,11 @@ extension Defaults.Keys {
     // Cap mirrors the alert-history pattern: 100 entries / 7 days, configurable.
     static let clipboardHistoryMaxEntries = Key<Int>("clipboardHistoryMaxEntries", default: 100)
     static let clipboardHistoryMaxAgeDays = Key<Int>("clipboardHistoryMaxAgeDays", default: 7)
+    // GW-166: seal credential-shaped clips (AES-256-GCM) and require Touch ID to
+    // reveal/copy/send them. Default ON — unlike capture itself, this only ever
+    // makes an already-captured clip safer, so there's nothing to opt in to.
+    // Turning it off stops NEW detection; clips already sealed stay sealed.
+    static let clipboardCredentialProtection = Key<Bool>("clipboardCredentialProtection", default: true)
 
     // MARK: Voice capture (GW-229)
     // Master switch for the voice hotkey (record → clipboard + Shelf, paste into

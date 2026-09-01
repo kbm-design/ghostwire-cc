@@ -12,6 +12,14 @@
 //  below. Hover reveals exactly three actions — Paste / Copy / Send — top-right,
 //  so they don't fight the bottom info. Pin + Delete live in the right-click menu.
 //
+//  GW-166 sensitive clips. A sealed card renders `SensitiveCardContent`: a lock
+//  glyph, the shape label ("API token"), and a fixed row of mask dots — NOT a
+//  dotted rendering of the real string, so its length leaks nothing either. The
+//  card keeps its normal actions, but each one routes through the auth gate in
+//  the view model; Reveal shows the plaintext in place until the card is hidden
+//  again, and "Not sensitive" (context menu) un-seals it for good. Pin is absent
+//  by design — the Shelf store is plaintext, so a sealed clip can't go there.
+//
 
 import AppKit
 import Defaults
@@ -36,6 +44,9 @@ struct UnifiedCardView: View {
     @State private var copied = false
     @State private var pasteState: ActionFeedback = .idle
     @State private var sendState: ActionFeedback = .idle
+    /// GW-166: plaintext of a sealed clip once the user has authenticated. Held
+    /// only in this view's state — it dies with the card.
+    @State private var revealed: String?
 
     private enum ActionFeedback { case idle, ok, fail }
 
@@ -44,7 +55,7 @@ struct UnifiedCardView: View {
     private static let corner: CGFloat = 12
 
     var body: some View {
-        UnifiedCardContent(card: card)
+        cardContent
             .frame(width: Self.cardWidth, height: Self.cardHeight)
             .background(cardFill)
             .clipShape(RoundedRectangle(cornerRadius: Self.corner, style: .continuous))
@@ -52,7 +63,9 @@ struct UnifiedCardView: View {
                 RoundedRectangle(cornerRadius: Self.corner, style: .continuous)
                     .strokeBorder(strokeColor, lineWidth: isSelected ? 1.5 : 1)
             )
-            .overlay(alignment: .topLeading) { if card.isPinned { pinMarker } }
+            .overlay(alignment: .topLeading) {
+                if card.isSensitive { lockMarker } else if card.isPinned { pinMarker }
+            }
             .overlay(alignment: .bottomTrailing) { if isHovered { hoverActions } }
             .contentShape(RoundedRectangle(cornerRadius: Self.corner, style: .continuous))
             .onHover { isHovered = $0 }
@@ -62,6 +75,18 @@ struct UnifiedCardView: View {
             .onTapGesture(count: 2) { performDoubleClick() }
             .onTapGesture(count: 1) { (onSelect ?? { vm.selectFromClick($0) })(card) }
             .contextMenu { contextMenu }
+            .onDisappear { hideRevealed() }
+    }
+
+    /// Sealed clips get the masked presentation; everything else dispatches on
+    /// `CardKind` as before.
+    @ViewBuilder
+    private var cardContent: some View {
+        if card.isSensitive {
+            SensitiveCardContent(card: card, revealed: revealed)
+        } else {
+            UnifiedCardContent(card: card)
+        }
     }
 
     /// Image/color cards are their own fill; the rest get a subtle panel.
@@ -77,6 +102,17 @@ struct UnifiedCardView: View {
         if isSelected { return Color.accentColor.opacity(0.85) }
         if card.kind == .image || card.kind == .color { return .clear }
         return Color(white: 0.2)
+    }
+
+    /// GW-166: the sealed-clip badge, in the pin's slot (the two can't co-occur —
+    /// a sealed clip is never pinnable). Filled when locked, open once revealed.
+    private var lockMarker: some View {
+        Image(systemName: revealed == nil ? "lock.fill" : "lock.open.fill")
+            .font(.system(size: 8, weight: .semibold))
+            .foregroundStyle(.white.opacity(0.9))
+            .padding(4)
+            .background(Circle().fill(.black.opacity(0.35)))
+            .padding(5)
     }
 
     private var pinMarker: some View {
@@ -97,8 +133,17 @@ struct UnifiedCardView: View {
                     Task { flash($pasteState, await vm.paste(card) ? .ok : .fail) }
                 }
             }
+            if card.isSensitive {
+                CardActionButton(
+                    systemName: revealed == nil ? "eye" : "eye.slash",
+                    tint: .secondary,
+                    help: revealed == nil ? "Reveal (requires Touch ID)" : "Hide"
+                ) {
+                    if revealed == nil { Task { revealed = await vm.reveal(card) } } else { hideRevealed() }
+                }
+            }
             CardActionButton(systemName: copied ? "checkmark" : "doc.on.doc", tint: copied ? TerminalColors.green : .secondary, help: "Copy") {
-                vm.copy(card); flashCopied()
+                Task { if await vm.copy(card) { flashCopied() } }
             }
             CardActionButton(systemName: sendGlyph, tint: feedbackTint(sendState), help: "Send to agent") {
                 Task {
@@ -144,10 +189,22 @@ struct UnifiedCardView: View {
 
     @ViewBuilder
     private var contextMenu: some View {
-        if !card.isPinned {
+        // Pin is absent for a sealed clip: the Shelf store is plaintext-at-rest.
+        if !card.isPinned && !card.isSensitive {
             Button { vm.pin(card) } label: { Label("Pin", systemImage: "pin") }
         }
-        Button { vm.copy(card); flashCopied() } label: { Label("Copy", systemImage: "doc.on.doc") }
+        if card.isSensitive {
+            Button {
+                if revealed == nil { Task { revealed = await vm.reveal(card) } } else { hideRevealed() }
+            } label: {
+                Label(revealed == nil ? "Reveal" : "Hide", systemImage: revealed == nil ? "eye" : "eye.slash")
+            }
+            Button { Task { if await vm.markNotSensitive(card) { hideRevealed() } } } label: {
+                Label("Not sensitive", systemImage: "lock.open")
+            }
+            Divider()
+        }
+        Button { Task { if await vm.copy(card) { flashCopied() } } } label: { Label("Copy", systemImage: "doc.on.doc") }
         Button { Task { await vm.send(card) } } label: { Label("Send to Agent", systemImage: "terminal") }
         if let url = card.fileURL {
             Button { NSWorkspace.shared.activateFileViewerSelecting([url]) } label: {
@@ -163,11 +220,11 @@ struct UnifiedCardView: View {
     private func performDoubleClick() {
         switch Defaults[.cardDoubleClickAction] {
         case .copy:
-            vm.copy(card); flashCopied()
+            Task { if await vm.copy(card) { flashCopied() } }
         case .pasteToField:
             // In the detached window paste-to-field can't work (we'd ⌘V into our
             // own window), so a paste-configured double-click falls back to copy.
-            guard showsPasteAction else { vm.copy(card); flashCopied(); break }
+            guard showsPasteAction else { Task { if await vm.copy(card) { flashCopied() } }; break }
             Task { flash($pasteState, await vm.paste(card) ? .ok : .fail) }
         case .sendToAgent:
             Task {
@@ -178,6 +235,14 @@ struct UnifiedCardView: View {
                 }
             }
         }
+    }
+
+    /// Drop the revealed plaintext AND close the unlock window, so the next
+    /// action prompts again rather than riding the grace period.
+    private func hideRevealed() {
+        guard revealed != nil else { return }
+        revealed = nil
+        vm.relock(card)
     }
 
     // MARK: - Feedback timers
@@ -360,6 +425,52 @@ private struct TextCardContent: View {
             CardFooter(card: card)
         }
         .padding(8)
+    }
+}
+
+/// GW-166. A sealed clip. Shows WHAT it is (the shape label) and nothing about
+/// the value: the mask is a fixed run of dots, not one dot per character, so the
+/// card doesn't even leak the secret's length. Once revealed it renders the
+/// plaintext in mono, wrapped, for as long as the card stays on screen.
+///
+/// The label row is inset past the lock badge that `UnifiedCardView` overlays in
+/// the top-left corner.
+private struct SensitiveCardContent: View {
+    let card: UnifiedCard
+    let revealed: String?
+
+    /// Fixed-width mask. Length is arbitrary on purpose — see above.
+    private static let mask = String(repeating: "•", count: 16)
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(card.sensitiveLabel)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(TerminalColors.amber)
+                .lineLimit(1)
+                .padding(.leading, 16)
+
+            if let revealed {
+                Text(revealed)
+                    .font(.system(size: 11.5, design: .monospaced))
+                    .foregroundStyle(.primary.opacity(0.88))
+                    .lineLimit(3)
+                    .truncationMode(.middle)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                Text(Self.mask)
+                    .font(.system(size: 13, weight: .medium, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .accessibilityLabel("Hidden. \(card.sensitiveLabel). Reveal requires Touch ID.")
+            }
+
+            Spacer(minLength: 0)
+            CardFooter(card: card)
+        }
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

@@ -886,6 +886,12 @@ struct Shelf: View {
                 Defaults.Toggle(key: .clipboardHistoryEnabled) {
                     Text("Capture clipboard history")
                 }
+                // GW-166. Default ON: this only makes an already-captured clip
+                // safer. Turning it off stops new detection — clips already
+                // encrypted stay encrypted and still ask for Touch ID.
+                Defaults.Toggle(key: .clipboardCredentialProtection) {
+                    Text("Protect credential-shaped copies")
+                }
                 Picker("Double-click a card", selection: $cardDoubleClickAction) {
                     ForEach(CardDoubleClickAction.allCases, id: \.self) { action in
                         Text(action.label).tag(action)
@@ -894,7 +900,7 @@ struct Shelf: View {
             } header: {
                 Text("Clipboard")
             } footer: {
-                Text("Stored locally on this Mac. Password-manager and transient copies are skipped. Open with the Clipboard row in the Shelf, or the shortcut below.")
+                Text("Stored locally on this Mac. Password-manager and transient copies are skipped. Copies that look like a token, key or password are encrypted on disk and need Touch ID to reveal, copy or send. Open with the Clipboard row in the Shelf, or the shortcut below.")
                     .foregroundStyle(.secondary)
                     .font(.caption)
                     .leadingFooter()

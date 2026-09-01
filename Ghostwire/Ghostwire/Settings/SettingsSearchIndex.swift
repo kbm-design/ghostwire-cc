@@ -88,7 +88,11 @@ enum SettingsSearchIndex {
         "Calendar": ["events", "reminders", "all-day"],
         "HUD": ["volume", "brightness", "backlight", "replacement", "percentage"],
         "Battery": ["charge", "power", "percentage", "low power"],
-        "Shelf": ["files", "drag", "drop", "quick share", "airdrop", "tray", "clipboard", "history", "copy", "paste"],
+        "Shelf": [
+            "files", "drag", "drop", "quick share", "airdrop", "tray", "clipboard", "history", "copy", "paste",
+            // GW-166 credential protection lives in the Shelf pane's Clipboard section.
+            "password", "secret", "token", "api key", "credential", "sensitive", "touch id", "encrypt",
+        ],
         "Mirror": ["camera", "webcam", "face", "shape"],
         "Activity": [
             "activity", "context", "ambient", "capture", "frontmost",

@@ -151,6 +151,10 @@ final class ClipboardHistoryStorePersistenceTests: XCTestCase {
 }
 
 // MARK: - Capture seam (privacy gates + cap)
+//
+// GW-166 added `protectCredentials` to this seam. These cases are about the
+// GW-210 rules, so they pass `false` — credential detection has its own suite
+// (SensitiveCaptureTests / CredentialShapeDetectorTests).
 
 final class ClipboardCaptureTests: XCTestCase {
 
@@ -163,7 +167,7 @@ final class ClipboardCaptureTests: XCTestCase {
     }
 
     func testCapturesPlainText() {
-        let entry = ClipboardCapture.entry(from: snapshot(), maxTextBytes: 1024)
+        let entry = ClipboardCapture.entry(from: snapshot(), maxTextBytes: 1024, protectCredentials: false)
         XCTAssertEqual(entry?.resolvedKind, .text)
         XCTAssertEqual(entry?.content, "copied text")
         XCTAssertEqual(entry?.truncated, false)
@@ -171,34 +175,34 @@ final class ClipboardCaptureTests: XCTestCase {
 
     func testSkipsConcealedType() {
         let s = snapshot(types: ["public.utf8-plain-text", ClipboardSnapshot.concealedType])
-        XCTAssertNil(ClipboardCapture.entry(from: s, maxTextBytes: 1024))
+        XCTAssertNil(ClipboardCapture.entry(from: s, maxTextBytes: 1024, protectCredentials: false))
     }
 
     func testSkipsTransientType() {
         let s = snapshot(types: ["public.utf8-plain-text", ClipboardSnapshot.transientType])
-        XCTAssertNil(ClipboardCapture.entry(from: s, maxTextBytes: 1024))
+        XCTAssertNil(ClipboardCapture.entry(from: s, maxTextBytes: 1024, protectCredentials: false))
     }
 
     func testSkipsOwnWrite() {
         let s = snapshot(types: ["public.utf8-plain-text", ClipboardSnapshot.ghostwireMarkerType])
-        XCTAssertNil(ClipboardCapture.entry(from: s, maxTextBytes: 1024))
+        XCTAssertNil(ClipboardCapture.entry(from: s, maxTextBytes: 1024, protectCredentials: false))
     }
 
     func testSkipsEmptyAndWhitespaceText() {
-        XCTAssertNil(ClipboardCapture.entry(from: snapshot(string: ""), maxTextBytes: 1024))
-        XCTAssertNil(ClipboardCapture.entry(from: snapshot(string: "   \n\t"), maxTextBytes: 1024))
+        XCTAssertNil(ClipboardCapture.entry(from: snapshot(string: ""), maxTextBytes: 1024, protectCredentials: false))
+        XCTAssertNil(ClipboardCapture.entry(from: snapshot(string: "   \n\t"), maxTextBytes: 1024, protectCredentials: false))
     }
 
     func testCapturesFilePathPreferredOverText() {
         let s = snapshot(types: ["public.file-url"], string: "/Users/x/a.txt", filePath: "/Users/x/a.txt")
-        let entry = ClipboardCapture.entry(from: s, maxTextBytes: 1024)
+        let entry = ClipboardCapture.entry(from: s, maxTextBytes: 1024, protectCredentials: false)
         XCTAssertEqual(entry?.resolvedKind, .file)
         XCTAssertEqual(entry?.path, "/Users/x/a.txt")
     }
 
     func testTruncatesOversizeTextAndFlags() {
         let big = String(repeating: "a", count: 200)
-        let entry = ClipboardCapture.entry(from: snapshot(string: big), maxTextBytes: 100)
+        let entry = ClipboardCapture.entry(from: snapshot(string: big), maxTextBytes: 100, protectCredentials: false)
         XCTAssertEqual(entry?.truncated, true)
         XCTAssertEqual(entry?.content?.utf8.count, 100)
     }

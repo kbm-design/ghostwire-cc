@@ -65,6 +65,12 @@ final class MCPOAuthCoordinator: NSObject, @unchecked Sendable {
     func beginInteractiveGrant() { interactiveGrantInFlight = true }
     func endInteractiveGrant() { interactiveGrantInFlight = false }
 
+    /// Test seam (GW-448): observes every authorize URL handed to the browser.
+    /// The live-verification harness prints it so the consent screen can be
+    /// completed from a driven tab. The URL carries only public OAuth
+    /// parameters (client_id, state, PKCE *challenge*) — never a secret.
+    var authorizationURLObserver: (@Sendable (URL) -> Void)?
+
     /// Deterministic loopback port per server (mcp-remote's pattern): the DCR
     /// registration pins the exact redirect URI, so the port must be stable
     /// across launches. Range 49152±... avoid privileged/common ports.
@@ -154,6 +160,7 @@ extension MCPOAuthCoordinator: OAuthAuthorizationDelegate {
         let listener = try OAuthLoopbackListener(
             port: port, expectedPath: redirect.path, expectedState: expectedState)
         defer { listener.stop() }
+        authorizationURLObserver?(url)
         await MainActor.run { NSWorkspace.shared.open(url) }
         return try await listener.waitForCallback(timeout: 180)
     }
